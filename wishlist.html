@@ -170,19 +170,7 @@ body{
   user-select:none;
 }
 #pagerTop{margin-bottom:12px}
-#pagerBottom{margin-top:12px}
 #main{position:relative}
-.pgRail{
-  position:absolute;top:70px;bottom:70px;width:30px;z-index:40;
-  display:flex;flex-direction:column;justify-content:space-around;align-items:center;
-  background:transparent;border:none;cursor:pointer;color:#fff;
-  opacity:.32;transition:opacity .15s,background .15s;border-radius:6px;
-}
-.pgRail:hover{opacity:.95;background:rgba(255,255,255,.12)}
-.pgRail span{font-size:24px;line-height:1}
-#railPrev{left:0}
-#railNext{right:0}
-@media(max-width:760px){ .pgRail{width:24px} .pgRail span{font-size:20px} }
 .pagerBar .pg-arrow{
   width:44px;height:100%;display:flex;align-items:center;justify-content:center;
   background:transparent;border:none;color:#fff;font-size:26px;cursor:pointer;border-radius:6px;
@@ -446,17 +434,6 @@ body{padding-top:var(--dd-nav-h);box-sizing:border-box}
       <button class="pg-arrow" id="nextPg" title="Next page">&#10095;</button>
     </div>
     <div id="grid"></div>
-    <button class="pgRail" id="railPrev" title="Previous page">
-      <span>&#10094;</span><span>&#10094;</span><span>&#10094;</span>
-    </button>
-    <button class="pgRail" id="railNext" title="Next page">
-      <span>&#10095;</span><span>&#10095;</span><span>&#10095;</span>
-    </button>
-    <div class="pagerBar" id="pagerBottom">
-      <button class="pg-arrow" id="prevPg2" title="Previous page">&#10094;</button>
-      <div class="pg-label" id="pgLabel2">–</div>
-      <button class="pg-arrow" id="nextPg2" title="Next page">&#10095;</button>
-    </div>
   </main>
 </div>
 <div id="status"><div class="spin"></div><div id="statusTxt">Loading collection…</div></div>
@@ -942,12 +919,9 @@ function renderPage(){
   page=Math.min(page,pages-1);
   const start=page*PER_PAGE, end=Math.min(start+PER_PAGE,total);
   const label= total? `${start+1} - ${end} / ${total}` : '0 results';
-  $('#pgLabel').textContent=label; $('#pgLabel2').textContent=label;
+  $('#pgLabel').textContent=label;
   const atFirst=page===0, atLast=page>=pages-1;
   $('#prevPg').disabled=atFirst;  $('#nextPg').disabled=atLast;
-  $('#prevPg2').disabled=atFirst; $('#nextPg2').disabled=atLast;
-  $('#railPrev').style.display=atFirst?'none':'flex';
-  $('#railNext').style.display=atLast?'none':'flex';
   const grid=$('#grid');
   grid.innerHTML=filtered.slice(start,end).map(m=>`
     <a class="card" href="${esc(m.link)||'#'}" target="_blank" rel="noopener"
@@ -970,10 +944,6 @@ function goPrev(){ if(page>0){ page--; renderPage(); toTop(); } }
 function goNext(){ page++; renderPage(); toTop(); }
 $('#prevPg').addEventListener('click',goPrev);
 $('#nextPg').addEventListener('click',goNext);
-$('#prevPg2').addEventListener('click',goPrev);
-$('#nextPg2').addEventListener('click',goNext);
-$('#railPrev').addEventListener('click',goPrev);
-$('#railNext').addEventListener('click',goNext);
 let st; $('#searchBox').addEventListener('input',()=>{clearTimeout(st);st=setTimeout(applyFilters,220);});
 $('#sortSel').addEventListener('change',()=>{sortNow();page=0;renderPage();});
 function setSbCollapsed(v){
