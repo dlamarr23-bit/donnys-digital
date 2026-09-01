@@ -1,0 +1,1347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Donny's Digital — Stats</title>
+
+<!-- Warm up every host we'll talk to, before anything else -->
+<link rel="preconnect" href="https://docs.google.com">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://en.wikipedia.org">
+<link rel="preconnect" href="https://upload.wikimedia.org">
+<link rel="preconnect" href="https://cdn.statically.io">
+<link rel="preconnect" href="https://i0.wp.com">
+<link rel="preconnect" href="https://images1-focus-opensocial.googleusercontent.com">
+<link rel="preconnect" href="https://wsrv.nl">
+
+<style>
+/* ============ CRITICAL CSS ============
+   The loading indicator only, inlined ahead of everything else so the bar and
+   the spinner are on screen in the first painted frame. */
+html,body{margin:0;padding:0;background:#171C20}
+#topbar{position:fixed;top:0;left:0;right:0;height:3px;z-index:200;
+  background:rgba(255,255,255,.09);overflow:hidden}
+#topbar.done{opacity:0;transition:opacity .4s .25s}
+#topfill{height:100%;width:0;background:linear-gradient(90deg,#8e1f1f,#e53935,#ef5350);
+  transition:width .3s ease-out}
+#topbar.indet #topfill{width:38%;animation:ddslide 1.15s ease-in-out infinite}
+@keyframes ddslide{0%{transform:translateX(-110%)}100%{transform:translateX(275%)}}
+#status{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:201;
+  display:flex;flex-direction:row;gap:10px;align-items:center;
+  background:#263238;border-radius:20px;padding:8px 17px 8px 13px;
+  font:700 12.5px 'Poppins','Segoe UI',system-ui,sans-serif;letter-spacing:.5px;color:#cfd8dc;
+  box-shadow:0 4px 16px rgba(0,0,0,.55);max-width:min(92vw,520px);text-align:left}
+#status.hidden{display:none}
+#status.err{background:#b71c1c;color:#fff;border-radius:10px}
+#status small{font-weight:700;line-height:1.5;display:block}
+.spin{width:15px;height:15px;border:2px solid rgba(255,255,255,.22);border-top-color:#fff;
+  border-radius:50%;animation:sp .8s linear infinite;flex:none}
+@keyframes sp{to{transform:rotate(360deg)}}
+/* Placeholder shimmer so the page has shape before any data lands. */
+.skel{background:#1f262b;border-radius:10px;animation:ddpulse 1.5s ease-in-out infinite}
+@keyframes ddpulse{0%,100%{opacity:.45}50%{opacity:.85}}
+@media(prefers-reduced-motion:reduce){
+  .spin,.skel{animation:none}
+  #topbar.indet #topfill{animation:none;width:100%}
+}
+</style>
+
+<script>
+/* ============ EARLY DATA LOADER ============
+   Starts downloading before the CSS, the fonts and Chart.js are even parsed.
+
+   WHY THE PAGE WAS BLANK FOR ~5 SECONDS
+   Two separate causes, and the second is the bigger one:
+
+   1. #status used to be a full-screen cover (position:fixed; inset:0) painted
+      over everything until the data finished. So the headings, the panels and
+      the chart frames all existed but nobody could see them. That cover is
+      gone -- the shell now paints immediately and fills in behind a slim top
+      progress bar.
+
+   2. The whole sheet came down through gviz: ~14.7MB of JSON for 18,883 rows,
+      behind Google's query engine. This page needs 16 of the 24 columns --
+      Description alone is 28.6% of the file and is never used here.
+
+   So: the published CSV is now the primary source (static, CDN-cached,
+   gzipped, and streamable, so progress is real rather than a guess), and the
+   gviz fallback asks for only the columns this page actually reads.        */
+(function(){
+  var SHEET_ID   = '1IHUqVvrGcjIESpHaClR9uvmjP3jutcz-ReijMqI7x38';
+  var SHEET_NAME = 'Movies';
+
+  /* Published CSV of the Movies tab -- same link the collection page uses.
+     File > Share > Publish to web > "Movies" > CSV if it ever needs redoing.
+     Set to '' to force the gviz path below. */
+  var CSV_URL = '/mirror/movies.csv';
+/* Was the published Google CSV below. That endpoint answers
+   "Cache-Control: private, max-age=300" and is regenerated per request, so no
+   CDN could hold it and every visit paid for the whole file again. The mirror
+   is the same bytes, rebuilt at deploy time and served by Netlify with Brotli
+   and a real revalidate. If it is ever missing, this page still falls back to
+   the live sheet on its own, exactly as it did before.
+   Original: https://docs.google.com/spreadsheets/d/e/2PACX-1vTNcy_TXkl7kRJvIvf4U_q9pZUCdrJ9RsQ8Vgnr5NoX8K679jUhWC6iWZvbCYR2bOaRG2ypgFB13PEB/pub?gid=0&single=true&output=csv */
+
+  /* Only the columns this page reads. Dropping Poster, Sort Title,
+     Description, Where to Watch, Highest Quality, Awards, Acquired by and
+     Tomato Meter removes about 45% of the bytes. */
+  var GVIZ_COLS = 'B,D,E,G,H,I,J,K,L,M,N,S,T,V,W,X';
+
+  window.__DD_SHEET_ID = SHEET_ID;
+  window.__DD_SHEET_NAME = SHEET_NAME;
+  var BASE = 'https://docs.google.com/spreadsheets/d/' + SHEET_ID
+           + '/gviz/tq?headers=1&sheet=' + encodeURIComponent(SHEET_NAME);
+  window.__DD_GVIZ = BASE;
+  window.__DD_GVIZ_SLIM = BASE + '&tq=' + encodeURIComponent('select ' + GVIZ_COLS);
+
+  /* progress hub -- the indicator subscribes later and gets the last event */
+  var subs = [], last = null;
+  window.__DD_PROG = function(cb){ subs.push(cb); if(last){ try{ cb(last); }catch(e){} } };
+  function emit(o){ last = o; for(var i=0;i<subs.length;i++){ try{ subs[i](o); }catch(e){} } }
+  emit({stage:'connect'});
+
+  /* Remembered download size, so the bar shows a real percentage. gzip means
+     Content-Length is usually absent. */
+  try{ window.__DD_EXP = +(localStorage.getItem('dd_stats_bytes')||0) || 0; }catch(e){ window.__DD_EXP = 0; }
+
+  function defer(){ var d={}; d.p=new Promise(function(a,b){ d.res=a; d.rej=b; }); return d; }
+  var out = defer();
+  window.__DD_DATA = out.p;
+
+  /* ---- incremental RFC-4180 CSV parser ---------------------------------
+     Fed arbitrary network chunks. Complete records are committed and dropped;
+     a partial trailing record carries over. Cells are sliced out in one go
+     rather than built a character at a time -- on an 11MB export the
+     character-by-character version costs seconds in garbage alone. */
+  function CsvStream(){ this.buf=''; this.rows=[]; }
+  CsvStream.prototype.push=function(chunk){
+    var s=this.buf+chunk, n=s.length, i=0, start=0, commit=0;
+    var cell='', dirty=false, q=false, row=[], rows=this.rows, ch;
+    while(i<n){
+      ch=s.charCodeAt(i);
+      if(q){
+        if(ch===34){
+          if(s.charCodeAt(i+1)===34){ cell+=s.slice(start,i+1); i+=2; start=i; dirty=true; continue; }
+          cell+=s.slice(start,i); q=false; dirty=true; i++; start=i; continue;
+        }
+        i++; continue;
+      }
+      if(ch===34){ q=true; dirty=true; i++; start=i; continue; }
+      if(ch===44){ row.push(dirty?cell+s.slice(start,i):s.slice(start,i)); cell=''; dirty=false; i++; start=i; continue; }
+      if(ch===10||ch===13){
+        row.push(dirty?cell+s.slice(start,i):s.slice(start,i)); cell=''; dirty=false;
+        if(ch===13 && s.charCodeAt(i+1)===10) i++;
+        i++; start=i;
+        if(row.length>1||row[0]!=='') rows.push(row);
+        row=[]; commit=i;
+        continue;
+      }
+      i++;
+    }
+    this.buf=s.slice(commit);
+    return rows;
+  };
+  CsvStream.prototype.end=function(){
+    var t=this.buf; this.buf='';
+    if(t.length) this.push(t.charCodeAt(t.length-1)===10 ? t : t+'\n');
+    return this.rows;
+  };
+
+  function streamCsv(){
+    if(!CSV_URL) return Promise.reject(new Error('CSV_URL not set'));
+    return fetch(CSV_URL, {credentials:'omit'}).then(function(r){
+      if(!r.ok) throw new Error('CSV HTTP '+r.status);
+      var cs=new CsvStream(), cols=null, bytes=0;
+      function header(){
+        if(!cols && cs.rows.length){
+          cols=cs.rows.shift();
+          var ok=false;
+          for(var i=0;i<cols.length;i++) if(String(cols[i]).trim()==='Title') ok=true;
+          if(!ok) throw new Error('published CSV has no Title column');
+        }
+      }
+      if(!r.body || !r.body.getReader){
+        return r.text().then(function(txt){
+          cs.push(txt); var rows=cs.end(); header();
+          emit({stage:'downloaded', bytes:txt.length, rows:rows.length});
+          out.res({cols:cols, rows:rows, src:'csv'});
+        });
+      }
+      var reader=r.body.getReader(), dec=new TextDecoder('utf-8');
+      return (function pump(){
+        return reader.read().then(function(res){
+          if(res.done){
+            var rows=cs.end(); header();
+            if(!cols || !rows.length) throw new Error('empty CSV');
+            try{ localStorage.setItem('dd_stats_bytes', String(bytes)); }catch(e){}
+            emit({stage:'downloaded', bytes:bytes, rows:rows.length});
+            out.res({cols:cols, rows:rows, src:'csv'});
+            return;
+          }
+          bytes += res.value.byteLength;
+          cs.push(dec.decode(res.value,{stream:true}));
+          header();
+          emit({stage:'download', bytes:bytes, total:window.__DD_EXP, rows:cs.rows.length});
+          return pump();
+        });
+      })();
+    });
+  }
+
+  /* ---- gviz fallback, flattened to the same {cols, rows} shape ---- */
+  function gvizToRaw(json){
+    if(json && json.status==='error'){
+      throw new Error((json.errors&&json.errors[0]&&json.errors[0].detailed_message)||'sheet returned an error');
+    }
+    var cols=(json.table.cols||[]).map(function(c){ return (c.label||'').trim(); });
+    var src=json.table.rows||[], rows=new Array(src.length);
+    for(var r=0;r<src.length;r++){
+      var c=src[r].c||[], o=new Array(cols.length);
+      for(var i=0;i<cols.length;i++){ var x=c[i]; o[i]=(x==null||x.v==null)?'':x.v; }
+      rows[r]=o;
+    }
+    return {cols:cols, rows:rows, src:'gviz'};
+  }
+  function gvizFetch(url){
+    return fetch(url+'&tqx=out:json').then(function(r){
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      return r.text();
+    }).then(function(t){
+      return JSON.parse(t.substring(t.indexOf('(')+1, t.lastIndexOf(')')));
+    });
+  }
+  function gvizJsonp(url){
+    return new Promise(function(resolve,reject){
+      var cb='__gviz_'+Math.random().toString(36).slice(2);
+      var timer=setTimeout(function(){ clean(); reject(new Error('timed out')); },45000);
+      function clean(){ clearTimeout(timer); delete window[cb]; tag.remove(); }
+      window[cb]=function(j){ clean(); resolve(j); };
+      var tag=document.createElement('script');
+      tag.src=url+'&tqx=out:json;responseHandler:'+cb;
+      tag.onerror=function(){ clean(); reject(new Error('sheet not reachable')); };
+      document.head.appendChild(tag);
+    });
+  }
+
+  var settled=false, gvizStarted=false, errs=[];
+  out.p.then(function(){ settled=true; }, function(){ settled=true; });
+  function startGviz(){
+    if(gvizStarted||settled) return;
+    gvizStarted=true;
+    emit({stage:'fallback'});
+    var url=window.__DD_GVIZ_SLIM;
+    var left=2;
+    function fail(e){
+      errs.push((e&&e.message)||String(e));
+      if(--left===0 && !settled) out.rej(new Error(errs.join(' | ')));
+    }
+    gvizFetch(url).then(function(j){ if(!settled) out.res(gvizToRaw(j)); }, fail);
+    gvizJsonp(url).then(function(j){ if(!settled) out.res(gvizToRaw(j)); }, fail);
+  }
+
+  streamCsv().catch(function(e){ errs.push((e&&e.message)||String(e)); startGviz(); });
+  if(!CSV_URL) startGviz();
+  else setTimeout(function(){ if(!settled) startGviz(); }, 6000);
+})();
+</script>
+
+<!-- Fonts and Chart.js no longer block the first paint -->
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@700&display=swap"
+      rel="stylesheet" media="print" onload="this.media='all'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=Poppins:wght@700&display=swap" rel="stylesheet"></noscript>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+
+<style>
+:root{
+  --bg:#171C20; --panel:#1f262b; --panel2:#242c32;
+  --ink:#eceff1; --muted:#90a4ae; --accent:#e53935;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{background:var(--bg);scrollbar-width:none;-ms-overflow-style:none}
+html::-webkit-scrollbar,body::-webkit-scrollbar{display:none}
+body{
+  background:var(--bg);color:var(--ink);
+  font-family:'Poppins','Segoe UI',sans-serif;font-weight:700;
+  padding:16px 14px 30px;
+}
+h1{font:700 26px 'Poppins',sans-serif;letter-spacing:2.5px;text-transform:uppercase;margin-bottom:2px}
+.sub{color:var(--muted);font-size:13px;margin-bottom:14px}
+#chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;min-height:30px}
+.chip{
+  display:flex;align-items:center;gap:8px;background:var(--accent);color:#fff;
+  border-radius:16px;padding:5px 12px;font:700 12px 'Poppins',sans-serif;letter-spacing:.5px;
+}
+.chip button{background:none;border:none;color:#fff;cursor:pointer;font-size:13px;line-height:1}
+.chip-hint{color:var(--muted);font-size:12px;align-self:center}
+#cards{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:14px}
+.card{background:var(--panel);border-radius:10px;padding:14px 14px 12px;border-top:3px solid var(--accent)}
+.card .num{font:700 26px 'Poppins',sans-serif;letter-spacing:1px}
+.card .lbl{color:var(--muted);font:700 10.5px 'Poppins',sans-serif;letter-spacing:1.4px;text-transform:uppercase;margin-top:2px}
+#cards .skel{height:78px;border-top:3px solid rgba(229,57,53,.35)}
+#panels{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.panel{background:var(--panel);border-radius:10px;padding:14px 16px 10px;min-width:0}
+.panel.wide{grid-column:1/-1}
+/* A full-width row that lays its own children out three across, so a
+   compact panel (like tonight's pick) doesn't have to waste an entire row
+   the way a lone .wide panel would. */
+.row3{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+@media(max-width:900px){ .row3{grid-template-columns:1fr} }
+.panel h2{font:700 15px 'Poppins',sans-serif;letter-spacing:1.8px;text-transform:uppercase;margin-bottom:2px}
+.panel .hint{color:var(--muted);font-size:11.5px;margin-bottom:8px}
+.chart-wrap{position:relative;height:260px}
+.panel.wide .chart-wrap{height:230px}
+.chart-wrap.tall{height:300px}
+.chart-wrap.map{height:340px}
+.board{
+  display:grid;grid-template-columns:repeat(12,1fr);
+  gap:10px;padding:4px 0 10px;
+}
+@media(max-width:1100px){ .board{grid-template-columns:repeat(8,1fr)} }
+@media(max-width:760px){ .board{grid-template-columns:repeat(4,1fr)} }
+.brow{
+  display:flex;flex-direction:column;align-items:center;gap:6px;
+  background:var(--panel2);border-radius:10px;padding:12px 6px 10px;
+  cursor:pointer;transition:background .15s,transform .12s;text-align:center;
+}
+.brow:hover{background:#2a333a;transform:translateY(-2px)}
+.brow.active{outline:2px solid var(--accent)}
+.brow.dim{opacity:.4}
+.brow .face{
+  width:76px;height:76px;min-width:76px;border-radius:50%;overflow:hidden;
+  background:#37474f;display:flex;align-items:center;justify-content:center;
+  color:#eceff1;font:700 20px 'Poppins',sans-serif;letter-spacing:1px;
+}
+.brow .face img{width:100%;height:100%;object-fit:cover}
+.brow .who{
+  width:100%;font:700 12px 'Poppins',sans-serif;line-height:1.2;
+  overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+}
+.brow .n{font:700 15px 'Poppins',sans-serif;letter-spacing:.5px;color:var(--muted)}
+.search-row{margin-bottom:10px}
+.board-search{
+  width:100%;max-width:340px;background:var(--panel2);color:var(--ink);
+  border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:9px 12px;
+  font:700 13px 'Poppins',sans-serif;outline:none;transition:border-color .15s,box-shadow .15s;
+}
+.board-search::placeholder{color:var(--muted)}
+.board-search:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(229,57,53,.25)}
+.board-search.no-match{border-color:var(--accent);animation:ddshake .3s}
+@keyframes ddshake{25%{transform:translateX(-4px)}75%{transform:translateX(4px)}}
+/* Collaborations panel (shows for two focused actors, or an actor + a director) */
+#collabPanel{display:none}
+#collabCovers{
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));
+  gap:12px;padding:4px 0 10px;
+}
+.cover{display:flex;flex-direction:column;gap:6px;text-decoration:none;color:var(--ink)}
+.cover .art{
+  aspect-ratio:2/3;border-radius:8px;overflow:hidden;background:var(--panel2);
+  display:flex;align-items:center;justify-content:center;text-align:center;
+  color:var(--muted);font:700 12px 'Poppins',sans-serif;padding:6px;
+  transition:transform .12s;
+}
+.cover:hover .art{transform:translateY(-2px)}
+.cover .art img{width:100%;height:100%;object-fit:cover}
+.cover .cap{font:700 12px 'Poppins',sans-serif;line-height:1.25;
+  overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.cover .cap small{color:var(--muted);font-weight:700}
+@media(max-width:760px){
+  #cards{grid-template-columns:repeat(2,1fr)}
+  #panels{grid-template-columns:1fr}
+  .panel.wide{grid-column:auto}
+  .chart-wrap{height:230px}
+  .chart-wrap.map{height:240px}
+}
+#pickPanel{
+  background:linear-gradient(135deg,#232b31,#1c2227);height:100%;
+  border-radius:10px;padding:18px;display:flex;gap:18px;align-items:center;flex-wrap:wrap;
+}
+#pickPoster{
+  width:110px;min-width:110px;aspect-ratio:2/3;border-radius:8px;overflow:hidden;
+  background:var(--panel2);display:flex;align-items:center;justify-content:center;
+  color:var(--muted);font:700 12px 'Poppins',sans-serif;text-align:center;
+}
+#pickPoster img{width:100%;height:100%;object-fit:cover}
+#pickBody{flex:1;min-width:220px}
+#pickBody h2{font:700 17px 'Poppins',sans-serif;letter-spacing:1.8px;text-transform:uppercase;margin-bottom:4px}
+#pickTitle{font:700 22px 'Poppins',sans-serif;letter-spacing:.5px;margin:4px 0 2px}
+#pickMeta{color:var(--muted);font-size:13px;margin-bottom:12px}
+#pickBtns{display:flex;gap:10px;flex-wrap:wrap}
+#pickBtns a,#pickBtns button{
+  border:none;border-radius:8px;padding:10px 18px;cursor:pointer;text-decoration:none;
+  font:700 12px 'Poppins',sans-serif;letter-spacing:1.2px;text-transform:uppercase;
+}
+#rollBtn{background:#fff;color:#37474f}
+#rollBtn:hover{background:#eceff1}
+#watchLink{background:var(--accent);color:#fff}
+#watchLink:hover{background:#b71c1c}
+</style>
+<!-- Favicon: the avatar, at the sizes browsers actually ask for. Served from
+     /assets/ so they are cached immutably alongside the nav mark. -->
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png">
+<link rel="icon" type="image/png" sizes="96x96" href="/assets/favicon-96.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/assets/favicon-180.png"></head>
+<body>
+<!-- ==== SHARED NAV =========================================================
+     Google Sites drew this bar; on Netlify the pages own it. Inlined rather
+     than pulled from a stylesheet so it paints in the first frame with no
+     extra round trip -- it is under 1KB and never changes independently.
+     ==================================================================== -->
+<style>
+:root{--dd-nav-h:52px}
+.dd-nav{position:fixed;top:0;left:0;right:0;height:var(--dd-nav-h);z-index:150;
+  display:flex;align-items:center;gap:4px;padding:0 18px;background:#000;
+  border-bottom:1px solid #23292e;
+  font-family:'Poppins','Segoe UI',system-ui,sans-serif;font-weight:700}
+.dd-brand{display:flex;align-items:center;gap:9px;margin-right:22px;flex:0 0 auto;
+  color:#fff;text-decoration:none;font-size:16px;letter-spacing:.6px;white-space:nowrap}
+/* Transparent PNG, so it needs no plate behind it -- it sits straight on the
+   bar. object-fit:contain keeps the whole avatar rather than cropping the
+   popcorn out of the bottom-left corner. */
+.dd-brand-img{width:32px;height:32px;flex:0 0 auto;object-fit:contain}
+.dd-links{display:flex;align-items:center;gap:2px;overflow-x:auto;
+  scrollbar-width:none;-ms-overflow-style:none}
+.dd-links::-webkit-scrollbar{display:none}
+.dd-links a{color:#eceff1;text-decoration:none;font-size:15px;letter-spacing:.3px;
+  padding:8px 13px;border-radius:6px;white-space:nowrap;
+  transition:color .12s ease,background .12s ease}
+.dd-links a:hover{color:#fff;background:#1b2126}
+.dd-links a[aria-current=page]{color:#ef5350}
+.dd-links a[aria-current=page]:hover{background:transparent}
+/* Everything the pages already draw starts below the bar. */
+body{padding-top:var(--dd-nav-h);box-sizing:border-box}
+/* The loading toast is fixed near the top and would sit under the bar. */
+#status{top:calc(var(--dd-nav-h) + 20px)!important}
+@media(max-width:760px){
+  :root{--dd-nav-h:46px}
+  .dd-nav{padding:0 10px}
+  .dd-brand{margin-right:12px;font-size:14px}
+  .dd-brand-img{width:27px;height:27px}
+  .dd-links a{font-size:13.5px;padding:7px 9px}
+}
+</style><nav class="dd-nav">
+  <a class="dd-brand" href="/">
+    <img class="dd-brand-img" src="/assets/brand-64.png"
+         srcset="/assets/brand-64.png 1x, /assets/brand-128.png 2x"
+         width="30" height="30" alt="" decoding="async">
+    Donny's Digital
+  </a>
+  <div class="dd-links">
+    <a href="/">Movies</a>
+    <a href="/wishlist">Wishlist</a>
+    <a href="/data" aria-current="page">Data</a>
+    <a href="/sales">Sales</a>
+    <a href="/ma-compare">MA Compare</a>
+    <a href="/d2d">D2D</a>
+  </div>
+</nav>
+<div id="topbar" class="indet"><div id="topfill"></div></div>
+
+<h1>Collection Stats</h1>
+<div class="sub">Live from the Donny's Digital sheet — click any bar or slice to focus every chart on it.</div>
+<div id="chips"><span class="chip-hint">No focus active — showing the whole collection.</span></div>
+<div id="cards"></div>
+<script>
+/* Placeholder stat cards, written during HTML parse so the top of the page has
+   shape immediately instead of being empty. renderCards() replaces them. */
+(function(){var c=document.getElementById('cards'),h='';for(var i=0;i<6;i++)h+='<div class="skel"></div>';c.innerHTML=h;})();
+</script>
+<div id="panels">
+  <div class="row3">
+    <div id="pickPanel">
+      <div id="pickPoster">?</div>
+      <div id="pickBody">
+        <h2>&#127922; Tonight's pick</h2>
+        <div id="pickTitle">Roll the dice…</div>
+        <div id="pickMeta">A random title from your Need to Watch list — honors whatever focus is active above.</div>
+        <div id="pickBtns">
+          <button id="rollBtn">&#127922; Roll again</button>
+          <a id="watchLink" href="#" target="_blank" rel="noopener" style="display:none">Watch it</a>
+        </div>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Titles by decade</h2>
+      <div class="hint">Click a decade to focus on it</div>
+      <div class="chart-wrap"><canvas id="decadeChart"></canvas></div>
+    </div>
+    <div class="panel">
+      <h2>Top genres</h2>
+      <div class="hint">Click a genre to focus on it</div>
+      <div class="chart-wrap"><canvas id="genreChart"></canvas></div>
+    </div>
+  </div>
+  <div class="panel wide" id="collabPanel">
+    <h2 id="collabTitle">Collaborations</h2>
+    <div class="hint" id="collabHint">Movies featuring both focused people</div>
+    <div id="collabCovers"></div>
+  </div>
+  <div class="panel wide">
+    <h2>Director leaderboard — top <span id="dirCountLbl">48</span></h2>
+    <div class="hint" id="dirHint">Movie credits only (TV excluded) — click a face to focus on their films, or search for anyone else in the collection</div>
+    <div class="search-row">
+      <input type="search" id="dirSearchInput" class="board-search" list="dirSearchList" placeholder="Search any director…" autocomplete="off" aria-label="Search directors">
+      <datalist id="dirSearchList"></datalist>
+    </div>
+    <div class="board" id="directorBoard"></div>
+  </div>
+  <div class="panel wide">
+    <h2>Actor leaderboard — top <span id="actCountLbl">96</span></h2>
+    <div class="hint" id="actHint">Movie credits only (TV excluded) — click up to two faces to see their collaborations, or search for anyone else in the collection</div>
+    <div class="search-row">
+      <input type="search" id="actSearchInput" class="board-search" list="actSearchList" placeholder="Search any actor… (up to 2)" autocomplete="off" aria-label="Search actors">
+      <datalist id="actSearchList"></datalist>
+    </div>
+    <div class="board" id="actorBoard"></div>
+  </div>
+  <div class="row3">
+    <div class="panel">
+      <h2>Media type</h2>
+      <div class="hint">Click a slice to focus on it</div>
+      <div class="chart-wrap"><canvas id="mediaChart"></canvas></div>
+    </div>
+    <div class="panel">
+      <h2>Viewing status</h2>
+      <div class="hint">Click a slice to focus on it</div>
+      <div class="chart-wrap"><canvas id="statusChart"></canvas></div>
+    </div>
+    <div class="panel">
+      <h2>Definition</h2>
+      <div class="hint">Click a quality tier to focus on it</div>
+      <div class="chart-wrap"><canvas id="qualityChart"></canvas></div>
+    </div>
+  </div>
+  <div class="panel wide">
+    <h2>Top studios — top <span id="studioCountLbl">25</span></h2>
+    <div class="hint">Click a studio to focus on it</div>
+    <div class="chart-wrap tall"><canvas id="studioChart"></canvas></div>
+  </div>
+  <div class="panel">
+    <h2>MPAA rating</h2>
+    <div class="hint">Click a rating to focus on it</div>
+    <div class="chart-wrap"><canvas id="mpaaChart"></canvas></div>
+  </div>
+  <div class="panel">
+    <h2>Languages</h2>
+    <div class="hint">Beyond English — click a language to focus on it</div>
+    <div class="chart-wrap"><canvas id="langChart"></canvas></div>
+  </div>
+  <div class="panel wide">
+    <h2>IMDB rating spread</h2>
+    <div class="hint">How the collection scores, 0–10</div>
+    <div class="chart-wrap"><canvas id="ratingChart"></canvas></div>
+  </div>
+  <div class="panel wide">
+    <h2>Growth of the collection</h2>
+    <div class="hint">Cumulative titles by month added</div>
+    <div class="chart-wrap"><canvas id="growthChart"></canvas></div>
+  </div>
+</div>
+
+<div id="status"><div class="spin"></div><div id="statusTxt">Loading the collection…</div></div>
+
+<script>
+/* Sheet config lives in the tiny <head> script so the download starts early. */
+const SHEET_ID=window.__DD_SHEET_ID, SHEET_NAME=window.__DD_SHEET_NAME, GVIZ=window.__DD_GVIZ;
+const $=s=>document.querySelector(s);
+const splitCsv=s=>String(s??'').split(',').map(x=>x.trim()).filter(Boolean);
+
+/* ---------- STATUS + TOP PROGRESS BAR ----------
+   #status is a small chip at the top now, not a full-screen cover, so the page
+   is visible and scrollable from the first frame. */
+function setStatus(html, spinning=true, isErr=false){
+  const s=$('#status');
+  if(html===null){ s.classList.add('hidden'); return; }
+  s.classList.remove('hidden');
+  s.classList.toggle('err', isErr);
+  s.querySelector('.spin').style.display = spinning ? '' : 'none';
+  $('#statusTxt').innerHTML = html;
+}
+const topbarEl=$('#topbar'), barFill=$('#topfill');
+let barPct=0;
+function setBar(p){
+  if(p==null){ topbarEl.classList.add('indet'); return; }
+  p=Math.max(0,Math.min(1,p));
+  if(p<barPct) return;
+  barPct=p;
+  topbarEl.classList.remove('indet');
+  barFill.style.width=(p*100).toFixed(1)+'%';
+}
+function barDone(){ topbarEl.classList.remove('indet'); barFill.style.width='100%'; topbarEl.classList.add('done'); }
+const fmtMB = b => (b/1048576).toFixed(1)+' MB';
+window.__DD_PROG(o=>{
+  if(o.stage==='connect'){ setStatus('Connecting to the sheet…'); setBar(null); }
+  else if(o.stage==='download'){
+    setStatus('Loading the collection… '+fmtMB(o.bytes)+(o.rows?' · '+o.rows.toLocaleString()+' titles':''));
+    setBar(o.total ? Math.min(0.65, o.bytes/o.total*0.65) : null);
+  }
+  else if(o.stage==='downloaded'){ setStatus('Counting '+o.rows.toLocaleString()+' titles…'); setBar(0.7); }
+  else if(o.stage==='fallback'){ setStatus('Published CSV unavailable — trying the live sheet…'); setBar(null); }
+});
+
+// ---- POSTER PROXYING ----
+// Posters come from images2.vudu.com, which is blocked on some work networks
+// and refused by several image proxies, so for Vudu URLs we try a list in order
+// and the first that succeeds wins. Non-Vudu posters load directly, then wsrv.
+const stripScheme = u => u.replace(/^https?:\/\//,'');
+const VUDU_PROXIES = [
+  u => 'https://cdn.statically.io/img/' + stripScheme(u) + '?w=400',
+  u => 'https://i0.wp.com/' + stripScheme(u) + '?w=400',
+  u => 'https://wsrv.nl/?w=400&url=' + encodeURIComponent(u),
+  u => 'https://images1-focus-opensocial.googleusercontent.com/gadgets/proxy?container=focus&resize_w=400&url=' + encodeURIComponent(u),
+];
+const isVudu = u => /vudu\.com/i.test(u);
+const firstSrc = u => isVudu(u) ? VUDU_PROXIES[0](u) : u;
+function posterError(img){
+  const orig = img.getAttribute('data-src') || '';
+  const step = (+(img.getAttribute('data-try') || '0')) + 1;
+  const chain = isVudu(orig)
+    ? VUDU_PROXIES.map(fn=>fn(orig))
+    : [orig, 'https://wsrv.nl/?w=400&url=' + encodeURIComponent(orig)];
+  if(step < chain.length){ img.setAttribute('data-try', step); img.src = chain[step]; return; }
+  const p = img.parentNode, t = img.getAttribute('alt') || '';
+  if(p){ img.remove(); if(t) p.textContent = t; }
+}
+function wirePosters(root){
+  if(!root) return;
+  root.querySelectorAll('img[data-src]').forEach(img=>{
+    img.addEventListener('error', ()=>posterError(img));
+    if(img.complete && img.naturalWidth===0) posterError(img);
+  });
+}
+/* palette: blues, grays, black, white, red only */
+const PALETTE=['#e53935','#1e88e5','#90a4ae','#eceff1','#0d47a1','#546e7a','#42a5f5','#b71c1c','#b0bec5','#1565c0','#78909c','#263238'];
+const DIM='rgba(120,144,156,.30)';
+const RED='#e53935', BLUE='#1e88e5';
+const TV_RE=/tv|television|series/i;
+let rows=[];
+const focus={decade:null, genre:null, media:null, status:null,
+             director:null, actors:[], quality:null, mpaa:null, studio:null, language:null};
+const charts={};
+/* ---------- cross-filtering ---------- */
+function decadeOf(y){ return y==null?null:Math.floor(y/10)*10; }
+function filteredRows(){
+  return rows.filter(m=>{
+    if(focus.decade!=null && decadeOf(m.year)!==focus.decade) return false;
+    if(focus.genre && !m.genres.includes(focus.genre)) return false;
+    if(focus.media && m.media!==focus.media) return false;
+    if(focus.status && !m.statusList.includes(focus.status)) return false;
+    if(focus.director && !m.directors.includes(focus.director)) return false;
+    if(focus.actors.length && !focus.actors.every(a=>m.actors.includes(a))) return false;
+    if(focus.quality && m.quality!==focus.quality) return false;
+    if(focus.mpaa && m.mpaa!==focus.mpaa) return false;
+    if(focus.studio && m.studio!==focus.studio) return false;
+    if(focus.language && !m.langs.includes(focus.language)) return false;
+    return true;
+  });
+}
+function toggleFocus(key,val){
+  if(key==='actor'){
+    const i=focus.actors.indexOf(val);
+    if(i>=0) focus.actors.splice(i,1);
+    else{
+      focus.actors.push(val);
+      if(focus.actors.length>2) focus.actors.shift();
+    }
+  } else {
+    focus[key] = (focus[key]===val) ? null : val;
+  }
+  refresh();
+}
+function isFocused(key,name){ return key==='actor' ? focus.actors.includes(name) : focus[key]===name; }
+function anyFocused(key){ return key==='actor' ? focus.actors.length>0 : focus[key]!=null; }
+function renderChips(){
+  const host=$('#chips'); host.innerHTML='';
+  let any=false;
+  const addChip=(label,onClear)=>{
+    any=true;
+    const chip=document.createElement('span');
+    chip.className='chip';
+    chip.innerHTML=`${label} <button title="Clear">&#10005;</button>`;
+    chip.querySelector('button').addEventListener('click',()=>{ onClear(); refresh(); });
+    host.appendChild(chip);
+  };
+  focus.actors.forEach(name=>addChip(name,()=>{
+    const i=focus.actors.indexOf(name); if(i>=0) focus.actors.splice(i,1);
+  }));
+  const defs=[['decade',v=>v+'s'],['genre',v=>v],['media',v=>v],['status',v=>v],
+              ['director',v=>'Dir: '+v],['quality',v=>v],
+              ['mpaa',v=>'Rated '+v],['studio',v=>v],['language',v=>v]];
+  defs.forEach(([k,fmt])=>{
+    if(focus[k]==null) return;
+    addChip(fmt(focus[k]), ()=>{ focus[k]=null; });
+  });
+  if(!any) host.innerHTML='<span class="chip-hint">No focus active — showing the whole collection.</span>';
+}
+/* ---------- aggregation helpers ---------- */
+function countBy(list, fn){
+  const map=new Map();
+  list.forEach(m=>{
+    const ks=fn(m); if(ks==null) return;
+    (Array.isArray(ks)?ks:[ks]).forEach(k=>{ if(k!=null&&k!=='') map.set(k,(map.get(k)||0)+1); });
+  });
+  return map;
+}
+function topN(map,n,tie){
+  return [...map.entries()].sort((a,b)=>
+    b[1]-a[1]
+    || ((tie&&tie.get(b[0]))||0)-((tie&&tie.get(a[0]))||0)
+    || String(a[0]).localeCompare(String(b[0]))
+  ).slice(0,n);
+}
+function fmtRuntime(mins){
+  const days=Math.floor(mins/1440), hrs=Math.round((mins%1440)/60);
+  return days>0 ? `${days.toLocaleString()}d ${hrs}h` : `${Math.floor(mins/60).toLocaleString()}h`;
+}
+let overallDir=null, overallAct=null;
+function ensureOverall(){
+  if(overallDir) return;
+  const filmAll=rows.filter(m=>!TV_RE.test(m.media));
+  overallDir=countBy(filmAll,m=>m.directors);
+  overallAct=countBy(filmAll,m=>m.actors);
+}
+/* ---------- stat cards ---------- */
+function renderCards(list){
+  const total=list.length;
+  const watched=list.filter(m=>m.watched).length;
+  const need=list.filter(m=>m.need).length;
+  const runtime=list.reduce((a,m)=>a+(m.runtime||0),0);
+  const imdbs=list.filter(m=>m.imdb!=null);
+  const avgImdb=imdbs.length?(imdbs.reduce((a,m)=>a+m.imdb,0)/imdbs.length).toFixed(1):'–';
+  const cutoff=new Date(); cutoff.setDate(cutoff.getDate()-30);
+  const recent=list.filter(m=>m.added && m.added>=cutoff).length;
+  const cards=[
+    [total.toLocaleString(),'Titles'],
+    [watched.toLocaleString()+(total?` (${Math.round(watched/total*100)}%)`:''),'Watched'],
+    [need.toLocaleString(),'Need to Watch'],
+    [fmtRuntime(runtime),'Total runtime'],
+    [avgImdb,'Avg IMDB'],
+    ['+'+recent.toLocaleString(),'Added, 30 days'],
+  ];
+  $('#cards').innerHTML = cards.map(([n,l])=>`<div class="card"><div class="num">${n}</div><div class="lbl">${l}</div></div>`).join('');
+}
+/* ---------- chart theming ---------- */
+let themed=false;
+function themeCharts(){
+  if(themed) return; themed=true;
+  Chart.defaults.color='#b0bec5';
+  Chart.defaults.font.family="'Poppins',sans-serif";
+  Chart.defaults.font.size=11.5;
+  Chart.defaults.font.weight='700';
+  Chart.defaults.borderColor='rgba(255,255,255,.07)';
+  Chart.defaults.plugins.legend.labels.boxWidth=12;
+  Chart.defaults.plugins.tooltip.backgroundColor='#0f1418';
+  Chart.defaults.plugins.tooltip.titleFont={family:"'Poppins',sans-serif",size:14,weight:'700'};
+  Chart.defaults.animation.duration=450;
+}
+function barColors(labels, activeVal, base){
+  return labels.map((l,i)=> activeVal==null ? (base||PALETTE[i%PALETTE.length])
+                          : (l===activeVal ? RED : DIM));
+}
+function base(extra){
+  return Object.assign({
+    responsive:true,maintainAspectRatio:false,
+    plugins:{legend:{display:false}},
+    scales:{x:{grid:{display:false}},y:{beginAtZero:true,ticks:{precision:0}}}
+  },extra);
+}
+function hbar(extra){
+  return Object.assign({
+    responsive:true,maintainAspectRatio:false,indexAxis:'y',
+    plugins:{legend:{display:false}},
+    scales:{x:{beginAtZero:true,ticks:{precision:0}},y:{grid:{display:false}}}
+  },extra);
+}
+function donut(onClick){
+  return {responsive:true,maintainAspectRatio:false,cutout:'62%',
+    plugins:{legend:{position:'right'}},onClick};
+}
+function upsert(id,cfg){
+  if(charts[id]){ charts[id].data=cfg.data; charts[id].options=cfg.options; charts[id].update(); }
+  else charts[id]=new Chart($('#'+id),cfg);
+}
+/* ---------- leaderboards with headshots ---------- */
+const headCache=new Map();          // name -> url | null
+const HEAD_OVERRIDES={
+  'Owen Wilson':'Owen Wilson',
+  'Susan Sarandon':'Susan Sarandon',
+  'Robert Altman':'Robert Altman',
+  'Robin Williams':'Robin Williams',
+  'Robert Downey Jr.':'Robert Downey Jr.',
+  'Henry Koster':'Henry Koster',
+  'Norman Taurog':'Norman Taurog',
+  'Hamilton Luske':'Hamilton Luske',
+  'John Cazale':'John Cazale',
+  'Jodie Foster':'Jodie Foster',
+  'Barbara Stanwyck':'Barbara Stanwyck'
+};
+try{
+  if(!localStorage.getItem('dd_head_ovfix')){
+    const raw=JSON.parse(localStorage.getItem('dd_heads2')||'{}');
+    let changed=false;
+    for(const k in HEAD_OVERRIDES){ if(k in raw){ delete raw[k]; changed=true; } }
+    if(changed) localStorage.setItem('dd_heads2',JSON.stringify(raw));
+    localStorage.setItem('dd_head_ovfix','1');
+  }
+}catch(e){}
+let headStore={};
+try{
+  const raw=JSON.parse(localStorage.getItem('dd_heads2')||'{}');
+  for(const k in raw){ if(raw[k]) headStore[k]=raw[k]; }
+}catch(e){}
+let headSaveTimer=null;
+function saveHeadStore(){
+  clearTimeout(headSaveTimer);
+  headSaveTimer=setTimeout(()=>{
+    try{ localStorage.setItem('dd_heads2',JSON.stringify(headStore)); }catch(e){}
+  },800);
+}
+function initials(name){
+  return name.split(/\s+/).slice(0,2).map(w=>w[0]||'').join('').toUpperCase();
+}
+function escH(x){return String(x).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');}
+function knownHead(name){
+  const c=headCache.get(name);
+  if(c) return c;
+  if(headStore[name]){ headCache.set(name,headStore[name]); return headStore[name]; }
+  return null;
+}
+function renderBoard(id, sortedAll, n, key){
+  const host=$('#'+id);
+  const anyOn=anyFocused(key);
+  // Base top-N, plus anyone currently focused (e.g. via search) who has a
+  // nonzero count under the active filters but fell outside the top N —
+  // pinned to the front so a search result is always visible, not just
+  // reflected in the chip strip.
+  const pinNames = key==='director' ? (focus.director?[focus.director]:[]) : focus.actors;
+  const byName = new Map(sortedAll);
+  let top = sortedAll.slice(0,n);
+  const shown = new Set(top.map(x=>x[0]));
+  const pins = pinNames.filter(nm=>byName.has(nm) && !shown.has(nm)).map(nm=>[nm, byName.get(nm)]);
+  top = [...pins, ...top];
+  host.innerHTML=top.map(([name,count])=>{
+    const active=isFocused(key,name);
+    const dim=anyOn && !active;
+    const url=knownHead(name);
+    const face=url
+      ? `<img src="${escH(url)}" decoding="async" loading="lazy">`
+      : escH(initials(name));
+    return `<div class="brow${dim?' dim':''}${active?' active':''}" data-name="${escH(name)}">
+      <div class="face" data-face="${escH(name)}">${face}</div>
+      <div class="who">${escH(name)}</div>
+      <div class="n">${count.toLocaleString()}</div>
+    </div>`;
+  }).join('') || '<span class="chip-hint">No data for the current focus.</span>';
+  host.querySelectorAll('.brow').forEach(el=>{
+    el.addEventListener('click',()=>toggleFocus(key, el.dataset.name));
+  });
+  const hint = key==='director' ? 'film director' : 'actor';
+  // Everyone still unknown goes into ONE batched Wikipedia lookup.
+  const wanted=top.map(([name])=>name).filter(n=>!knownHead(n) && !headCache.has(n));
+  if(wanted.length) resolveHeads(wanted, hint, host);
+}
+/* ---------- director / actor search ----------
+   The boards only ever show the top N by count. This lets you jump straight
+   to anyone else in the collection — search is matched against everyone
+   ensureOverall() has ever counted, not just the visible tiles, and picking
+   a result focuses them exactly like clicking their tile would (pinning them
+   into the board via renderBoard's pin logic above, even if they're outside
+   the top N). */
+function fillDatalist(id, names){
+  const dl=document.getElementById(id);
+  if(!dl) return;
+  dl.innerHTML=names.map(n=>`<option value="${escH(n)}">`).join('');
+}
+function populateSearchLists(){
+  ensureOverall();
+  fillDatalist('dirSearchList', [...overallDir.keys()].sort((a,b)=>a.localeCompare(b)));
+  fillDatalist('actSearchList', [...overallAct.keys()].sort((a,b)=>a.localeCompare(b)));
+}
+function resolveName(query, map){
+  const q=String(query||'').trim();
+  if(!q || !map) return null;
+  if(map.has(q)) return q;
+  const lower=q.toLowerCase();
+  let exact=null; const partial=[];
+  for(const name of map.keys()){
+    if(name.toLowerCase()===lower){ exact=name; break; }
+    if(name.toLowerCase().includes(lower)) partial.push(name);
+  }
+  if(exact) return exact;
+  if(partial.length===1) return partial[0];
+  return null;   // nothing found, or too ambiguous to guess
+}
+function wireSearch(inputId, key, getMap){
+  const input=document.getElementById(inputId);
+  if(!input) return;
+  const commit=()=>{
+    const name=resolveName(input.value, getMap());
+    if(name){
+      toggleFocus(key, name);
+      input.value='';
+    } else if(input.value.trim()){
+      input.classList.remove('no-match'); void input.offsetWidth; input.classList.add('no-match');
+    }
+  };
+  input.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); commit(); } });
+  input.addEventListener('change', commit); // fires when a datalist option is picked
+}
+wireSearch('dirSearchInput', 'director', ()=>overallDir);
+wireSearch('actSearchInput', 'actor', ()=>overallAct);
+
+/* ================= HEADSHOTS =================
+   WHY SO MANY FACES WERE MISSING
+
+   The old code made ONE Wikipedia request per person -- 144 of them on a cold
+   load (48 directors + 96 actors) -- through the search API, five at a time.
+   Two things went wrong with that:
+
+     * Volume. Wikipedia rate-limits bursts, so a large share came back 429 or
+       empty. There was a single retry, then the name kept its initials.
+     * Search ranking. It searched for "<name> actor" and took the best-ranked
+       page WITH a photo. For anyone sharing a name with a film, a musician or
+       a relative, that is a coin flip -- hence the growing list of manual
+       HEAD_OVERRIDES pins.
+
+   Both are fixed by asking differently. Wikipedia's API accepts up to 50 page
+   titles in a single call, and almost every actor and director has an article
+   at exactly their name. So:
+
+     1. Look every unknown name up BY EXACT TITLE, 50 per request. 144 people
+        becomes 3 requests instead of 144, and there is no search ranking to
+        get wrong. `redirects=1` follows "Bob Hoskins" -> the canonical page.
+     2. Only the handful that miss (no article at that exact title, or an
+        article with no portrait) fall back to the old per-name search.
+
+   pilimit=50 matters: prop=pageimages returns a thumbnail for only the FIRST
+   page unless you raise it, which is the classic way this call silently
+   half-works.                                                              */
+const WIKI_API='https://en.wikipedia.org/w/api.php';
+const HEAD_BATCH=50;
+
+function wikiBatch(titles){
+  const url=WIKI_API+'?action=query&format=json&origin=*&redirects=1'
+    +'&prop=pageimages&piprop=thumbnail&pithumbsize=320&pilimit='+HEAD_BATCH
+    +'&titles='+encodeURIComponent(titles.join('|'));
+  return fetch(url).then(r=>{
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    return r.json();
+  }).then(j=>{
+    const q=j.query||{};
+    // Map whatever we asked for back through normalisation and redirects to
+    // the title the API actually answered under.
+    const alias=new Map();
+    (q.normalized||[]).forEach(n=>alias.set(n.to,n.from));
+    (q.redirects||[]).forEach(rd=>{
+      const root=alias.get(rd.from)||rd.from;
+      alias.set(rd.to,root);
+    });
+    const out=new Map();
+    const pages=q.pages||{};
+    for(const k in pages){
+      const p=pages[k];
+      if(!p || !p.title) continue;
+      const asked=alias.get(p.title)||p.title;
+      if(p.thumbnail && p.thumbnail.source) out.set(asked, p.thumbnail.source);
+    }
+    return out;
+  });
+}
+
+/* Resolves a list of names: batched exact-title first, per-name search for
+   whatever is left. Faces are filled in as each batch lands. */
+async function resolveHeads(names, hint, host){
+  names.forEach(n=>headCache.set(n, null));   // claim them so we don't double-request
+
+  const pinned=names.filter(n=>HEAD_OVERRIDES[n]);
+  const plain =names.filter(n=>!HEAD_OVERRIDES[n]);
+  // Pinned names are looked up under their pinned article title.
+  const lookup=new Map();
+  pinned.forEach(n=>lookup.set(HEAD_OVERRIDES[n], n));
+  plain.forEach(n=>lookup.set(n, n));
+
+  const titles=[...lookup.keys()];
+  const misses=[];
+  for(let i=0;i<titles.length;i+=HEAD_BATCH){
+    const chunk=titles.slice(i,i+HEAD_BATCH);
+    let got=new Map();
+    try{ got=await wikiBatch(chunk); }catch(e){ /* whole chunk falls to search */ }
+    chunk.forEach(t=>{
+      const name=lookup.get(t);
+      const url=got.get(t);
+      if(url) applyHead(name,url,host);
+      else misses.push(name);
+    });
+  }
+  // Anything the exact-title pass could not answer: the old search path, but
+  // now for a handful of names rather than all 144.
+  for(const name of misses){
+    const url=await queuedHeadshot(name,hint);
+    if(url) applyHead(name,url,host);
+  }
+}
+function applyHead(name,url,host){
+  headCache.set(name,url);
+  headStore[name]=url;
+  saveHeadStore();
+  document.querySelectorAll('.face').forEach(f=>{
+    if(f.dataset.face===name && !f.querySelector('img') && !f.dataset.loading){
+      f.dataset.loading='1';
+      setFace(f,url);
+    }
+  });
+}
+
+/* ---- per-name search fallback (unchanged behaviour, far fewer callers) ---- */
+const headPending=new Map();
+const headQueue=[]; let headActive=0; const HEAD_MAX=5;
+function queuedHeadshot(name,hint){
+  if(headPending.has(name)) return headPending.get(name);
+  const p=new Promise(resolve=>{ headQueue.push({name,hint,resolve}); pumpHeads(); })
+    .finally(()=>headPending.delete(name));
+  headPending.set(name,p);
+  return p;
+}
+function pumpHeads(){
+  while(headActive<HEAD_MAX && headQueue.length){
+    const job=headQueue.shift();
+    headActive++;
+    headSearch(job.name+(job.hint?' '+job.hint:''), false)
+      .then(u=>u||headSearch(job.name,false))
+      .then(u=>{ headActive--; job.resolve(u); pumpHeads(); });
+  }
+}
+async function headSearch(query,retried){
+  try{
+    const api=WIKI_API+'?action=query&generator=search'
+      +'&gsrsearch='+encodeURIComponent(query)+'&gsrlimit=5'
+      +'&prop=pageimages&piprop=thumbnail&pithumbsize=320&pilimit=5&format=json&origin=*';
+    const r=await fetch(api);
+    if(r.status===429 && !retried){
+      await new Promise(res=>setTimeout(res,1500));
+      return headSearch(query,true);
+    }
+    if(!r.ok) return null;
+    const j=await r.json();
+    const pages=j.query && j.query.pages;
+    if(pages){
+      const ranked=Object.values(pages).sort((a,b)=>(a.index||99)-(b.index||99));
+      for(const p of ranked){
+        if(p && p.thumbnail && p.thumbnail.source) return p.thumbnail.source;
+      }
+    }
+  }catch(e){ /* keep initials this session */ }
+  return null;
+}
+const imgQueue=[]; let imgActive=0; const IMG_MAX=10;
+function pumpImgs(){
+  while(imgActive<IMG_MAX && imgQueue.length){
+    const t=imgQueue.shift(); imgActive++;
+    t(()=>{ imgActive--; pumpImgs(); });
+  }
+}
+function setFace(f,url,attempt){
+  attempt=attempt||0;
+  imgQueue.push(done=>{
+    if(!f.isConnected){ done(); return; }
+    const img=new Image();
+    img.alt=f.dataset.face||'';
+    img.decoding='async';
+    img.onload=()=>{
+      done();
+      if(f.isConnected && !f.querySelector('img')){
+        f.textContent='';
+        f.appendChild(img);
+      }
+      delete f.dataset.loading;
+    };
+    img.onerror=()=>{
+      done();
+      if(attempt<2){ setTimeout(()=>setFace(f,url,attempt+1), 2000*(attempt+1)); }
+      else { delete f.dataset.loading; }
+    };
+    img.src=url;
+  });
+  pumpImgs();
+}
+/* ---------- collaborations ---------- */
+function renderCollabs(list){
+  const panel=$('#collabPanel');
+  const twoActors     = focus.actors.length===2;
+  const actorDirector = focus.actors.length===1 && focus.director;
+  if(!(twoActors || actorDirector)){ panel.style.display='none'; return; }
+  panel.style.display='block';
+  const films=list.filter(m=>!TV_RE.test(m.media))
+    .sort((a,b)=>(a.year||9999)-(b.year||9999));
+  const pair = twoActors ? `${focus.actors[0]} × ${focus.actors[1]}`
+                         : `${focus.actors[0]} × ${focus.director}`;
+  $('#collabTitle').textContent=`Collaborations — ${pair}`;
+  $('#collabHint').textContent = films.length
+    ? `${films.length} movie${films.length===1?'':'s'} together in the collection`
+    : 'No movies together match the current focus — try clearing other chips.';
+  $('#collabCovers').innerHTML=films.map(m=>{
+    const art=m.img
+      ? `<img src="${escH(firstSrc(m.img))}" data-src="${escH(m.img)}" alt="${escH(m.title)}" loading="lazy" decoding="async">`
+      : escH(m.title);
+    const cap=`${escH(m.title)}${m.year?` <small>(${m.year})</small>`:''}`;
+    return m.link
+      ? `<a class="cover" href="${escH(m.link)}" target="_blank" rel="noopener"><div class="art">${art}</div><div class="cap">${cap}</div></a>`
+      : `<div class="cover"><div class="art">${art}</div><div class="cap">${cap}</div></div>`;
+  }).join('');
+  wirePosters($('#collabCovers'));
+}
+/* ---------- build all charts ---------- */
+const MPAA_ORDER=['G','PG','PG-13','R','NC-17','Not Rated','Unrated','TV-Y','TV-Y7','TV-G','TV-PG','TV-14','TV-MA'];
+/* Chart.js comes from a CDN. If that request is blocked or slow, the charts
+   are skipped rather than taking the whole page down with them -- the stat
+   cards, the leaderboards, the collaborations and tonight's pick do not need
+   it and used to be lost along with it. */
+const haveChart = () => typeof Chart !== 'undefined';
+function buildCharts(){
+  const list=filteredRows();
+  ensureOverall();
+  // Leaderboards and the collaborations panel first: they are plain DOM and
+  // must survive a missing Chart.js.
+  renderCollabs(list);
+  const filmOnly=list.filter(m=>!TV_RE.test(m.media));
+  const dirN = focus.actors.length ? 24 : 48;
+  const actN = focus.director      ? 48 : 96;
+  $('#dirCountLbl').textContent=dirN;
+  $('#actCountLbl').textContent=actN;
+  renderBoard('directorBoard', topN(countBy(filmOnly,m=>m.directors),Infinity,overallDir), dirN, 'director');
+  renderBoard('actorBoard',    topN(countBy(filmOnly,m=>m.actors),   Infinity,overallAct), actN, 'actor');
+  if(!haveChart()){
+    console.warn('[stats] Chart.js did not load — charts skipped, everything else is live');
+    return;
+  }
+  themeCharts();
+  const dm=countBy(list,m=>decadeOf(m.year));
+  const decades=[...dm.keys()].sort((a,b)=>a-b);
+  upsert('decadeChart',{
+    type:'bar',
+    data:{labels:decades.map(d=>d+'s'),datasets:[{data:decades.map(d=>dm.get(d)),
+      backgroundColor:decades.map(d=> focus.decade==null?RED:(d===focus.decade?RED:DIM)),borderRadius:4}]},
+    options:base({onClick:(e,els)=>{ if(els.length) toggleFocus('decade',decades[els[0].index]); }})
+  });
+  const gTop=topN(countBy(list,m=>m.genres),12);
+  upsert('genreChart',{
+    type:'bar',
+    data:{labels:gTop.map(g=>g[0]),datasets:[{data:gTop.map(g=>g[1]),
+      backgroundColor:barColors(gTop.map(g=>g[0]),focus.genre,RED),borderRadius:4}]},
+    options:hbar({onClick:(e,els)=>{ if(els.length) toggleFocus('genre',gTop[els[0].index][0]); }})
+  });
+  const bins=Array(10).fill(0);
+  list.forEach(m=>{ if(m.imdb!=null) bins[Math.min(9,Math.floor(m.imdb))]++; });
+  upsert('ratingChart',{
+    type:'bar',
+    data:{labels:bins.map((_,i)=>`${i+1}`),datasets:[{data:bins,backgroundColor:BLUE,borderRadius:4}]},
+    options:base({})
+  });
+  const mm=[...countBy(list,m=>m.media).entries()].sort((a,b)=>b[1]-a[1]);
+  upsert('mediaChart',{
+    type:'doughnut',
+    data:{labels:mm.map(x=>x[0]),datasets:[{data:mm.map(x=>x[1]),
+      backgroundColor:barColors(mm.map(x=>x[0]),focus.media),borderWidth:0}]},
+    options:donut((e,els)=>{ if(els.length) toggleFocus('media',mm[els[0].index][0]); })
+  });
+  const sm=[...countBy(list,m=>m.statusList).entries()].sort((a,b)=>b[1]-a[1]);
+  upsert('statusChart',{
+    type:'doughnut',
+    data:{labels:sm.map(x=>x[0]),datasets:[{data:sm.map(x=>x[1]),
+      backgroundColor:barColors(sm.map(x=>x[0]),focus.status),borderWidth:0}]},
+    options:donut((e,els)=>{ if(els.length) toggleFocus('status',sm[els[0].index][0]); })
+  });
+  const qm=[...countBy(list,m=>m.quality).entries()].sort((a,b)=>b[1]-a[1]);
+  upsert('qualityChart',{
+    type:'doughnut',
+    data:{labels:qm.map(x=>x[0]),datasets:[{data:qm.map(x=>x[1]),
+      backgroundColor:barColors(qm.map(x=>x[0]),focus.quality),borderWidth:0}]},
+    options:donut((e,els)=>{ if(els.length) toggleFocus('quality',qm[els[0].index][0]); })
+  });
+  const pm=countBy(list,m=>m.mpaa);
+  const mpaaKeys=[...MPAA_ORDER.filter(k=>pm.has(k)), ...[...pm.keys()].filter(k=>!MPAA_ORDER.includes(k)).sort()];
+  upsert('mpaaChart',{
+    type:'bar',
+    data:{labels:mpaaKeys,datasets:[{data:mpaaKeys.map(k=>pm.get(k)),
+      backgroundColor:barColors(mpaaKeys,focus.mpaa,RED),borderRadius:4}]},
+    options:base({onClick:(e,els)=>{ if(els.length) toggleFocus('mpaa',mpaaKeys[els[0].index]); }})
+  });
+  const STUDIO_N=25;
+  $('#studioCountLbl').textContent=STUDIO_N;
+  const stTop=topN(countBy(list,m=>m.studio||null),STUDIO_N);
+  upsert('studioChart',{
+    type:'bar',
+    data:{labels:stTop.map(x=>x[0]),datasets:[{data:stTop.map(x=>x[1]),
+      backgroundColor:barColors(stTop.map(x=>x[0]),focus.studio,'#78909c'),borderRadius:4,
+      barPercentage:0.6,categoryPercentage:0.85}]},
+    options:base({
+      onClick:(e,els)=>{ if(els.length) toggleFocus('studio',stTop[els[0].index][0]); },
+      scales:{
+        x:{grid:{display:false},ticks:{autoSkip:false,maxRotation:65,minRotation:40,font:{size:10}}},
+        y:{beginAtZero:true,ticks:{precision:0}}
+      }
+    })
+  });
+  const lTop=topN(countBy(list,m=>m.langs),13).filter(x=>x[0].toLowerCase()!=='english').slice(0,12);
+  upsert('langChart',{
+    type:'bar',
+    data:{labels:lTop.map(x=>x[0]),datasets:[{data:lTop.map(x=>x[1]),
+      backgroundColor:barColors(lTop.map(x=>x[0]),focus.language,BLUE),borderRadius:4}]},
+    options:base({onClick:(e,els)=>{ if(els.length) toggleFocus('language',lTop[els[0].index][0]); }})
+  });
+  const byMonth=new Map();
+  list.forEach(m=>{ if(!m.added) return;
+    const k=m.added.getFullYear()*100+m.added.getMonth();
+    byMonth.set(k,(byMonth.get(k)||0)+1); });
+  const keys=[...byMonth.keys()].sort((a,b)=>a-b);
+  let cum=0;
+  const gLabels=keys.map(k=>new Date(Math.floor(k/100),k%100,1)
+    .toLocaleDateString(undefined,{month:'short',year:'numeric'}));
+  const gData=keys.map(k=>{ cum+=byMonth.get(k); return cum; });
+  const isYearMark=i=> i===0 || keys[i]%100===0;
+  upsert('growthChart',{
+    type:'line',
+    data:{labels:gLabels,datasets:[{data:gData,fill:true,tension:.25,
+      borderColor:RED,backgroundColor:'rgba(229,57,53,.12)',pointRadius:0,borderWidth:2}]},
+    options:base({plugins:{legend:{display:false}},
+      scales:{
+        x:{
+          grid:{display:true,color:c=> isYearMark(c.index)?'rgba(255,255,255,.16)':'rgba(0,0,0,0)'},
+          ticks:{autoSkip:false,maxRotation:0,
+            font:{family:"'Poppins',sans-serif",size:12,weight:'700'},
+            callback:(v,i)=> isYearMark(i)?String(Math.floor(keys[i]/100)):''}
+        },
+        y:{beginAtZero:true}
+      }})
+  });
+}
+/* ---------- tonight's pick ---------- */
+function roll(){
+  const pool=filteredRows().filter(m=>m.need);
+  const poster=$('#pickPoster'), titleEl=$('#pickTitle'), metaEl=$('#pickMeta'), link=$('#watchLink');
+  if(!pool.length){
+    poster.innerHTML='?';
+    titleEl.textContent='Nothing left to watch here!';
+    metaEl.textContent='No Need to Watch titles match the current focus — clear a chip or roll with the full collection.';
+    link.style.display='none';
+    return;
+  }
+  const m=pool[Math.floor(Math.random()*pool.length)];
+  poster.innerHTML = m.img
+    ? `<img src="${escH(firstSrc(m.img))}" data-src="${escH(m.img)}" alt="${escH(m.title)}">`
+    : escH(m.title);
+  wirePosters(poster);
+  titleEl.textContent=m.title+(m.year?` (${m.year})`:'');
+  metaEl.textContent=[m.genres.slice(0,3).join(', '), m.runtime?m.runtime+' min':'', m.imdb!=null?'IMDB '+m.imdb:'']
+    .filter(Boolean).join('  ·  ');
+  if(m.link){ link.href=m.link; link.style.display='inline-block'; }
+  else link.style.display='none';
+}
+$('#rollBtn').addEventListener('click',roll);
+/* ---------- parse ----------
+   Consumes the flat {cols, rows} shape the loader produces. Both sources --
+   the streamed CSV and the gviz fallback -- are flattened to that same shape
+   up there, so there is one parser rather than two code paths. */
+function parse(cols, raw){
+  const labels=cols.map(c=>String(c||'').trim());
+  // Case/format-tolerant lookup: matches the exact label first, then a
+  // lowercase/no-punctuation fold, then falls through a list of known
+  // alternate spellings. A header rename in the sheet (e.g. "Director" ->
+  // "Director(s)") used to silently zero out that whole column -- countBy
+  // would just never see it and the leaderboard would render as empty with
+  // no error anywhere.
+  const fold=s=>s.toLowerCase().replace(/[^a-z0-9]+/g,'');
+  const foldedLabels=labels.map(fold);
+  const col=(...names)=>{
+    for(const n of names){
+      let i=labels.indexOf(n); if(i>=0) return i;
+      i=foldedLabels.indexOf(fold(n)); if(i>=0) return i;
+    }
+    return -1;
+  };
+  const iTitle=col('Title'), iGenre=col('Genre'), iMedia=col('Media Type'),
+        iStatus=col('Viewing Status'), iYear=col('Year'), iImdb=col('IMDB Rating'),
+        iRun=col('Runtime'), iDate=col('Date Added'), iImg=col('Img'), iLink=col('Link'),
+        iDir=col('Director','Directors','Director(s)'), iAct=col('Actors','Actor(s)'), iQual=col('Quality'),
+        iMpaa=col('MPAA Rating'), iStudio=col('Studio'), iLang=col('Language');
+  if(iTitle<0) throw new Error('no Title column in the response');
+  [['Genre',iGenre],['Media Type',iMedia],['Viewing Status',iStatus],['Year',iYear],
+   ['IMDB Rating',iImdb],['Runtime',iRun],['Date Added',iDate],['Director',iDir],
+   ['Actors',iAct],['Quality',iQual],['MPAA Rating',iMpaa],['Studio',iStudio],['Language',iLang]
+  ].forEach(([label,i])=>{ if(i<0) console.warn(`[stats] column "${label}" not found in the sheet -- that data will be blank`); });
+  const RE_YMD=/^(\d{4})-(\d{1,2})-(\d{1,2})/, RE_MDY=/^(\d{1,2})\/(\d{1,2})\/(\d{4})/;
+  const out=[];
+  for(let r=0;r<raw.length;r++){
+    const row=raw[r]; if(!row) continue;
+    const v=i=>{ if(i<0) return null; const x=row[i]; return (x==null||x==='')?null:x; };
+    const title=v(iTitle);
+    if(!title || String(title).trim()==='' || String(title).trim()==='Hidden') continue;
+    const num=x=>{ if(x==null||x==='') return null; const n=typeof x==='number'?x:parseFloat(x); return isNaN(n)?null:n; };
+    let d=v(iDate), added=null;
+    if(d!=null){
+      const s=String(d); let mm;
+      if(typeof d==='string' && s.startsWith('Date(')){
+        const p=s.slice(5,-1).split(',').map(Number); added=new Date(p[0],p[1]||0,p[2]||1);
+      } else if((mm=RE_YMD.exec(s))){ added=new Date(+mm[1],+mm[2]-1,+mm[3]); }
+      else if((mm=RE_MDY.exec(s))){ added=new Date(+mm[3],+mm[1]-1,+mm[2]); }
+      else { const t=new Date(d); if(!isNaN(t)) added=t; }
+    }
+    const status=splitCsv(v(iStatus));
+    out.push({
+      title:String(title),
+      genres:splitCsv(v(iGenre)),
+      directors:splitCsv(v(iDir)),
+      actors:splitCsv(v(iAct)),
+      media:String(v(iMedia)||'Unknown').trim(),
+      quality:String(v(iQual)||'Unknown').trim(),
+      mpaa:String(v(iMpaa)||'Not Rated').trim(),
+      studio:String(v(iStudio)||'').trim(),
+      langs:splitCsv(v(iLang)),
+      watched:status.includes('Watched'),
+      need:status.includes('Need to Watch'),
+      statusList:status.length?status:['Unknown'],
+      year:num(v(iYear)),
+      imdb:num(v(iImdb)),
+      runtime:num(v(iRun)),
+      added,
+      img:String(v(iImg)||''),
+      link:String(v(iLink)||'')
+    });
+  }
+  return out;
+}
+/* ---------- refresh + init ---------- */
+function refresh(){
+  renderChips();
+  renderCards(filteredRows());
+  buildCharts();
+}
+(async function init(){
+  try{
+    const data=await window.__DD_DATA;          // download started back in <head>
+    setBar(0.75);
+    // Chart.js is deferred, so it is guaranteed to have run by DOMContentLoaded.
+    if(document.readyState==='loading'){
+      await new Promise(r=>document.addEventListener('DOMContentLoaded',r,{once:true}));
+    }
+    setStatus('Building the charts…'); setBar(0.85);
+    rows=parse(data.cols, data.rows);
+    if(!rows.length) throw new Error('no rows returned');
+    populateSearchLists();
+    refresh();
+    roll();
+    setBar(1); barDone(); setStatus(null);
+    console.info(`[stats] ${rows.length} titles (source: ${data.src})`);
+  }catch(err){
+    barDone();
+    setStatus('Could not load the sheet.<br><small>Check it is shared as '
+      +'&ldquo;Anyone with the link &ndash; Viewer&rdquo;, and that the published CSV link '
+      +'at the top of this file is still live.<br>'
+      +String(err.message).replace(/</g,'&lt;')+'</small>', false, true);
+  }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,1213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Donny's Wishlist</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://cdn.statically.io">
+<link rel="preconnect" href="https://i0.wp.com">
+<link rel="preconnect" href="https://images1-focus-opensocial.googleusercontent.com">
+<link rel="preconnect" href="https://wsrv.nl">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#171C20;
+  --bg-soft:#1f262b;
+  --pill:#ffffff;
+  --pill-text:#37474f;
+  --bar:#8a9096;
+  --bar-text:#ffffff;
+  --accent:#c62828;
+  --track:#4a565e;
+  --track-fill:#eceff1;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg)}
+html{scrollbar-width:none;-ms-overflow-style:none}
+html::-webkit-scrollbar,body::-webkit-scrollbar{display:none}
+body{
+  background:var(--bg);
+  font-family:'Poppins','Segoe UI',sans-serif;
+  font-weight:700;
+  color:#eceff1;
+  overflow:hidden;
+}
+#app{display:flex;height:100%}
+/* ---------- SIDEBAR ---------- */
+#sidebar{
+  width:250px;min-width:250px;
+  padding:16px 12px 30px 14px;
+  height:100%;
+  overflow-y:auto;
+  scrollbar-width:thin;scrollbar-color:#4a565e transparent;
+}
+#sidebar::-webkit-scrollbar{width:6px}
+#sidebar::-webkit-scrollbar-thumb{background:#4a565e;border-radius:3px}
+#searchBox{
+  width:100%;padding:9px 12px;border:none;border-radius:6px;
+  font:700 13.5px 'Poppins',sans-serif;color:var(--pill-text);
+  margin-bottom:12px;outline:none;
+}
+#searchBox::placeholder{color:#78909c}
+.facet{position:relative;margin-bottom:10px}
+.facet-btn{
+  width:100%;display:flex;align-items:center;justify-content:space-between;
+  background:var(--pill);color:var(--pill-text);
+  border:none;border-radius:8px;padding:10px 14px;cursor:pointer;
+  font:700 12.5px 'Poppins',sans-serif;letter-spacing:1.2px;text-transform:uppercase;
+  transition:box-shadow .15s;
+}
+.facet-btn:hover{box-shadow:0 0 0 2px rgba(255,255,255,.25)}
+.facet-btn .icon{font-size:13px;color:#607d8b;transition:transform .2s}
+.facet.open .facet-btn .icon{transform:rotate(180deg)}
+.facet-btn .count-badge{
+  background:var(--accent);color:#fff;border-radius:10px;
+  font-size:10px;padding:1px 7px;margin-left:auto;margin-right:8px;
+}
+.facet-panel{
+  display:none;position:relative;z-index:30;
+  background:#fff;border-radius:8px;margin-top:5px;
+  box-shadow:0 8px 22px rgba(0,0,0,.45);
+  padding:8px;color:var(--pill-text);
+}
+.facet.open .facet-panel{display:block}
+.facet-panel input.opt-search{
+  width:100%;padding:6px 9px;margin-bottom:6px;
+  border:1px solid #cfd8dc;border-radius:5px;font:700 12.5px 'Poppins',sans-serif;outline:none;
+}
+.opt-list{max-height:240px;overflow-y:auto;scrollbar-width:thin}
+.opt-list label{
+  display:flex;align-items:center;gap:8px;
+  font:700 13px 'Poppins',sans-serif;padding:5px 6px;border-radius:4px;cursor:pointer;
+}
+.opt-list label:hover{background:#eceff1}
+.opt-list input{accent-color:var(--accent)}
+.opt-list .n{margin-left:auto;color:#90a4ae;font-size:11px}
+.opt-more{font-size:11px;color:#90a4ae;padding:5px 6px}
+.facet-clear{
+  display:block;width:100%;margin-top:6px;padding:6px;
+  background:#eceff1;border:none;border-radius:5px;cursor:pointer;
+  font:700 11px 'Poppins',sans-serif;letter-spacing:1px;text-transform:uppercase;color:#546e7a;
+}
+.facet-clear:hover{background:#cfd8dc}
+/* sort */
+#sortWrap select{
+  width:100%;background:var(--pill);color:var(--pill-text);
+  border:none;border-radius:8px;padding:10px 12px;cursor:pointer;
+  font:700 12.5px 'Poppins',sans-serif;letter-spacing:1.2px;text-transform:uppercase;
+  margin-bottom:10px;outline:none;
+}
+/* sliders */
+.slider-group{margin:22px 4px 6px;text-align:center}
+.slider-group .sl-title{
+  font:700 13px 'Poppins',sans-serif;letter-spacing:1.6px;text-transform:uppercase;
+  color:#eceff1;margin-bottom:10px;
+}
+.range-wrap{position:relative;height:22px}
+.range-wrap .rail{
+  position:absolute;top:9px;left:0;right:0;height:3px;border-radius:2px;background:var(--track);
+}
+.range-wrap .fill{
+  position:absolute;top:9px;height:3px;border-radius:2px;background:var(--track-fill);
+}
+.range-wrap input[type=range]{
+  position:absolute;top:0;left:0;width:100%;height:22px;
+  -webkit-appearance:none;appearance:none;background:transparent;pointer-events:none;margin:0;
+}
+.range-wrap input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;appearance:none;pointer-events:auto;
+  width:14px;height:14px;border-radius:50%;background:#fff;
+  border:none;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.5);
+}
+.range-wrap input[type=range]::-moz-range-thumb{
+  pointer-events:auto;width:14px;height:14px;border-radius:50%;
+  background:#fff;border:none;cursor:pointer;
+}
+.sl-vals{display:flex;justify-content:space-between;margin-top:2px}
+.sl-vals input{
+  background:transparent;border:none;border-bottom:1px solid #eceff1;
+  color:#eceff1;font:700 13px 'Poppins',sans-serif;text-align:center;
+  width:56px;padding:1px 2px;outline:none;color-scheme:dark;cursor:text;
+}
+.sl-vals input:focus{border-bottom-color:#fff;background:rgba(255,255,255,.08)}
+.sl-vals input.date{width:106px;font-size:12px}
+.sl-vals input::-webkit-outer-spin-button,
+.sl-vals input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.sl-vals input[type=number]{-moz-appearance:textfield;appearance:textfield}
+#resetAll{
+  margin-top:22px;width:100%;padding:9px;border:1px solid #4a565e;border-radius:8px;
+  background:transparent;color:#b0bec5;cursor:pointer;
+  font:700 11px 'Poppins',sans-serif;letter-spacing:1.5px;text-transform:uppercase;
+}
+#resetAll:hover{border-color:#eceff1;color:#fff}
+/* collapse control (desktop only) */
+#sbCollapse{
+  width:100%;margin-bottom:10px;padding:8px;border:1px solid #4a565e;border-radius:8px;
+  background:transparent;color:#b0bec5;cursor:pointer;
+  font:700 11px 'Poppins',sans-serif;letter-spacing:1.5px;text-transform:uppercase;
+}
+#sbCollapse:hover{border-color:#eceff1;color:#fff}
+#sbExpand{
+  display:none;width:34px;min-width:34px;height:100%;
+  background:var(--bg-soft);border:none;cursor:pointer;color:#b0bec5;font-size:17px;
+  align-items:center;justify-content:center;
+}
+#sbExpand:hover{background:#28313a;color:#fff}
+@media(min-width:761px){
+  body.sbCollapsed #sidebar{display:none}
+  body.sbCollapsed #sbExpand{display:flex}
+  body.sbCollapsed #grid{grid-template-columns:repeat(12,1fr)}
+}
+@media(max-width:760px){
+  #sbCollapse,#sbExpand{display:none !important}
+}
+/* ---------- MAIN ---------- */
+#main{flex:1;min-width:0;height:100%;display:flex;flex-direction:column;padding:14px 10px 14px 4px}
+.pagerBar{
+  display:flex;align-items:center;
+  background:var(--bar);border-radius:6px;height:52px;
+  user-select:none;
+}
+#pagerTop{margin-bottom:12px}
+#pagerBottom{margin-top:12px}
+#main{position:relative}
+.pgRail{
+  position:absolute;top:70px;bottom:70px;width:30px;z-index:40;
+  display:flex;flex-direction:column;justify-content:space-around;align-items:center;
+  background:transparent;border:none;cursor:pointer;color:#fff;
+  opacity:.32;transition:opacity .15s,background .15s;border-radius:6px;
+}
+.pgRail:hover{opacity:.95;background:rgba(255,255,255,.12)}
+.pgRail span{font-size:24px;line-height:1}
+#railPrev{left:0}
+#railNext{right:0}
+@media(max-width:760px){ .pgRail{width:24px} .pgRail span{font-size:20px} }
+.pagerBar .pg-arrow{
+  width:44px;height:100%;display:flex;align-items:center;justify-content:center;
+  background:transparent;border:none;color:#fff;font-size:26px;cursor:pointer;border-radius:6px;
+}
+.pagerBar .pg-arrow:hover:not(:disabled){background:rgba(255,255,255,.18)}
+.pagerBar .pg-arrow:disabled{opacity:.35;cursor:default}
+.pagerBar .pg-label{
+  flex:1;text-align:center;
+  font:700 34px 'Poppins',sans-serif;letter-spacing:2px;color:var(--bar-text);
+}
+#grid{
+  flex:1;min-height:0;overflow-y:auto;
+  display:grid;
+  grid-template-columns:repeat(10,1fr);
+  gap:12px;align-content:start;
+  scrollbar-width:none;
+}
+#grid::-webkit-scrollbar{display:none}
+.card{
+  position:relative;display:block;border-radius:6px;overflow:hidden;
+  background:var(--bg-soft);
+  height:0;padding-bottom:150%;   /* 2:3 poster ratio, works in all render modes */
+  transition:transform .15s, box-shadow .15s;text-decoration:none;
+}
+.card:hover{transform:scale(1.045);box-shadow:0 6px 18px rgba(0,0,0,.6);z-index:5}
+.card img{
+  position:absolute;top:0;left:0;width:100%;height:100%;
+  object-fit:cover;display:block;
+}
+.card .ph{
+  position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  padding:10px;text-align:center;color:#b0bec5;
+  font:700 13px 'Poppins',sans-serif;letter-spacing:.5px;
+}
+.card .edit-tag{
+  position:absolute;top:6px;right:6px;background:var(--accent);color:#fff;
+  border-radius:50%;width:26px;height:26px;display:none;
+  align-items:center;justify-content:center;font-size:13px;cursor:pointer;
+  box-shadow:0 1px 4px rgba(0,0,0,.5);
+}
+body.editing .card .edit-tag{display:flex}
+.card .watch-tag{
+  position:absolute;bottom:6px;left:6px;border:none;cursor:pointer;
+  border-radius:50%;width:26px;height:26px;display:none;
+  align-items:center;justify-content:center;font-size:13px;color:#fff;
+  box-shadow:0 1px 4px rgba(0,0,0,.5);
+}
+.card .watch-tag.to-watched{background:#2e7d32}   /* action: mark as Watched */
+.card .watch-tag.to-need{background:#ef6c00}      /* action: back to Need to Watch */
+.card .watch-tag:disabled{opacity:.5;cursor:default}
+body.editing .card .watch-tag{display:flex}
+body.editing .card{outline:2px dashed rgba(255,255,255,.35)}
+#toast{
+  position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:120;
+  background:#263238;color:#eceff1;border-radius:8px;padding:10px 18px;
+  font:700 13px 'Poppins',sans-serif;letter-spacing:.5px;
+  box-shadow:0 4px 14px rgba(0,0,0,.5);opacity:0;pointer-events:none;
+  transition:opacity .25s;
+}
+#toast.show{opacity:1}
+#toast.err{background:#b71c1c}
+#tokenWrap{
+  position:fixed;top:0;left:0;right:0;bottom:0;width:100%;height:100%;
+  background:rgba(0,0,0,.65);z-index:2147483647;
+  display:none;align-items:center;justify-content:center;padding:20px;
+}
+#tokenWrap.open{display:flex}
+#tokenBox{
+  background:#fff;color:#37474f;border-radius:10px;width:min(360px,100%);
+  padding:20px;box-shadow:0 10px 30px rgba(0,0,0,.5);
+}
+#tokenBox h3{font:700 16px 'Poppins',sans-serif;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px}
+#tokenBox p{font:700 12.5px 'Poppins',sans-serif;color:#78909c;margin-bottom:12px}
+#tokenInput{
+  width:100%;border:1px solid #cfd8dc;border-radius:6px;padding:9px 11px;
+  font:700 14px 'Poppins',sans-serif;outline:none;margin-bottom:12px;
+}
+#tokenInput:focus{border-color:#607d8b}
+#tokenBox .row{display:flex;gap:8px;justify-content:flex-end}
+#tokenBox button{
+  border:none;border-radius:6px;padding:9px 18px;cursor:pointer;
+  font:700 12px 'Poppins',sans-serif;letter-spacing:1px;text-transform:uppercase;
+}
+#tokenOk{background:var(--accent);color:#fff}
+#tokenCancel{background:#eceff1;color:#546e7a}
+#status{
+  position:absolute;inset:0;display:flex;flex-direction:column;gap:12px;
+  align-items:center;justify-content:center;background:var(--bg);z-index:60;
+  font:700 15px 'Poppins',sans-serif;letter-spacing:1px;color:#b0bec5;
+}
+.spin{width:36px;height:36px;border:3px solid #37474f;border-top-color:#eceff1;
+  border-radius:50%;animation:sp 1s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+/* edit toggle (in sidebar — Google Sites places its own pencil bottom-right) */
+#editToggle{
+  margin-top:10px;width:100%;padding:10px;border:none;border-radius:8px;
+  background:var(--pill);color:var(--pill-text);cursor:pointer;
+  font:700 12.5px 'Poppins',sans-serif;letter-spacing:1.2px;text-transform:uppercase;
+}
+#editToggle:hover{box-shadow:0 0 0 2px rgba(255,255,255,.25)}
+body.editing #editToggle{background:var(--accent);color:#fff}
+#priceBtn{
+  margin-top:10px;width:100%;padding:10px;border:none;border-radius:8px;
+  background:var(--pill);color:var(--pill-text);cursor:pointer;
+  font:700 12.5px 'Poppins',sans-serif;letter-spacing:1.2px;text-transform:uppercase;
+}
+#priceBtn:hover{box-shadow:0 0 0 2px rgba(255,255,255,.25)}
+#priceBtn:disabled{opacity:.55;cursor:default}
+.card .price-tag{
+  position:absolute;bottom:6px;right:6px;z-index:2;
+  background:rgba(15,20,24,.85);color:#eceff1;border-radius:6px;
+  padding:3px 7px;font:700 11.5px 'Poppins',sans-serif;letter-spacing:.4px;
+  pointer-events:none;
+}
+/* modal */
+#modalWrap{
+  position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:100;
+  display:none;align-items:center;justify-content:center;padding:20px;
+}
+#modalWrap.open{display:flex}
+#modal{
+  background:#fff;color:#37474f;border-radius:10px;width:min(680px,100%);
+  max-height:90vh;display:flex;flex-direction:column;overflow:hidden;
+}
+#modal header{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:14px 18px;border-bottom:1px solid #eceff1;
+}
+#modal header h2{font:700 18px 'Poppins',sans-serif;letter-spacing:1px;text-transform:uppercase}
+#modal header button{background:none;border:none;font-size:20px;cursor:pointer;color:#78909c}
+#modalBody{padding:16px 18px;overflow-y:auto;display:grid;grid-template-columns:1fr 1fr;gap:10px 14px}
+#modalBody .field{display:flex;flex-direction:column;gap:3px}
+#modalBody .field.full{grid-column:1/-1}
+#modalBody label{font:700 10.5px 'Poppins',sans-serif;letter-spacing:1.2px;text-transform:uppercase;color:#78909c}
+#modalBody input,#modalBody textarea{
+  border:1px solid #cfd8dc;border-radius:5px;padding:7px 9px;
+  font:700 13px 'Poppins',sans-serif;outline:none;width:100%;
+}
+#modalBody textarea{resize:vertical;min-height:64px}
+#modalBody input:focus,#modalBody textarea:focus{border-color:#607d8b}
+#modal footer{
+  padding:12px 18px;border-top:1px solid #eceff1;
+  display:flex;align-items:center;gap:10px;
+}
+#modal footer .msg{font-size:12.5px;color:#78909c;flex:1}
+#modal footer .msg.err{color:#c62828}
+#modal footer .msg.ok{color:#2e7d32}
+#modal footer a{font-size:12px;color:#1565c0}
+#modal footer button{
+  border:none;border-radius:6px;padding:9px 20px;cursor:pointer;
+  font:700 12px 'Poppins',sans-serif;letter-spacing:1px;text-transform:uppercase;
+}
+#saveBtn{background:var(--accent);color:#fff}
+#saveBtn:disabled{opacity:.5;cursor:default}
+#cancelBtn{background:#eceff1;color:#546e7a}
+#mobileFilterBtn{
+  display:none;margin:12px 12px 0;padding:12px;border:none;border-radius:8px;
+  background:var(--pill);color:var(--pill-text);cursor:pointer;
+  font:700 13px 'Poppins',sans-serif;letter-spacing:1.2px;text-transform:uppercase;
+}
+body.filtersOpen #mobileFilterBtn{background:var(--accent);color:#fff}
+@media(max-width:900px){
+  #grid{grid-template-columns:repeat(4,1fr);gap:7px}
+}
+@media(max-width:760px){
+  #app{flex-direction:column;align-items:stretch}
+  #mobileFilterBtn{display:block;flex:none}
+  #sidebar{display:none;width:100%;min-width:0;height:auto;max-height:55%;flex:none}
+  body.filtersOpen #sidebar{display:block}
+  #main{width:100%;flex:1;min-height:0;padding:12px 8px 12px}
+  #grid{grid-template-columns:repeat(4,1fr);gap:7px}
+}
+</style>
+<!-- Favicon: the avatar, at the sizes browsers actually ask for. Served from
+     /assets/ so they are cached immutably alongside the nav mark. -->
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png">
+<link rel="icon" type="image/png" sizes="96x96" href="/assets/favicon-96.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/assets/favicon-180.png"></head>
+<body>
+<!-- ==== SHARED NAV =========================================================
+     Google Sites drew this bar; on Netlify the pages own it. Inlined rather
+     than pulled from a stylesheet so it paints in the first frame with no
+     extra round trip -- it is under 1KB and never changes independently.
+     ==================================================================== -->
+<style>
+:root{--dd-nav-h:52px}
+.dd-nav{position:fixed;top:0;left:0;right:0;height:var(--dd-nav-h);z-index:150;
+  display:flex;align-items:center;gap:4px;padding:0 18px;background:#000;
+  border-bottom:1px solid #23292e;
+  font-family:'Poppins','Segoe UI',system-ui,sans-serif;font-weight:700}
+.dd-brand{display:flex;align-items:center;gap:9px;margin-right:22px;flex:0 0 auto;
+  color:#fff;text-decoration:none;font-size:16px;letter-spacing:.6px;white-space:nowrap}
+/* Transparent PNG, so it needs no plate behind it -- it sits straight on the
+   bar. object-fit:contain keeps the whole avatar rather than cropping the
+   popcorn out of the bottom-left corner. */
+.dd-brand-img{width:32px;height:32px;flex:0 0 auto;object-fit:contain}
+.dd-links{display:flex;align-items:center;gap:2px;overflow-x:auto;
+  scrollbar-width:none;-ms-overflow-style:none}
+.dd-links::-webkit-scrollbar{display:none}
+.dd-links a{color:#eceff1;text-decoration:none;font-size:15px;letter-spacing:.3px;
+  padding:8px 13px;border-radius:6px;white-space:nowrap;
+  transition:color .12s ease,background .12s ease}
+.dd-links a:hover{color:#fff;background:#1b2126}
+.dd-links a[aria-current=page]{color:#ef5350}
+.dd-links a[aria-current=page]:hover{background:transparent}
+/* Everything the pages already draw starts below the bar. */
+body{padding-top:var(--dd-nav-h);box-sizing:border-box}
+/* The loading toast is fixed near the top and would sit under the bar. */
+#status{top:calc(var(--dd-nav-h) + 20px)!important}
+@media(max-width:760px){
+  :root{--dd-nav-h:46px}
+  .dd-nav{padding:0 10px}
+  .dd-brand{margin-right:12px;font-size:14px}
+  .dd-brand-img{width:27px;height:27px}
+  .dd-links a{font-size:13.5px;padding:7px 9px}
+}
+</style><nav class="dd-nav">
+  <a class="dd-brand" href="/">
+    <img class="dd-brand-img" src="/assets/brand-64.png"
+         srcset="/assets/brand-64.png 1x, /assets/brand-128.png 2x"
+         width="30" height="30" alt="" decoding="async">
+    Donny's Digital
+  </a>
+  <div class="dd-links">
+    <a href="/">Movies</a>
+    <a href="/wishlist" aria-current="page">Wishlist</a>
+    <a href="/data">Data</a>
+    <a href="/sales">Sales</a>
+    <a href="/ma-compare">MA Compare</a>
+    <a href="/d2d">D2D</a>
+  </div>
+</nav>
+<div id="app">
+  <button id="mobileFilterBtn">&#9776; Filters &amp; search</button>
+  <aside id="sidebar">
+    <button id="sbCollapse">&#10094; Hide filters</button>
+    <input id="searchBox" type="search" placeholder="Text search" autocomplete="off">
+    <div id="sortWrap">
+      <select id="sortSel" title="Sort collection">
+        <option value="sortTitle|asc" selected>Sort: Title A → Z</option>
+        <option value="sortTitle|desc">Sort: Title Z → A</option>
+        <option value="year|desc">Sort: Year (newest)</option>
+        <option value="year|asc">Sort: Year (oldest)</option>
+        <option value="tomato|desc">Sort: Rotten Tomatoes (high)</option>
+        <option value="tomato|asc">Sort: Rotten Tomatoes (low)</option>
+        <option value="runtime|desc">Sort: Runtime (longest)</option>
+        <option value="runtime|asc">Sort: Runtime (shortest)</option>
+      </select>
+    </div>
+    <div id="facets"></div>
+    <div id="sliders"></div>
+    <button id="resetAll">Reset all filters</button>
+    <button id="editToggle">&#9998; Unlock editing</button>
+    <button id="priceBtn">&#36; Refresh prices</button>
+  </aside>
+  <button id="sbExpand" title="Show filters">&#9776;</button>
+  <main id="main">
+    <div class="pagerBar" id="pagerTop">
+      <button class="pg-arrow" id="prevPg" title="Previous page">&#10094;</button>
+      <div class="pg-label" id="pgLabel">–</div>
+      <button class="pg-arrow" id="nextPg" title="Next page">&#10095;</button>
+    </div>
+    <div id="grid"></div>
+    <button class="pgRail" id="railPrev" title="Previous page">
+      <span>&#10094;</span><span>&#10094;</span><span>&#10094;</span>
+    </button>
+    <button class="pgRail" id="railNext" title="Next page">
+      <span>&#10095;</span><span>&#10095;</span><span>&#10095;</span>
+    </button>
+    <div class="pagerBar" id="pagerBottom">
+      <button class="pg-arrow" id="prevPg2" title="Previous page">&#10094;</button>
+      <div class="pg-label" id="pgLabel2">–</div>
+      <button class="pg-arrow" id="nextPg2" title="Next page">&#10095;</button>
+    </div>
+  </main>
+</div>
+<div id="status"><div class="spin"></div><div id="statusTxt">Loading collection…</div></div>
+<div id="toast"></div>
+<div id="tokenWrap">
+  <div id="tokenBox">
+    <h3>Edit token</h3>
+    <p>Enter your edit token to save changes to the collection.</p>
+    <input id="tokenInput" type="password" autocomplete="off">
+    <div class="row">
+      <button id="tokenCancel">Cancel</button>
+      <button id="tokenOk">Unlock editing</button>
+    </div>
+  </div>
+</div>
+<div id="modalWrap">
+  <div id="modal">
+    <header><h2 id="modalTitle">Edit entry</h2><button id="closeModal">&#10005;</button></header>
+    <div id="modalBody"></div>
+    <footer>
+      <div class="msg" id="modalMsg"></div>
+      <a id="sheetRowLink" href="#" target="_blank" rel="noopener">Open row in Sheet</a>
+      <button id="cancelBtn">Cancel</button>
+      <button id="saveBtn">Save changes</button>
+    </footer>
+  </div>
+</div>
+<script>
+/* ================= CONFIGURATION ================= */
+const SHEET_ID   = '1mMkaCPwn879BvxzVTzbu9ODJMaAW9QdBv6aDOjLixZw';
+const SHEET_NAME = '';             // tab name; leave '' to use the sheet's first tab
+const SHEET_GID  = '424360819';    // gid of the tab (see #gid= in the sheet URL)
+const IMG_BASE   = 'https://images2.vudu.com/poster2/';                          // + Content ID + '-l'
+const LINK_BASE  = 'https://athome.fandango.com/content/browse/details/title/';  // + Content ID
+// Covers per page adapts to the layout so every row is full:
+// desktop shows 10 across (150 = 15 rows), collapsed 12 across (180), mobile 4 across (148)
+let PER_PAGE = 150;
+const mobileMq = window.matchMedia('(max-width:760px)');
+function syncPerPage(){
+  const firstShown = page * PER_PAGE;          // keep roughly the same spot
+  PER_PAGE = mobileMq.matches ? 148
+           : document.body.classList.contains('sbCollapsed') ? 180
+           : 150;
+  page = Math.floor(firstShown / PER_PAGE);
+}
+(mobileMq.addEventListener ? mobileMq.addEventListener('change', ()=>{ syncPerPage(); if(typeof renderPage==='function' && movies.length) renderPage(); })
+                           : mobileMq.addListener(()=>{ syncPerPage(); if(typeof renderPage==='function' && movies.length) renderPage(); }));
+const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw_nZsplHbJL2lLce21LZ4PlfR3izhrOKJkQY5Stfi09YXSyKHPWTGa-NI53Kc0uxtyBA/exec';
+// The edit token is NOT stored in this code. When you turn on edit mode,
+// the site asks for it and remembers it for the current browser session only.
+// Published CSV link (File > Share > Publish to web > select the wishlist
+// tab > CSV). This is the PRIMARY data source when set -- see loadData()
+// below for why: the gviz JSON path defaults to the sheet's first tab
+// (SHEET_NAME is blank), so if the wishlist lives on a different tab, gviz
+// quietly comes back with zero matching rows instead of failing loudly.
+// A published-CSV link bakes in the exact tab via its gid, so it always
+// reads the right data.
+const PUBLISHED_CSV_URL = '/mirror/wishlist.csv';
+/* Was the published Google CSV below. That endpoint answers
+   "Cache-Control: private, max-age=300" and is regenerated per request, so no
+   CDN could hold it and every visit paid for the whole file again. The mirror
+   is the same bytes, rebuilt at deploy time and served by Netlify with Brotli
+   and a real revalidate. If it is ever missing, this page still falls back to
+   the live sheet on its own, exactly as it did before.
+   Original: https://docs.google.com/spreadsheets/d/e/2PACX-1vRoppbitXf4M7TtjyYx2pnmqX0YV4MaWWclDBBYVBsymbdUrKCcJsKZLRYuUmLC7LiHmVp_fqqfq032/pub?gid=424360819&single=true&output=csv */
+/* ================================================= */
+// ---- Price buckets (checkbox facet) --------------------------------------
+// Titles with no Buy Price fall into UNAVAILABLE. The order below is the exact
+// order the checkboxes appear in the Price facet.
+const PRICE_ORDER = ['Under $5 – $10 – $15 – $20 – $25 & up','UNAVAILABLE'];
+function priceBucket(p){
+  if(p==null || isNaN(p)) return 'UNAVAILABLE';
+  if(p < 5)  return 'Under $5';
+  if(p < 10) return '$5 – $9.99';
+  if(p < 15) return '$10 – $14.99';
+  if(p < 20) return '$15 – $19.99';
+  if(p < 25) return '$20 – $24.99';
+  return '$25 & up';
+}
+const FACETS = [
+  {label:'Genre',    key:'genre',  csv:true},
+  {label:'Rating',   key:'mpaa'},
+  {label:'Studio',   key:'studio'},
+  {label:'Language', key:'lang',   csv:true},
+  {label:'Price',    key:'priceBucket', order:PRICE_ORDER},
+];
+const SLIDERS = [
+  {label:'Runtime',         key:'runtime', min:0,    max:240,  step:1},
+  {label:'Release Year',    key:'year',    min:1900, max:2026, step:1},
+  {label:'Rotten Tomatoes', key:'tomato',  min:0,    max:100,  step:1},
+];
+// column header -> internal key (headers come from row 1 of the sheet)
+const COLMAP = {
+  'Movie':'title','Description':'desc','Genre':'genreRaw','Runtime (Minutes)':'runtime',
+  'Release Year':'year','Rating':'mpaa','Studio':'studio','Language':'langRaw',
+  'Rotten Tomatoes Rating':'tomatoRaw','My Rating':'myRating','Own':'own','Content ID':'contentId',
+  'Buy Price':'buy','Buy Quality':'buyQuality'
+};
+const EDIT_FIELDS = [
+  {h:'Movie'},{h:'Content ID'},
+  {h:'Description',full:true,area:true},
+  {h:'Genre',full:true},
+  {h:'Rating'},{h:'Studio'},{h:'Language'},
+  {h:'Runtime (Minutes)'},{h:'Release Year'},{h:'Rotten Tomatoes Rating'},
+  {h:'My Rating'},{h:'Own'},
+];
+let movies=[], filtered=[], page=0, editMode=false, currentEdit=null;
+const selected={};           // facetKey -> Set of values
+const facetValues={};        // facetKey -> [ [value,count], ... ] sorted
+const rangeState={};         // sliderKey -> {lo,hi}
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const splitCsv=s=>String(s??'').split(',').map(x=>x.trim()).filter(Boolean);
+// ---- POSTER PROXYING ----
+// Posters are built from https://images2.vudu.com/... which is blocked on some
+// work networks AND refused by several image proxies, so for Vudu URLs we try a
+// list of proxies in order and the first that succeeds for a given poster wins.
+// (This matches the movies page.) Reorder the list to put your known-good proxy
+// first for the snappiest loads. Non-Vudu posters load directly, then wsrv.nl.
+const stripScheme = u => u.replace(/^https?:\/\//,'');
+const VUDU_PROXIES = [
+  u => 'https://cdn.statically.io/img/' + stripScheme(u) + '?w=400',
+  u => 'https://i0.wp.com/' + stripScheme(u) + '?w=400',
+  u => 'https://wsrv.nl/?w=400&url=' + encodeURIComponent(u),
+  u => 'https://images1-focus-opensocial.googleusercontent.com/gadgets/proxy?container=focus&resize_w=400&url=' + encodeURIComponent(u),
+];
+const isVudu = u => /vudu\.com/i.test(u);
+// The URL to try first for a given poster.
+const firstSrc = u => isVudu(u) ? VUDU_PROXIES[0](u) : u;
+// If a poster fails, walk the fallback chain before giving up and showing text.
+function posterError(img){
+  const orig = img.getAttribute('data-src') || '';
+  const step = (+(img.getAttribute('data-try') || '0')) + 1;
+  const chain = isVudu(orig)
+    ? VUDU_PROXIES.map(fn=>fn(orig))
+    : [orig, 'https://wsrv.nl/?w=400&url=' + encodeURIComponent(orig)];
+  if(step < chain.length){ img.setAttribute('data-try', step); img.src = chain[step]; return; }
+  const p = img.parentNode, t = (img.alt || '').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  img.remove();
+  p.insertAdjacentHTML('afterbegin', '<div class="ph">' + t + '</div>');
+}
+/* ---------- LOAD DATA FROM GOOGLE SHEET ----------
+   Strategies, tried in order:
+   1. Published-CSV URL, if PUBLISHED_CSV_URL is set above -- tried FIRST
+      because it bakes in the exact tab (via its gid), so it is the only
+      source guaranteed to read the right data. The gviz JSON path below
+      defaults to the sheet's first tab whenever SHEET_NAME is blank, so if
+      the real data lives on a different tab, gviz doesn't error -- it just
+      quietly returns zero matching rows, which looks like "nothing is
+      showing up" with no error message at all.
+   2. Direct fetch of the gviz JSON endpoint (fastest of the two remaining
+      fallbacks, but Google doesn't always send CORS headers, so it can
+      throw "Failed to fetch").
+   3. JSONP: load the same endpoint as a <script> tag with a
+      responseHandler callback — no CORS involved, works everywhere.     */
+const GVIZ_BASE=`https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?headers=1`
+  +(SHEET_NAME?`&sheet=${encodeURIComponent(SHEET_NAME)}`:'');
+// A source that "succeeds" with zero movies (e.g. gviz quietly reading the
+// sheet's first tab when the real data lives elsewhere) used to be treated
+// as success, so the page just rendered an empty grid with no explanation
+// at all. Every source is now held to the same bar: zero rows counts as a
+// failure, so the page always falls through to the next source and, if all
+// three are empty or broken, always shows a specific reason instead of
+// silently showing nothing.
+function requireRows(movies, hint){
+  if(!movies.length) throw new Error('loaded but 0 rows matched a Title column — '+hint);
+  return movies;
+}
+async function loadData(){
+  const errors=[];
+  // 1) published CSV
+  if(PUBLISHED_CSV_URL){
+    try{
+      const txt=await (await fetch(PUBLISHED_CSV_URL)).text();
+      return requireRows(parseGviz(parseCsvData(txt)), 'check the CSV\'s header row against COLMAP at the top of this embed code');
+    }catch(e){ errors.push('csv: '+e.message); }
+  }
+  // 2) direct fetch
+  try{ return requireRows(parseGviz(await fetchGviz()), 'gviz may be reading the wrong tab (SHEET_NAME is blank, so it defaults to the sheet\'s first tab) — set SHEET_NAME to your wishlist tab\'s name'); }
+  catch(e){ errors.push('fetch: '+e.message); }
+  // 3) JSONP
+  try{ return requireRows(parseGviz(await jsonpGviz()), 'gviz may be reading the wrong tab (SHEET_NAME is blank, so it defaults to the sheet\'s first tab) — set SHEET_NAME to your wishlist tab\'s name'); }
+  catch(e){ errors.push('jsonp: '+e.message); }
+  throw new Error(errors.join(' | '));
+}
+async function fetchGviz(){
+  const res=await fetch(GVIZ_BASE+'&tqx=out:json');
+  if(!res.ok) throw new Error('HTTP '+res.status);
+  const txt=await res.text();
+  return JSON.parse(txt.substring(txt.indexOf('(')+1, txt.lastIndexOf(')')));
+}
+function jsonpGviz(){
+  return new Promise((resolve,reject)=>{
+    const cb='__gviz_cb_'+Math.random().toString(36).slice(2);
+    const timer=setTimeout(()=>{ cleanup(); reject(new Error('timed out')); },45000);
+    function cleanup(){ clearTimeout(timer); delete window[cb]; script.remove(); }
+    window[cb]=json=>{
+      cleanup();
+      if(json && json.status==='error'){
+        reject(new Error((json.errors&&json.errors[0]&&json.errors[0].detailed_message)||'sheet returned an error'));
+      } else resolve(json);
+    };
+    const script=document.createElement('script');
+    script.src=GVIZ_BASE+'&tqx=out:json;responseHandler:'+cb;
+    script.onerror=()=>{ cleanup(); reject(new Error('script blocked or sheet not public')); };
+    document.head.appendChild(script);
+  });
+}
+/* --- minimal RFC-4180 CSV parser (handles quoted commas/newlines) --- */
+function parseCsvText(text){
+  const rows=[]; let row=[], cell='', inQ=false;
+  for(let i=0;i<text.length;i++){
+    const ch=text[i];
+    if(inQ){
+      if(ch==='"'){ if(text[i+1]==='"'){cell+='"';i++;} else inQ=false; }
+      else cell+=ch;
+    }else{
+      if(ch==='"') inQ=true;
+      else if(ch===','){ row.push(cell); cell=''; }
+      else if(ch==='\n'||ch==='\r'){
+        if(ch==='\r'&&text[i+1]==='\n') i++;
+        row.push(cell); cell='';
+        if(row.length>1||row[0]!=='') rows.push(row);
+        row=[];
+      }
+      else cell+=ch;
+    }
+  }
+  if(cell!==''||row.length){ row.push(cell); rows.push(row); }
+  return rows;
+}
+// convert a published-CSV export into the same shape parseGviz expects
+function parseCsvData(text){
+  const rows=parseCsvText(text);
+  if(!rows.length) throw new Error('empty CSV');
+  const headers=rows[0].map(h=>String(h).trim());
+  const table={
+    cols:headers.map(h=>({label:h})),
+    rows:rows.slice(1).map(r=>({c:r.map(v=>({v:v===''?null:v}))}))
+  };
+  return {table};
+}
+// Case/whitespace-insensitive header match, so a header that's technically
+// different text ("buy price " vs "Buy Price") still maps instead of
+// silently dropping that whole column -- the exact bug that broke the
+// Director leaderboard on the stats page. Any COLMAP key that still can't
+// find a match gets logged so it's visible in the browser console instead
+// of just vanishing into a quietly-empty page.
+const fold = s => String(s||'').trim().toLowerCase().replace(/\s+/g,' ');
+function parseGviz(json){
+  const cols=json.table.cols.map(c=>(c.label||'').trim());
+  const foldedMap={}; for(const h in COLMAP) foldedMap[fold(h)]=COLMAP[h];
+  const idx={}; cols.forEach((c,i)=>{ const key=foldedMap[fold(c)]; if(key && idx[key]==null) idx[key]=i; });
+  for(const h in COLMAP){
+    if(idx[COLMAP[h]]==null) console.warn('[wishlist] column not found in the sheet:', JSON.stringify(h));
+  }
+  const out=[];
+  json.table.rows.forEach((r,ri)=>{
+    const cell=k=>{ const i=idx[k]; if(i==null) return null;
+      const c=r.c && r.c[i]; return c==null?null:(c.v==null?null:c.v); };
+    const title=cell('title');
+    if(!title) return;
+    const num=k=>{ const v=cell(k); const n=typeof v==='number'?v:parseFloat(v); return isNaN(n)?null:n; };
+    const contentId=String(cell('contentId')??'').trim();
+    // Rotten Tomatoes arrives as 0.4 (percent-formatted number), "40%", or 40 —
+    // normalize all of them to the whole number 40
+    const tomRaw=cell('tomatoRaw');
+    let tomN = typeof tomRaw==='number' ? tomRaw
+             : parseFloat(String(tomRaw??'').replace('%',''));
+    if(!isNaN(tomN) && tomN>0 && tomN<=1) tomN=Math.round(tomN*100);
+    const m={
+      sheetRow: ri+2,                    // header row is 1; gviz row 0 = sheet row 2
+      title:String(title),
+      sortTitle:String(title).replace(/^(the|a|an)\s+/i,''),
+      desc:String(cell('desc')||''),
+      genreRaw:String(cell('genreRaw')||''), genre:splitCsv(cell('genreRaw')),
+      langRaw:String(cell('langRaw')||''),   lang:splitCsv(cell('langRaw')),
+      mpaa:String(cell('mpaa')||'').trim(),
+      studio:String(cell('studio')||'').trim(),
+      runtime:num('runtime'),
+      year:num('year'),
+      tomato:isNaN(tomN)?null:tomN,
+      tomatoRaw:String(cell('tomatoRaw')||''),
+      myRating:num('myRating'),
+      buy:num('buy'),
+      buyQuality:String(cell('buyQuality')||''),
+      own:String(cell('own')||''),
+      contentId,
+      img: contentId?IMG_BASE+contentId+'-l':'',
+      link: contentId?LINK_BASE+contentId:'',
+      color:'', search:''
+    };
+    m.search=[m.title,m.desc,m.year,m.genreRaw,m.studio,m.mpaa].join(' ').toLowerCase();
+    m.priceBucket=priceBucket(m.buy);
+    out.push(m);
+  });
+  return out;
+}
+/* ---------- FACET UI ---------- */
+function buildFacetValues(){
+  FACETS.forEach(f=>{
+    const counts=new Map();
+    movies.forEach(m=>{
+      const vals=f.csv?m[f.key]:[m[f.key]].filter(Boolean);
+      vals.forEach(v=>counts.set(v,(counts.get(v)||0)+1));
+    });
+    facetValues[f.key]=[...counts.entries()].sort((a,b)=>
+      f.order ? f.order.indexOf(a[0])-f.order.indexOf(b[0]) : a[0].localeCompare(b[0]));
+    if(!selected[f.key]) selected[f.key]=new Set();   // keep active selections on rebuild
+  });
+}
+function buildFacets(){
+  const host=$('#facets'); host.innerHTML='';
+  FACETS.forEach(f=>{
+    const el=document.createElement('div');
+    el.className='facet'; el.dataset.key=f.key;
+    const many=facetValues[f.key].length>12;
+    el.innerHTML=`
+      <button class="facet-btn">
+        <span>${esc(f.label)}</span>
+        <span class="count-badge" style="display:none">0</span>
+        <span class="icon">${many?'+':'\u25BE'}</span>
+      </button>
+      <div class="facet-panel">
+        ${facetValues[f.key].length>10?'<input class="opt-search" placeholder="Search…">':''}
+        <div class="opt-list"></div>
+        <button class="facet-clear">Clear</button>
+      </div>`;
+    host.appendChild(el);
+    const panel=el.querySelector('.facet-panel');
+    const list=el.querySelector('.opt-list');
+    const search=el.querySelector('.opt-search');
+    const render=(q='')=>{
+      const ql=q.toLowerCase();
+      const items=facetValues[f.key].filter(([v])=>!ql||v.toLowerCase().includes(ql));
+      const shown=items.slice(0,250);
+      list.innerHTML=shown.map(([v,n])=>`
+        <label><input type="checkbox" value="${esc(v)}" ${selected[f.key].has(v)?'checked':''}>
+        <span>${esc(v)}</span><span class="n">${n}</span></label>`).join('')
+        +(items.length>250?`<div class="opt-more">${items.length-250} more — type to narrow down</div>`:'');
+    };
+    el.querySelector('.facet-btn').addEventListener('click',()=>{
+      const was=el.classList.contains('open');
+      document.querySelectorAll('.facet.open').forEach(x=>x.classList.remove('open'));
+      if(!was){ el.classList.add('open'); render(search?search.value:''); if(search) search.focus(); }
+    });
+    if(search) search.addEventListener('input',()=>render(search.value));
+    list.addEventListener('change',e=>{
+      if(e.target.type!=='checkbox') return;
+      const v=e.target.value;
+      e.target.checked?selected[f.key].add(v):selected[f.key].delete(v);
+      updateBadge(el,f.key); applyFilters();
+    });
+    el.querySelector('.facet-clear').addEventListener('click',()=>{
+      selected[f.key].clear(); render(search?search.value:''); updateBadge(el,f.key); applyFilters();
+    });
+  });
+  document.addEventListener('click',e=>{
+    if(!e.target.closest('.facet')) document.querySelectorAll('.facet.open').forEach(x=>x.classList.remove('open'));
+  });
+}
+function updateBadge(el,key){
+  const b=el.querySelector('.count-badge'), n=selected[key].size;
+  b.style.display=n?'inline-block':'none'; b.textContent=n;
+}
+/* ---------- SLIDERS ---------- */
+function buildSliders(){
+  const host=$('#sliders'); host.innerHTML='';
+  SLIDERS.forEach(s=>{
+    const isDate=s.type==='date';
+    const vals=movies.map(m=>m[s.key]).filter(v=>v!=null);
+    if(isDate){
+      const DAY=86400000;
+      const now=new Date();
+      const todayLocal=new Date(now.getFullYear(),now.getMonth(),now.getDate()).getTime();
+      s.min=vals.length?Math.min(...vals):todayLocal-365*DAY;
+      s.max=Math.max(vals.length?Math.max(...vals):todayLocal, todayLocal);
+      s.step=DAY;
+    } else if(vals.length){
+      s.min=Math.floor(Math.min(s.min,...vals)); s.max=Math.ceil(Math.max(s.max,...vals));
+    }
+    rangeState[s.key]={lo:s.min,hi:s.max};
+    // value <-> text (dates shown/entered as a calendar picker, local time)
+    const pad=n=>String(n).padStart(2,'0');
+    const toStr=v=>{ if(!isDate) return String(v);
+      const d=new Date(v); return `${pad(d.getMonth()+1)}-${pad(d.getDate())}`; };
+    const fromStr=str=>{
+      if(isDate){
+        const p=String(str).split('-').map(Number);
+        if(p.length!==3||p.some(isNaN)) return null;
+        return new Date(p[0],p[1]-1,p[2]).getTime();
+      }
+      const n=parseFloat(str); return isNaN(n)?null:n;
+    };
+    const el=document.createElement('div');
+    el.className='slider-group';
+    el.innerHTML=`
+      <div class="sl-title">${esc(s.label)}</div>
+      <div class="range-wrap">
+        <div class="rail"></div><div class="fill"></div>
+        <input type="range" class="lo" min="${s.min}" max="${s.max}" step="${s.step}" value="${s.min}">
+        <input type="range" class="hi" min="${s.min}" max="${s.max}" step="${s.step}" value="${s.max}">
+      </div>
+      <div class="sl-vals">
+        <input class="v-lo ${isDate?'date':'number'}"
+               ${isDate?'':`min="${s.min}" max="${s.step}"`} title="Type a value">
+        <input class="v-hi ${isDate?'date':'number'}"
+               ${isDate?'':`min="${s.min}" max="${s.step}"`} title="Type a value">
+      </div>`;
+    host.appendChild(el);
+    const lo=el.querySelector('.lo'), hi=el.querySelector('.hi'),
+          fill=el.querySelector('.fill'), vlo=el.querySelector('.v-lo'), vhi=el.querySelector('.v-hi');
+    const paint=()=>{
+      const a=+lo.value,b=+hi.value;
+      let mn=Math.min(a,b),mx=Math.max(a,b);
+      if(mn < s.min + s.step/2) mn = s.min;   // treat end positions as exact bounds
+      if(mx > s.max - s.step/2) mx = s.max;   // (step snapping + DST can leave them ~1h short)
+      rangeState[s.key]={lo:mn,hi:mx};
+      const pct=v=>(v-s.min)/(s.max-s.min)*100;
+      fill.style.left=pct(mn)+'%'; fill.style.width=(pct(mx)-pct(mn))+'%';
+      vlo.value=toStr(mn); vhi.value=toStr(mx);
+    };
+    paint();
+    let t;
+    const onInput=()=>{ paint(); clearTimeout(t); t=setTimeout(applyFilters,150); };
+    lo.addEventListener('input',onInput); hi.addEventListener('input',onInput);
+    // typed values: clamp to range and move the matching handle
+    const manual=(inputEl,rangeEl)=>{
+      let v=fromStr(inputEl.value);
+      if(v==null){ paint(); return; }        // bad entry: snap back
+      v=Math.max(s.min,Math.min(s.max,v));
+      rangeEl.value=v;
+      paint(); applyFilters();
+    };
+    vlo.addEventListener('change',()=>manual(vlo,lo));
+    vhi.addEventListener('change',()=>manual(vhi,hi));
+    vlo.addEventListener('keydown',e=>{ if(e.key==='Enter') vlo.blur(); });
+    vhi.addEventListener('keydown',e=>{ if(e.key==='Enter') vhi.blur(); });
+    s._reset=()=>{ lo.value=s.min; hi.value=s.max; paint(); };
+  });
+}
+/* ---------- FILTER + SORT + RENDER ---------- */
+function applyFilters(){
+  const q=$('#searchBox').value.trim().toLowerCase();
+  filtered=movies.filter(m=>{
+    if(q && !m.search.includes(q)) return false;
+    for(const f of FACETS){
+      const sel=selected[f.key]; if(!sel.size) continue;
+      const vals=f.csv?m[f.key]:[m[f.key]];
+      if(!vals.some(v=>sel.has(v))) return false;
+    }
+    for(const s of SLIDERS){
+      const r=rangeState[s.key];
+      if(r.lo>s.min || r.hi<s.max){
+        const v=m[s.key];
+        const hi = s.type==='date' ? r.hi+86399999 : r.hi;  // include the whole end day
+        if(v==null || v<r.lo || v>hi) return false;
+      }
+    }
+    return true;
+  });
+  sortNow();
+  page=0; renderPage();
+}
+function sortNow(){
+  const [key,dir]=$('#sortSel').value.split('|');
+  const mul=dir==='desc'?-1:1;
+  filtered.sort((a,b)=>{
+    if(key==='sortTitle'){
+      const x=(a.sortTitle||'').toLowerCase(), y=(b.sortTitle||'').toLowerCase();
+      return mul*(x<y?-1:x>y?1:0);
+    }
+    const x=a[key], y=b[key];
+    if(x==null&&y==null) return 0;
+    if(x==null) return 1;   // blanks last either direction
+    if(y==null) return -1;
+    return mul*(x-y);
+  });
+}
+function renderPage(){
+  const total=filtered.length;
+  const pages=Math.max(1,Math.ceil(total/PER_PAGE));
+  page=Math.min(page,pages-1);
+  const start=page*PER_PAGE, end=Math.min(start+PER_PAGE,total);
+  const label= total? `${start+1} - ${end} / ${total}` : '0 results';
+  $('#pgLabel').textContent=label; $('#pgLabel2').textContent=label;
+  const atFirst=page===0, atLast=page>=pages-1;
+  $('#prevPg').disabled=atFirst;  $('#nextPg').disabled=atLast;
+  $('#prevPg2').disabled=atFirst; $('#nextPg2').disabled=atLast;
+  $('#railPrev').style.display=atFirst?'none':'flex';
+  $('#railNext').style.display=atLast?'none':'flex';
+  const grid=$('#grid');
+  grid.innerHTML=filtered.slice(start,end).map(m=>`
+    <a class="card" href="${esc(m.link)||'#'}" target="_blank" rel="noopener"
+       data-row="${m.sheetRow}" title="${esc(m.title)}${m.year?' ('+m.year+')':''}"
+       style="background:${esc(m.color)||'var(--bg-soft)'}">
+      ${m.img?`<img loading="lazy" decoding="async" src="${esc(firstSrc(m.img))}" data-src="${esc(m.img)}"
+        onerror="posterError(this)">`
+        :`<div class="ph">${esc(m.title)}</div>`}
+      <span class="edit-tag" title="Edit details">&#9998;</span>
+      ${m.buy!=null?`<span class="price-tag">$${m.buy}${m.buyQuality?' '+m.buyQuality:''}</span>`:''}
+    </a>`).join('');
+}
+function toTop(){
+  $('#grid').scrollTop=0;                              // reset the wall's inner scroll
+  // scrollIntoView also reaches the surrounding Google Sites page,
+  // bringing the top pager bar back into view after a page flip
+  $('#pagerTop').scrollIntoView({behavior:'smooth', block:'start'});
+}
+function goPrev(){ if(page>0){ page--; renderPage(); toTop(); } }
+function goNext(){ page++; renderPage(); toTop(); }
+$('#prevPg').addEventListener('click',goPrev);
+$('#nextPg').addEventListener('click',goNext);
+$('#prevPg2').addEventListener('click',goPrev);
+$('#nextPg2').addEventListener('click',goNext);
+$('#railPrev').addEventListener('click',goPrev);
+$('#railNext').addEventListener('click',goNext);
+let st; $('#searchBox').addEventListener('input',()=>{clearTimeout(st);st=setTimeout(applyFilters,220);});
+$('#sortSel').addEventListener('change',()=>{sortNow();page=0;renderPage();});
+function setSbCollapsed(v){
+  document.body.classList.toggle('sbCollapsed',v);
+  try{ localStorage.setItem('wl_sb', v?'1':'0'); }catch(e){}
+  syncPerPage();
+  if(movies.length) renderPage();   // filter selections live in memory — untouched
+}
+$('#sbCollapse').addEventListener('click',()=>setSbCollapsed(true));
+$('#sbExpand').addEventListener('click',()=>setSbCollapsed(false));
+try{ if(localStorage.getItem('wl_sb')==='1') document.body.classList.add('sbCollapsed'); }catch(e){}
+$('#mobileFilterBtn').addEventListener('click',()=>{
+  const open=document.body.classList.toggle('filtersOpen');
+  $('#mobileFilterBtn').innerHTML = open ? '&#10005; Hide filters' : '&#9776; Filters &amp; search';
+});
+$('#resetAll').addEventListener('click',()=>{
+  $('#searchBox').value='';
+  FACETS.forEach(f=>selected[f.key].clear());
+  document.querySelectorAll('.facet').forEach(el=>updateBadge(el,el.dataset.key));
+  SLIDERS.forEach(s=>s._reset&&s._reset());
+  applyFilters();
+});
+/* ---------- EDIT MODE ---------- */
+let sessionToken = sessionStorage.getItem('wl_token') || '';
+/* Save to the Apps Script. Tries a normal POST first; if the Google Sites
+   sandbox blocks it ("Failed to fetch"), falls back to a JSONP request,
+   which loads as a script tag and cannot be blocked by CORS. */
+function jsonpSave(payload){
+  return new Promise((resolve,reject)=>{
+    const cb='__save_cb_'+Math.random().toString(36).slice(2);
+    const timer=setTimeout(()=>{ cleanup(); reject(new Error('save timed out')); },30000);
+    function cleanup(){ clearTimeout(timer); delete window[cb]; tag.remove(); }
+    window[cb]=d=>{ cleanup(); resolve(d); };
+    const tag=document.createElement('script');
+    tag.src=APPS_SCRIPT_URL+'?callback='+cb+'&payload='+encodeURIComponent(JSON.stringify(payload));
+    tag.onerror=()=>{ cleanup(); reject(new Error('request blocked — check the Apps Script is deployed with access set to "Anyone"')); };
+    document.head.appendChild(tag);
+  });
+}
+async function saveToSheet(payload){
+  try{
+    const res=await fetch(APPS_SCRIPT_URL,{
+      method:'POST',
+      headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body:JSON.stringify(payload)
+    });
+    return await res.json();
+  }catch(e){
+    return await jsonpSave(payload);   // sandbox blocked the POST — go around it
+  }
+}
+let tokenResolve=null;
+function askToken(){                       // in-page dialog: window.prompt() is blocked in Google Sites embeds
+  return new Promise(res=>{
+    tokenResolve=res;
+    $('#tokenInput').value='';
+    $('#tokenWrap').classList.add('open');
+    setTimeout(()=>$('#tokenInput').focus(),60);
+  });
+}
+function finishToken(ok){
+  const v = ok ? $('#tokenInput').value.trim() : '';
+  $('#tokenWrap').classList.remove('open');
+  if(v){ sessionToken=v; sessionStorage.setItem('wl_token',v); }
+  const r=tokenResolve; tokenResolve=null; if(r) r(v);
+}
+$('#tokenOk').addEventListener('click',()=>finishToken(true));
+$('#tokenCancel').addEventListener('click',()=>finishToken(false));
+$('#tokenInput').addEventListener('keydown',e=>{ if(e.key==='Enter') finishToken(true); if(e.key==='Escape') finishToken(false); });
+$('#tokenWrap').addEventListener('click',e=>{ if(e.target.id==='tokenWrap') finishToken(false); });
+async function getToken(){
+  if(sessionToken) return sessionToken;
+  return await askToken();
+}
+function dropToken(){ sessionToken=''; sessionStorage.removeItem('wl_token'); }
+// Google Sites can swallow bubbling clicks inside embeds — bind at the
+// document capture phase too so the toggle always sees them.
+document.addEventListener('click',e=>{
+  if(e.target.closest && e.target.closest('#editToggle')) handleEditToggle();
+}, true);
+$('#editToggle').addEventListener('click', ()=>handleEditToggle());
+async function handleEditToggle(){
+  if(!editMode){
+    if(!APPS_SCRIPT_URL){
+      toast('Paste your Apps Script URL into APPS_SCRIPT_URL in the embed code first',true);
+      return;
+    }
+    const t=await getToken();
+    if(!t){ toast('Edit mode needs a token',true); return; }
+  }
+  editMode=!editMode; document.body.classList.toggle('editing',editMode);
+  $('#editToggle').innerHTML = editMode ? '&#128274; Lock editing' : '&#9998; Unlock editing';
+  toast(editMode?'Edit mode on — \u270E edits an entry':'Edit mode off');
+}
+/* ---------- price refresh (runs server-side via Apps Script) ---------- */
+// Prices are looked up on the Apps Script side (UrlFetchApp), not in the
+// browser — Vudu's API blocks direct cross-origin browser requests (CORS),
+// so calling it from here would silently fail every time.
+$('#priceBtn').addEventListener('click',async()=>{
+  if(!APPS_SCRIPT_URL){ toast('Set up the Apps Script URL first',true); return; }
+  const token=await getToken();
+  if(!token){ toast('A token is required to refresh prices',true); return; }
+  const btn=$('#priceBtn'); btn.disabled=true;
+  const targets=movies.filter(m=>m.contentId);
+  const CHUNK=8; // keep each request/JSONP URL a reasonable size
+  let done=0, saved=0;
+  try{
+    for(let i=0;i<targets.length;i+=CHUNK){
+      const chunk=targets.slice(i,i+CHUNK);
+      const contentIds=chunk.map(m=>m.contentId);
+      const data=await saveToSheet({token,action:'refreshPrices',contentIds});
+      if(!data.ok) throw new Error(data.error||'refresh failed');
+      chunk.forEach(m=>{
+        const p=data.prices ? data.prices[m.contentId] : undefined;
+        const q=data.qualities ? data.qualities[m.contentId] : undefined;
+        m.buy=(p===''||p==null)?null:p;
+        m.buyQuality=q||'';
+        m.priceBucket=priceBucket(m.buy);   // keep the Price facet in sync
+      });
+      saved+=(data.written||0);
+      done+=chunk.length;
+      btn.textContent='$ '+done+'/'+targets.length;
+    }
+    toast('Prices updated: '+saved+' of '+targets.length+' titles');
+    buildFacetValues();   // refresh Price bucket counts
+    applyFilters();       // re-evaluate in case a Price filter is active
+  }catch(err){
+    const hint=/unknown action/i.test(err.message)
+      ? 'Your Apps Script is outdated — paste the newest version and redeploy (Deploy \u2192 Manage deployments \u2192 pencil \u2192 New version).'
+      : err.message;
+    toast('Price refresh failed: '+hint,true);
+  }
+  btn.disabled=false; btn.innerHTML='&#36; Refresh prices';
+});
+$('#grid').addEventListener('click',e=>{
+  if(!editMode) return;
+  const card=e.target.closest('.card'); if(!card) return;
+  if(e.target.closest('.edit-tag')){
+    e.preventDefault();
+    openEditor(+card.dataset.row);
+    return;
+  }
+  // any other click on the cover: let the link open the movie's page as usual
+});
+let toastTimer;
+function toast(msg,isErr){
+  const t=$('#toast');
+  t.textContent=msg; t.className=isErr?'show err':'show';
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>{ t.className=''; },2600);
+}
+function openEditor(sheetRow){
+  const m=movies.find(x=>x.sheetRow===sheetRow); if(!m) return;
+  currentEdit=m;
+  $('#modalTitle').textContent='Edit: '+m.title;
+  $('#modalMsg').textContent= APPS_SCRIPT_URL ? '' :
+    'Saving is not set up yet — deploy the Apps Script and add its URL to the embed, or edit directly in the Sheet.';
+  $('#modalMsg').className='msg';
+  $('#saveBtn').disabled=!APPS_SCRIPT_URL;
+  $('#sheetRowLink').href=`https://docs.google.com/spreadsheets/d/${SHEET_ID}/edit#gid=${SHEET_GID}&range=A${sheetRow}`;
+  const body=$('#modalBody');
+  body.innerHTML=EDIT_FIELDS.map(f=>{
+    const key=COLMAP[f.h];
+    let v=m[key]; if(v==null) v='';
+    return `<div class="field${f.full?' full':''}">
+      <label>${esc(f.h)}</label>
+      ${f.area?`<textarea data-h="${esc(f.h)}">${esc(v)}</textarea>`
+              :`<input data-h="${esc(f.h)}" value="${esc(v)}">`}
+    </div>`;
+  }).join('');
+  $('#modalWrap').classList.add('open');
+}
+function closeEditor(){ $('#modalWrap').classList.remove('open'); currentEdit=null; }
+$('#closeModal').addEventListener('click',closeEditor);
+$('#cancelBtn').addEventListener('click',closeEditor);
+$('#modalWrap').addEventListener('click',e=>{ if(e.target.id==='modalWrap') closeEditor(); });
+$('#saveBtn').addEventListener('click',async()=>{
+  if(!currentEdit||!APPS_SCRIPT_URL) return;
+  const token=await getToken();
+  if(!token){ $('#modalMsg').textContent='A token is required to save changes.'; $('#modalMsg').className='msg err'; return; }
+  const updates={};
+  document.querySelectorAll('#modalBody [data-h]').forEach(el=>{ updates[el.dataset.h]=el.value; });
+  const msg=$('#modalMsg'); msg.textContent='Saving…'; msg.className='msg';
+  $('#saveBtn').disabled=true;
+  try{
+    const data=await saveToSheet({token,action:'update',sheetRow:currentEdit.sheetRow,
+        key:{ContentID:currentEdit.contentId,Title:currentEdit.title},updates});
+    if(!data.ok){
+      if(/token/i.test(data.error||'')) dropToken();
+      throw new Error(data.error||'Save failed');
+    }
+    // reflect changes locally without a full reload
+    const m=currentEdit;
+    for(const [h,v] of Object.entries(updates)){
+      const key=COLMAP[h]; if(!key) continue;
+      if(['year','runtime','myRating'].includes(key)){ const n=parseFloat(v); m[key]=isNaN(n)?null:n; }
+      else if(key==='tomatoRaw'){ m.tomatoRaw=v; let n=parseFloat(String(v).replace('%',''));
+        if(!isNaN(n) && n>0 && n<=1) n=Math.round(n*100);
+        m.tomato=isNaN(n)?null:n; }
+      else m[key]=v;
+    }
+    m.genre=splitCsv(m.genreRaw); m.lang=splitCsv(m.langRaw);
+    m.sortTitle=String(m.title).replace(/^(the|a|an)\s+/i,'');
+    m.contentId=String(m.contentId).trim();
+    m.img=m.contentId?IMG_BASE+m.contentId+'-l':'';
+    m.link=m.contentId?LINK_BASE+m.contentId:'';
+    m.priceBucket=priceBucket(m.buy);   // in case Buy Price ever becomes editable
+    m.search=[m.title,m.desc,m.year,m.genreRaw,m.studio,m.mpaa].join(' ').toLowerCase();
+    buildFacetValues();
+    msg.textContent='Saved ✓'; msg.className='msg ok';
+    setTimeout(()=>{ closeEditor(); applyFilters(); },600);
+  }catch(err){
+    msg.textContent='Could not save: '+err.message; msg.className='msg err';
+  }finally{
+    $('#saveBtn').disabled=false;
+  }
+});
+/* ---------- INIT ---------- */
+(async function init(){
+  try{
+    movies=await loadData();
+    syncPerPage();
+    buildFacetValues(); buildFacets(); buildSliders();
+    $('#status').style.display='none';
+    applyFilters();
+  }catch(err){
+    $('#statusTxt').innerHTML='Could not load the sheet.<br><small style="font-weight:700;line-height:1.6">'
+      +'1. Check the spreadsheet is shared as “Anyone with the link – Viewer”.<br>'
+      +'2. If it still fails, in the Sheet use File → Share → Publish to web → your wishlist tab → CSV,<br>'
+      +'&nbsp;&nbsp;&nbsp;&nbsp;then paste that link into PUBLISHED_CSV_URL at the top of this embed code.<br>'
+      +'<span style="color:#607d8b">('+esc(err.message)+')</span></small>';
+    document.querySelector('#status .spin').style.display='none';
+  }
+})();
+</script>
+</body>
+</html>

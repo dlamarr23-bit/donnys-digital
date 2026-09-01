@@ -1,0 +1,2570 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Tells the browser the page is dark BEFORE any CSS is parsed, so the very
+     first frame is dark instead of a white flash that repaints to #171C20. -->
+<meta name="color-scheme" content="dark">
+<title>Donny's Digital</title>
+<!-- Warm up every third-party connection before it's needed -->
+<link rel="preconnect" href="https://docs.google.com">
+<link rel="dns-prefetch" href="https://docs.google.com">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://cdn.statically.io" crossorigin>
+<link rel="preconnect" href="https://images2.vudu.com" crossorigin>
+<!-- 2nd/3rd-choice poster proxies. They are only ever reached if
+     statically.io fails, so a full preconnect opens two TLS sessions that are
+     almost never used -- and it opens them during the window where the sheet
+     download wants every byte of bandwidth. DNS only: the lookup is the slow
+     part on the rare occasion they are needed. -->
+<link rel="dns-prefetch" href="https://i0.wp.com">
+<link rel="dns-prefetch" href="https://wsrv.nl">
+<!-- Not every poster in the sheet is a Vudu one, and non-Vudu URLs are always
+     loaded direct from their own host (see firstSrc). Counted over the whole
+     collection: vudu 18,479, staticflickr 444, moviesanywhere 41, amazon 7.
+     staticflickr is a real second host that had no hint at all, so its covers
+     paid a full cold DNS lookup every time one landed on a page. -->
+<link rel="dns-prefetch" href="https://live.staticflickr.com">
+<style>
+/* ============ CRITICAL CSS ============
+   Just the loading indicator, inlined ahead of everything else so the bar and
+   the spinner are on screen in the very first painted frame -- before the main
+   stylesheet is read, before the fonts, and long before any data arrives. */
+html,body{margin:0;padding:0;background:#171C20}
+#topbar{position:fixed;top:0;left:0;right:0;height:3px;z-index:200;
+  background:rgba(255,255,255,.09);overflow:hidden}
+#topbar.done{opacity:0;transition:opacity .4s .25s}
+#topfill{height:100%;width:0;background:linear-gradient(90deg,#8e1f1f,#c62828,#ef5350);
+  transition:width .3s ease-out}
+#topbar.indet #topfill{width:38%;animation:ddslide 1.15s ease-in-out infinite}
+@keyframes ddslide{0%{transform:translateX(-110%)}100%{transform:translateX(275%)}}
+#status{position:fixed;top:23px;left:50%;transform:translateX(-50%);z-index:201;
+  display:flex;flex-direction:row;gap:10px;align-items:center;
+  background:#263238;border-radius:20px;padding:8px 17px 8px 13px;
+  font:700 12.5px 'Poppins','Segoe UI',system-ui,sans-serif;letter-spacing:.5px;color:#cfd8dc;
+  box-shadow:0 4px 16px rgba(0,0,0,.55);max-width:min(92vw,520px)}
+#status.hidden{display:none}
+#status.err{background:#b71c1c;color:#fff;border-radius:10px;text-align:left}
+#status small{font-weight:700;line-height:1.6;display:block}
+.spin{width:15px;height:15px;border:2px solid rgba(255,255,255,.22);border-top-color:#fff;
+  border-radius:50%;animation:sp .8s linear infinite;flex:none}
+@keyframes sp{to{transform:rotate(360deg)}}
+/* Placeholder tiles, so the grid reads as "filling in" instead of "broken". */
+.skel{border-radius:6px;height:0;padding-bottom:150%;background:#1f262b;
+  animation:ddpulse 1.5s ease-in-out infinite}
+@keyframes ddpulse{0%,100%{opacity:.5}50%{opacity:.92}}
+@media(prefers-reduced-motion:reduce){
+  .spin,.skel{animation:none}
+  #topbar.indet #topfill{animation:none;width:100%}
+}
+</style>
+<script>
+/* ============ STATIC SNAPSHOT (Netlify) ============
+   Deliberately the FIRST script in the document, so the snapshot request is on
+   the wire before anything else is even parsed.
+
+   WHY THIS EXISTS
+   ---------------
+   The early loader below is already about as good as it can get against the
+   published Google Sheets CSV -- it streams, it paints from the first 600 rows,
+   it revalidates rather than re-downloading. What it cannot fix is the endpoint
+   itself:
+
+       Cache-Control: private, max-age=300      <- measured, not assumed
+       11.7MB raw / 3.45MB gzipped / ~9.3s cold
+
+   "private" bars every CDN from holding a copy, and 300s means the browser
+   re-fetches within a single sitting. So on a first visit -- no IndexedDB
+   cache yet -- the page could not show a single cover until megabytes of CSV
+   had come down from Google.
+
+   The snapshot is that same collection, rebuilt at deploy time into a compact
+   tiered encoding and served by Netlify as an immutable, content-hashed,
+   Brotli-compressed file: ~589KB for everything the grid needs to paint.
+   Effectively it is a warm cache that a browser gets to use on a page it has
+   never visited.
+
+   HOW IT SLOTS IN
+   ---------------
+   It does NOT replace the live sheet. init() treats a decoded snapshot exactly
+   as it treats an IndexedDB cache hit: paint from it, then run the existing
+   revalidation probe against the real sheet and catch up if anything moved.
+   signature() fingerprints on Title/Date Added/Viewing Status/Quality, all of
+   which live in the core tier -- so a snapshot fingerprint is directly
+   comparable to a live one and the existing probe logic needs no changes.
+
+   If any of this fails, every path below still works: init() falls through to
+   window.__startCsv() exactly as it did before the snapshot existed. */
+(function(){
+window.__SNAP=true;              // read synchronously by the loader below
+var MANIFEST='/data-manifest.json';
+
+function getJson(u){
+  return fetch(u,{credentials:'omit'}).then(function(r){
+    if(!r.ok) throw new Error(u+' HTTP '+r.status);
+    return r.json();
+  });
+}
+/* The manifest is the only non-immutable request: it is what maps a tier name
+   onto the current content-hashed filename. Tiny, and fetched once. */
+var manifest=getJson(MANIFEST);
+function tier(name){
+  return manifest.then(function(m){
+    if(!m||!m.files||!m.files[name]) throw new Error('manifest has no tier "'+name+'"');
+    return getJson('/snapshots/'+m.files[name]);
+  });
+}
+
+/* Rebuild rows in the sheet's OWN column order, so parseRows() downstream is
+   handed exactly the shape it would have got from the CSV and nothing else in
+   the page has to know the snapshot exists. */
+function decodeCore(p){
+  var idx={}, i;
+  for(i=0;i<p.cols.length;i++) idx[p.cols[i]]=i;
+  var multi={}, single={};
+  for(i=0;i<p.multi.length;i++)  multi[p.multi[i]]=1;
+  for(i=0;i<p.single.length;i++) single[p.single[i]]=1;
+  var nc=p.cols.length, n=p.rows.length, out=new Array(n);
+  var iT=idx['Title'], iS=idx['Sort Title'], iI=idx['Img'], iL=idx['Link'];
+  for(var r=0;r<n;r++){
+    var rec=p.rows[r], row=new Array(nc);
+    for(i=0;i<nc;i++) row[i]='';
+    /* 0 marks a blank sheet row. It is kept rather than dropped because
+       parseRows() derives sheetRow from the array position. */
+    if(rec!==0){
+      row[iT]=rec[0];
+      row[iS]=rec[1]===0?rec[0]:rec[1];   // 0 == "same as Title"
+      /* Url encoding, mirrored from encodeImg/encodeLink in the build script.
+         The cases are told apart by JSON type, so a literal url (always a
+         1-element array) can never be mistaken for an id (always a string)
+         or for a prefix flag (always a number). */
+      var im=rec[2], lk=rec[3], imgId=null;
+      if(typeof im==='string'){ imgId=im; row[iI]=p.imgPrefix+im+p.imgSuffix; }
+      else row[iI]=im[0];                                  // literal
+      if(lk===0)                 row[iL]=p.linkBrowse+imgId;
+      else if(lk===1)            row[iL]=p.linkMovies+imgId;
+      else if(typeof lk==='string') row[iL]=p.linkBrowse+lk;
+      else if(lk.length===2)     row[iL]=p.linkMovies+lk[1];
+      else                       row[iL]=lk[0];            // literal
+      for(var k=0;k<p.coreCols.length;k++){
+        var c=p.coreCols[k], v=rec[4+k], d=p.dicts[c], s;
+        if(multi[c]){ s=''; for(i=0;i<v.length;i++) s+=(i?', ':'')+d[v[i]]; row[idx[c]]=s; }
+        else if(single[c]) row[idx[c]]=d[v];
+        else row[idx[c]]=v;
+      }
+    }
+    out[r]=row;
+  }
+  return {cols:p.cols, rows:out, src:'snapshot'};
+}
+
+/* Director and Actors carry 7.5k and 29k unique names between them -- about as
+   much again as the entire rest of the grid. They are only read when a facet
+   panel opens or the search index is built, so they ride separately and are
+   patched onto the already-painted rows by sheet position. */
+function decodeFacets(p){
+  var n=p.rows.length, out=new Array(n);
+  for(var r=0;r<n;r++){
+    var rec=p.rows[r];
+    if(rec===0){ out[r]=null; continue; }
+    var o={};
+    for(var k=0;k<p.cols.length;k++){
+      var c=p.cols[k], v=rec[k], d=p.dicts[c], s='';
+      for(var i=0;i<v.length;i++) s+=(i?', ':'')+d[v[i]];
+      o[c]=s;
+    }
+    out[r]=o;
+  }
+  return out;
+}
+
+window.__snapCore   = tier('core').then(decodeCore);
+window.__snapFacets = tier('facets').then(decodeFacets);
+/* Descriptions are only wanted for search enrichment and the detail view, so
+   this tier is not requested until something actually asks. */
+var descP=null;
+window.__snapDesc=function(){
+  if(!descP) descP=tier('desc').then(function(p){ return p.rows; });
+  return descP;
+};
+/* A missing or broken snapshot must never be fatal -- the live sheet is still
+   there. Attach handlers now so a failure cannot surface as an unhandled
+   rejection while init() is still deciding what to do. */
+window.__snapCore.catch(function(e){
+  try{ console.warn('[snapshot] core unavailable:', (e&&e.message)||e); }catch(x){}
+});
+window.__snapFacets.catch(function(e){
+  try{ console.warn('[snapshot] facets unavailable:', (e&&e.message)||e); }catch(x){}
+});
+})();
+</script>
+<script>
+/* ============ EARLY DATA LOADER ============
+   Runs before the CSS, the fonts and the body are parsed, so the download is
+   already in flight while the browser is still reading the rest of this file.
+
+   WHAT CHANGED, AND WHY THE PAGE USED TO SIT THERE FOR ~10s
+   ---------------------------------------------------------
+   The old loader asked for the whole sheet as one gviz response, waited for
+   every byte, JSON.parsed ~14MB, built 18,883 objects, sorted them, and only
+   THEN wrote the first <img> tag. Nothing could be requested for the covers
+   until all of that had finished -- so the posters were always ~10s late no
+   matter how fast the network was.
+
+   Now the response is READ AS IT ARRIVES. The CSV is parsed incrementally, and
+   the moment the first FIRST_ROWS records are decoded they are handed to the
+   page, which renders page 1 and starts pulling posters while the remaining
+   ~11MB is still downloading. Covers now appear after a few hundred KB instead
+   of after the entire sheet.
+
+   WHY "PUBLISHED CSV UNAVAILABLE" USED TO APPEAR WHEN THE CSV WAS FINE
+   -------------------------------------------------------------------
+   The fallback used to be armed by a flat 4s deadline on `firstDone`, which is
+   only set once 600 rows have been DECODED (~445KB) -- so any ordinary slow
+   connection, or Google taking a few seconds to generate a 14MB export, tripped
+   it and the page announced the CSV was unavailable while it was downloading
+   perfectly well. Worse, tripping it fires BOTH gviz sources, so three ~14MB
+   downloads of the same sheet then competed for bandwidth and the CSV landed
+   even later.
+
+   The deadline now cancels the moment the CSV's response HEADERS come back OK,
+   because that is the point at which the published link is provably alive.
+   A separate stall watchdog still covers a connection that opens and then goes
+   quiet, and the fallback now reports WHY it fired ('error' / 'slow' /
+   'stalled') along with the underlying message, instead of blaming the link
+   for what is really just a slow network.
+
+   Source order (first success wins):
+     1. Published CSV  <-- static, CDN-cached, gzipped, no query engine in
+        front of it, and streamable. This is the fast path.
+     2. gviz JSON via fetch   } used only if the CSV fails
+     3. gviz JSON via JSONP   } (JSONP also covers strict-sandbox embeds)
+
+   Exposes:
+     window.__firstRows -> {cols,rows,src,partial}  first slice, ASAP
+     window.__allRows   -> {cols,rows,src}          everything
+     window.__prog(cb)  -> progress events (replays the latest immediately)  */
+(function(){
+var SHEET_ID='1IHUqVvrGcjIESpHaClR9uvmjP3jutcz-ReijMqI7x38';
+var SHEET_NAME='Movies';
+/* Published CSV of the Movies tab. Derived from the pubhtml link by swapping
+   "/pubhtml?" for "/pub?" and adding &output=csv. To re-publish:
+   File > Share > Publish to web > "Movies" > CSV.
+   NOTE: a published CSV can lag live edits by a few minutes. Edits made from
+   this page are applied in memory straight away, so you still see them at
+   once; they just take a moment to show up for a hard reload. */
+var CSV_URL='https://docs.google.com/spreadsheets/d/e/2PACX-1vTNcy_TXkl7kRJvIvf4U_q9pZUCdrJ9RsQ8Vgnr5NoX8K679jUhWC6iWZvbCYR2bOaRG2ypgFB13PEB/pub?gid=0&single=true&output=csv';
+window.__CSV_URL=CSV_URL;
+/* How many rows to decode before handing the page enough to paint page 1.
+   Needs to comfortably exceed the largest page size (72) so the first screen
+   is stable; the sheet is maintained newest-first, which is also the default
+   sort, so these are exactly the rows page 1 wants. */
+var FIRST_ROWS=600;
+/* How long to wait for the published CSV to ANSWER (not to finish, and not to
+   produce 600 rows) before also waking the live-sheet fallback. Cancelled as
+   soon as the response headers arrive, so this only ever expires when the link
+   genuinely isn't responding. */
+var CSV_OPEN_MS=8000;
+/* Once the CSV is streaming, how long a gap between chunks counts as dead. */
+var CSV_STALL_MS=20000;
+var BASE='https://docs.google.com/spreadsheets/d/'+SHEET_ID
+  +'/gviz/tq?headers=1&sheet='+encodeURIComponent(SHEET_NAME);
+/* ---- REVALIDATION PROBE ---------------------------------------------------
+   The full export is ~11.1MB and is re-downloaded on every visit, even when
+   nothing in the sheet has moved. This probe answers "has anything changed?"
+   for ~955KB instead.
+
+   WHY THESE FOUR COLUMNS AND NOT MORE
+   The page's own change test -- signature(), further down -- has always
+   compared exactly Title | Date Added | Viewing Status | Quality. Anything
+   else (ratings, runtime, genre, poster URL...) already did NOT count as a
+   change: the old code downloaded all 11.1MB, hashed those four fields,
+   found them equal, and threw the fresh copy away. So probing precisely
+   those four columns is not a weaker test than before -- it is the SAME
+   test, asked before the download instead of after it.
+
+   Column letters are fixed for this sheet: B=Title, K=Quality,
+   M=Viewing Status, X=Date Added. If the tab's columns are ever reordered
+   the letters go stale, so the probe checks the header labels it gets back
+   and reports 'changed' if they don't match -- which just falls through to
+   the ordinary full download. Every failure mode here costs a download; none
+   of them can serve stale data.
+   Set REVALIDATE=false to switch this off and always pull the whole sheet. */
+var REVALIDATE=true;
+var PROBE_COLS='select B,K,M,X';
+var PROBE_HEAD=['Title','Quality','Viewing Status','Date Added'];
+/* If the probe hasn't answered by now, start the full download anyway rather
+   than let a slow gviz hold up a sheet that really has changed. */
+var PROBE_GRACE_MS=4000;
+var PROBE_URL=BASE+'&tq='+encodeURIComponent(PROBE_COLS)+'&tqx=out:csv';
+window.__PROBE_HEAD=PROBE_HEAD;
+window.__GVIZ_BASE=BASE;
+window.__GVIZ_DISPLAY=BASE;
+window.__GVIZ_DESC=BASE+'&tq='+encodeURIComponent('select F');
+
+/* ---- progress hub ---------------------------------------------------------
+   The indicator subscribes from the main script, which runs later, so the last
+   event is replayed to every new subscriber. */
+var subs=[], last=null;
+window.__prog=function(cb){ subs.push(cb); if(last){ try{cb(last);}catch(e){} } };
+function emit(o){ last=o; for(var i=0;i<subs.length;i++){ try{subs[i](o);}catch(e){} } }
+window.__emit=emit;
+emit({stage:'connect'});
+
+/* Expected download size, remembered from last visit, so the bar can be a real
+   percentage instead of a barber pole. gzip means Content-Length is absent. */
+try{ window.__expBytes=+(localStorage.getItem('dd_bytes')||0)||0; }catch(e){ window.__expBytes=0; }
+
+/* ---- one-shot promises --------------------------------------------------- */
+function defer(){ var d={}; d.p=new Promise(function(a,b){ d.res=a; d.rej=b; }); return d; }
+var first=defer(), all=defer();
+window.__firstRows=first.p; window.__allRows=all.p;
+/* Nothing else in the page listens for a rejection of __firstRows, so swallow
+   it here; the real error surfaces on __allRows. */
+first.p.catch(function(){});
+var firstDone=false, allDone=false;
+function gotFirst(v){ if(!firstDone){ firstDone=true; first.res(v); } }
+function gotAll(v){ if(!allDone){ allDone=true; gotFirst(v); all.res(v); } }
+function failed(e){ if(allDone) return; allDone=true;
+  if(!firstDone){ firstDone=true; first.rej(e); }
+  all.rej(e); }
+
+/* ---- incremental RFC-4180 CSV parser ------------------------------------
+   Fed arbitrary network chunks. Records that are complete are committed and
+   dropped; a partial trailing record is carried over and re-scanned with the
+   next chunk (bounded by one row, so it is free). Cells are sliced out in one
+   go rather than built a character at a time -- on an 11MB export the
+   character-by-character version alone costs seconds in garbage. */
+function CsvStream(){ this.buf=''; this.rows=[]; }
+CsvStream.prototype.push=function(chunk){
+  var s=this.buf+chunk, n=s.length, i=0, start=0, commit=0;
+  var cell='', dirty=false, q=false, row=[], rows=this.rows, ch;
+  while(i<n){
+    ch=s.charCodeAt(i);
+    if(q){
+      if(ch===34){
+        if(s.charCodeAt(i+1)===34){ cell+=s.slice(start,i+1); i+=2; start=i; dirty=true; continue; }
+        cell+=s.slice(start,i); q=false; dirty=true; i++; start=i; continue;
+      }
+      i++; continue;
+    }
+    if(ch===34){ q=true; dirty=true; i++; start=i; continue; }
+    if(ch===44){ row.push(dirty?cell+s.slice(start,i):s.slice(start,i)); cell=''; dirty=false; i++; start=i; continue; }
+    if(ch===10||ch===13){
+      row.push(dirty?cell+s.slice(start,i):s.slice(start,i)); cell=''; dirty=false;
+      if(ch===13 && s.charCodeAt(i+1)===10) i++;
+      i++; start=i;
+      if(row.length>1||row[0]!=='') rows.push(row);
+      row=[]; commit=i;
+      continue;
+    }
+    i++;
+  }
+  this.buf=s.slice(commit);
+  return rows;
+};
+CsvStream.prototype.end=function(){
+  var t=this.buf; this.buf='';
+  if(t.length) this.push(t.charCodeAt(t.length-1)===10 ? t : t+'\n');
+  return this.rows;
+};
+
+/* Guards against the two ways a published link can be wrong: not set at all
+   (clear CSV_URL above to go back to reading the live sheet), and published
+   from the wrong tab. Either way this rejects and the gviz fallback takes over,
+   instead of quietly serving an empty or nonsense collection. */
+function checkCols(cols){
+  for(var i=0;i<cols.length;i++){ if(String(cols[i]).trim()==='Title') return cols; }
+  throw new Error('published CSV has no Title column — is the "Movies" tab the one published?');
+}
+
+var csvAbort=null;
+function streamCsv(){
+  if(!CSV_URL) return Promise.reject(new Error('CSV_URL not set'));
+  /* Abortable so that a revalidation which lands AFTER the grace timer has
+     already opened the download can still stop it mid-flight instead of
+     pulling all 11.1MB it has just proved we don't need. */
+  var fo={credentials:'omit'};
+  try{ csvAbort=new AbortController(); fo.signal=csvAbort.signal; }catch(e){ csvAbort=null; }
+  return fetch(CSV_URL,fo).then(function(r){
+    if(!r.ok) throw new Error('CSV HTTP '+r.status);
+    /* Headers are back and the status is OK: the published link is ALIVE.
+       Everything after this point is just transfer speed, which is not the
+       link's fault -- so stand the "is it even there?" deadline down and let
+       the stall watchdog take over. Without this, a slow 14MB export was
+       reported to the user as an unavailable CSV. */
+    clearTimeout(timer);
+    armStall();
+    var cs=new CsvStream(), cols=null;
+    function header(){ if(!cols && cs.rows.length){ cols=checkCols(cs.rows.shift()); } }
+    /* No streams (very old browser, or a sandbox that strips response.body):
+       fall back to one text() read. Still the fast CDN source. There are no
+       chunk events on this path, so the stall watchdog can't apply -- the
+       headers already told us the link is fine. */
+    if(!r.body||!r.body.getReader){
+      clearTimeout(stall);
+      return r.text().then(function(txt){
+        emit({stage:'download', bytes:txt.length, total:txt.length});
+        cs.push(txt); var rows=cs.end(); header();
+        if(!cols) throw new Error('empty CSV');
+        gotAll({cols:cols, rows:rows, src:'csv'});
+      });
+    }
+    var reader=r.body.getReader(), dec=new TextDecoder('utf-8'), bytes=0;
+    return (function pump(){
+      return reader.read().then(function(res){
+        if(res.done){
+          clearTimeout(stall);
+          var rows=cs.end(); header();
+          if(!cols||!rows.length) throw new Error('empty CSV');
+          try{ localStorage.setItem('dd_bytes', String(bytes)); }catch(e){}
+          emit({stage:'downloaded', bytes:bytes, rows:rows.length});
+          gotAll({cols:cols, rows:rows, src:'csv'});
+          return;
+        }
+        bytes+=res.value.byteLength;
+        armStall();                       // data is flowing; reset the watchdog
+        cs.push(dec.decode(res.value,{stream:true}));
+        header();
+        emit({stage:'download', bytes:bytes, total:window.__expBytes, rows:cs.rows.length});
+        if(cols && !firstDone && cs.rows.length>=FIRST_ROWS){
+          gotFirst({cols:cols, rows:cs.rows.slice(0,FIRST_ROWS), src:'csv', partial:true});
+        }
+        return pump();
+      });
+    })();
+  });
+}
+
+/* ---- gviz fallbacks (flattened to the same {cols,rows} shape) ---- */
+function gvizToRaw(json){
+  if(json && json.status==='error'){
+    throw new Error((json.errors&&json.errors[0]&&json.errors[0].detailed_message)||'sheet returned an error');
+  }
+  var cols=(json.table.cols||[]).map(function(c){ return (c.label||'').trim(); });
+  var src=json.table.rows||[], rows=new Array(src.length);
+  for(var r=0;r<src.length;r++){
+    var c=src[r].c||[], out=new Array(cols.length);
+    for(var i=0;i<cols.length;i++){ var x=c[i]; out[i]=(x==null||x.v==null)?'':x.v; }
+    rows[r]=out;
+  }
+  return {cols:cols, rows:rows, src:'gviz'};
+}
+function direct(url){
+  return fetch(url+'&tqx=out:json').then(function(r){
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    return r.text();
+  }).then(function(txt){
+    return JSON.parse(txt.substring(txt.indexOf('(')+1, txt.lastIndexOf(')')));
+  });
+}
+function jsonp(url){
+  return new Promise(function(resolve,reject){
+    var cb='__gviz_cb_'+Math.random().toString(36).slice(2);
+    var timer=setTimeout(function(){ cleanup(); reject(new Error('timed out')); },30000);
+    var script=document.createElement('script');
+    function cleanup(){ clearTimeout(timer); delete window[cb]; script.remove(); }
+    window[cb]=function(json){ cleanup(); resolve(json); };
+    script.src=url+'&tqx=out:json;responseHandler:'+cb;
+    script.onerror=function(){ cleanup(); reject(new Error('script blocked or sheet not public')); };
+    document.head.appendChild(script);
+  });
+}
+/* Kept on window because loadDescriptions() still uses them. */
+window.__gvizDirect=function(u){ return direct(u).then(function(j){ return {type:'gviz', json:j}; }); };
+window.__gvizJsonp =function(u){ return jsonp(u).then(function(j){ return {type:'gviz', json:j}; }); };
+
+/* ---- source race --------------------------------------------------------
+   The CSV goes first on its own. gviz is only woken if the CSV errors, if the
+   link never answers within CSV_OPEN_MS, or if a live stream goes quiet for
+   CSV_STALL_MS -- so the normal path costs exactly one request, and a merely
+   SLOW download no longer wakes two extra 14MB downloads to compete with it.
+   The reason is carried through to the status line so a real outage still
+   reads as an outage. */
+var pending=0, errs=[], noMore=false, gvizStarted=false, timer=null, stall=null;
+function armStall(){
+  clearTimeout(stall);
+  stall=setTimeout(function(){ if(!allDone) startGviz('stalled'); }, CSV_STALL_MS);
+}
+var cancelled=false;
+function check(){ if(cancelled) return;
+  if(noMore && pending===0 && !allDone) failed(new Error(errs.join(' | ')||'no data')); }
+function attempt(fn){
+  pending++;
+  fn().then(function(){ pending--; check(); },
+            function(e){
+              /* A deliberate abort is not an outage. Without this the abort
+                 would land in the error path below and start BOTH gviz
+                 fallbacks -- two more full downloads of the sheet we just
+                 decided we didn't need. */
+              if(cancelled){ pending--; return; }
+              var msg=(e&&e.message)||String(e);
+              errs.push(msg);
+              /* The real reason used to be swallowed unless EVERY source died,
+                 which made a genuine outage indistinguishable from a slow
+                 network. Always leave a breadcrumb in the console. */
+              try{ console.warn('[collection] data source failed:', msg); }catch(x){}
+              pending--; startGviz('error'); check();
+            });
+}
+function startGviz(reason){
+  if(gvizStarted||allDone||cancelled) return;
+  gvizStarted=true; clearTimeout(timer); clearTimeout(stall);
+  emit({stage:'fallback', reason:reason||'', msg: errs.length?errs[errs.length-1]:''});
+  attempt(function(){ return direct(window.__GVIZ_DISPLAY).then(function(j){ gotAll(gvizToRaw(j)); }); });
+  attempt(function(){ return jsonp(window.__GVIZ_DISPLAY).then(function(j){ gotAll(gvizToRaw(j)); }); });
+  noMore=true; check();
+}
+/* The full download is now behind a function so the revalidation probe can
+   decide whether it is needed at all. Calling it twice is a no-op. */
+var csvStarted=false, graceTimer=null;
+function beginCsv(){
+  if(csvStarted) return;
+  csvStarted=true; clearTimeout(graceTimer);
+  attempt(streamCsv);
+  if(!CSV_URL) startGviz('nocsv');
+  else timer=setTimeout(function(){ startGviz('slow'); }, CSV_OPEN_MS);
+}
+window.__startCsv=beginCsv;
+/* Called by init() once revalidation has proved the sheet is unchanged: stop
+   anything already in flight and make sure nothing starts it afterwards. */
+window.__cancelCsv=function(){
+  cancelled=true;
+  clearTimeout(graceTimer); clearTimeout(timer); clearTimeout(stall);
+  csvStarted=true;
+  try{ if(csvAbort) csvAbort.abort(); }catch(e){}
+};
+
+/* Is there likely to be a cache worth revalidating against? The real answer
+   lives in IndexedDB, which is async and which we do not want to wait on
+   here -- so cacheSet() also drops a timestamp in localStorage, which reads
+   synchronously in microseconds. Being wrong is cheap in both directions:
+   a false positive costs the probe and then starts the download anyway, and
+   a false negative just behaves exactly like the old code. */
+var cacheFresh=false;
+try{
+  var ct=+(localStorage.getItem('dd_cache_t')||0);
+  cacheFresh = ct>0 && (Date.now()-ct) < 24*60*60*1000;
+}catch(e){}
+
+window.__probe=null;
+function startProbe(){
+  emit({stage:'revalidate'});
+  window.__probe=fetch(PROBE_URL,{credentials:'omit'}).then(function(r){
+    if(!r.ok) throw new Error('probe HTTP '+r.status);
+    return r.text();
+  }).then(function(txt){
+    var cs=new CsvStream(); cs.push(txt);
+    var rows=cs.end(), head=rows.shift()||[];
+    for(var i=0;i<PROBE_HEAD.length;i++){
+      if(String(head[i]==null?'':head[i]).trim()!==PROBE_HEAD[i]){
+        throw new Error('probe columns moved (expected "'+PROBE_HEAD.join('", "')
+          +'", got "'+head.join('", "')+'")');
+      }
+    }
+    /* The probe has answered, so the grace timer has nothing left to guard
+       against -- from here the decision belongs to init(), which will call
+       either __startCsv() (changed) or __cancelCsv() (unchanged). Leaving it
+       armed was starting the full download ~4s later even on visits that had
+       already proved it was unnecessary. */
+    clearTimeout(graceTimer);
+    return rows;
+  }).catch(function(e){
+    try{ console.warn('[collection] revalidation probe unavailable:', (e&&e.message)||e); }catch(x){}
+    beginCsv();          // probe is no help -- fall back to the old behaviour
+    return null;
+  });
+}
+
+/* A usable snapshot counts as a warm cache for this decision. Without the
+   __SNAP arm, a first visit would see cacheFresh===false and start the full
+   3.45MB export in parallel with the snapshot it is about to paint from --
+   which is the exact download this whole change exists to avoid. init()
+   still has the final say: it calls __startCsv() if the snapshot turns out
+   not to have arrived, and __cancelCsv() once the probe says nothing moved. */
+if(REVALIDATE && (cacheFresh || window.__SNAP) && CSV_URL){
+  startProbe();
+  graceTimer=setTimeout(beginCsv, PROBE_GRACE_MS);
+}else{
+  beginCsv();
+}
+
+/* ---- poster route probe -------------------------------------------------
+   Every Vudu cover is currently routed through an image CDN because Vudu is
+   blocked on some networks. When it ISN'T blocked, that hop is pure latency on
+   all 60 covers. So: fire one direct request now, in parallel with the data
+   download (it finishes long before the sheet does, for free). Direct URLs are
+   only used if that probe positively succeeds -- if it fails, or hasn't
+   answered by the time the grid renders, the proxy chain is used exactly as
+   before. Any individual cover that still fails walks the same fallback chain.
+   Set POSTER_PROBE=false below to switch this off entirely. */
+var POSTER_PROBE=true;
+var PROBE_URL='https://images2.vudu.com/poster2/4517755-l';
+window.__directOk=new Promise(function(res){
+  if(!POSTER_PROBE) return res(false);
+  var cached=null; try{ cached=sessionStorage.getItem('dd_direct'); }catch(e){}
+  if(cached==='1') return res(true);
+  if(cached==='0') return res(false);
+  var img=new Image(), done=false;
+  var t=setTimeout(function(){ finish(false); },2500);
+  function finish(v){
+    if(done) return; done=true; clearTimeout(t);
+    try{ sessionStorage.setItem('dd_direct', v?'1':'0'); }catch(e){}
+    res(v);
+  }
+  img.onload=function(){ finish(img.naturalWidth>0); };
+  img.onerror=function(){ finish(false); };
+  img.src=PROBE_URL;
+});
+})();
+</script>
+<!-- Fonts load without blocking rendering (media=print trick) -->
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@700&display=swap"
+rel="stylesheet" media="print" onload="this.media='all'">
+<noscript>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@700&display=swap" rel="stylesheet">
+</noscript>
+<style>
+:root{
+--bg:#171C20;
+--bg-soft:#1f262b;
+--pill:#ffffff;
+--pill-text:#37474f;
+--bar:#8a9096;
+--bar-text:#ffffff;
+--accent:#c62828;
+--track:#4a565e;
+--track-fill:#eceff1;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg)}
+html{scrollbar-width:none;-ms-overflow-style:none}
+html::-webkit-scrollbar,body::-webkit-scrollbar{display:none}
+body{
+background:var(--bg);
+font-family:'Poppins','Segoe UI',sans-serif;font-weight:700;
+color:#eceff1;
+overflow:hidden;
+}
+#app{display:flex;height:100%}
+/* ---------- SIDEBAR ---------- */
+#sidebar{
+width:250px;min-width:250px;
+padding:16px 12px 30px 14px;
+height:100%;
+overflow-y:auto;
+scrollbar-width:thin;scrollbar-color:#4a565e transparent;
+}
+#sidebar::-webkit-scrollbar{width:6px}
+#sidebar::-webkit-scrollbar-thumb{background:#4a565e;border-radius:3px}
+/* Every colour here is declared outright. This field used to declare no
+   background at all and leaned on the browser's default form-control white --
+   which the page-level color-scheme:dark flips to a dark grey, leaving dark
+   text and a dark caret on a dark box. Never let a control's legibility depend
+   on a UA default. */
+#searchBox{
+width:100%;padding:9px 12px;border:1px solid #4a565e;border-radius:6px;
+background:#263238;
+font:700 13.5px 'Poppins',sans-serif;color:#ffffff;
+caret-color:#ffffff;                /* the text cursor, which was invisible */
+margin-bottom:12px;outline:none;
+}
+#searchBox::placeholder{color:#90a4ae}
+/* outline:none removes the browser's focus ring, so give the field its own --
+   otherwise there is nothing on screen to say which control has the keyboard. */
+#searchBox:focus{border-color:#eceff1}
+.facet{position:relative;margin-bottom:10px}
+.facet-btn{
+width:100%;display:flex;align-items:center;justify-content:space-between;
+background:var(--pill);color:var(--pill-text);
+border:none;border-radius:8px;padding:10px 14px;cursor:pointer;
+font:700 12.5px 'Poppins',sans-serif;letter-spacing:1.2px;text-transform:uppercase;
+transition:box-shadow .15s;
+}
+.facet-btn:hover{box-shadow:0 0 0 2px rgba(255,255,255,.25)}
+.facet-btn .icon{font-size:13px;color:#607d8b;transition:transform .2s}
+.facet.open .facet-btn .icon{transform:rotate(180deg)}
+.facet-btn .count-badge{
+background:var(--accent);color:#fff;border-radius:10px;
+font-size:10px;padding:1px 7px;margin-left:auto;margin-right:8px;
+}
+.facet-panel{
+display:none;position:relative;z-index:30;
+background:#fff;border-radius:8px;margin-top:5px;
+box-shadow:0 8px 22px rgba(0,0,0,.45);
+padding:8px;color:var(--pill-text);
+}
+.facet.open .facet-panel{display:block}
+/* On a white panel, so it is pinned to the light scheme and given its colours
+   explicitly -- same UA-default trap as #searchBox above, just inverted: with
+   color-scheme:dark inherited from the page it rendered as a dark grey box
+   with white text in the middle of a white popover. */
+.facet-panel input.opt-search{
+width:100%;padding:6px 9px;margin-bottom:6px;
+border:1px solid #cfd8dc;border-radius:5px;font:700 12.5px 'Poppins',sans-serif;outline:none;
+color-scheme:light;background:#ffffff;color:var(--pill-text);
+}
+.facet-panel input.opt-search::placeholder{color:#90a4ae}
+.opt-list{max-height:240px;overflow-y:auto;scrollbar-width:thin}
+.opt-list label{
+display:flex;align-items:center;gap:8px;
+font:700 13px 'Poppins',sans-serif;padding:5px 6px;border-radius:4px;cursor:pointer;
+}
+.opt-list label:hover{background:#eceff1}
+.opt-list input{accent-color:var(--accent)}
+.opt-list .n{margin-left:auto;color:#90a4ae;font-size:11px}
+.opt-more{font-size:11px;color:#90a4ae;padding:5px 6px}
+.facet-clear{
+display:block;width:100%;margin-top:6px;padding:6px;
+background:#eceff1;border:none;border-radius:5px;cursor:pointer;
+font:700 11px 'Poppins',sans-serif;letter-spacing:1px;text-transform:uppercase;color:#546e7a;
+}
+.facet-clear:hover{background:#cfd8dc}
+/* Sidebar controls are inert until the collection has been indexed. */
+#sidebar.pending #facets,#sidebar.pending #sliders{opacity:.45;pointer-events:none}
+/* sort */
+#sortWrap select{
+width:100%;background:var(--pill);color:var(--pill-text);
+border:none;border-radius:8px;padding:10px 12px;cursor:pointer;
+font:700 12.5px 'Poppins',sans-serif;letter-spacing:1.2px;text-transform:uppercase;
+margin-bottom:10px;outline:none;
+}
+/* sliders */
+.slider-group{margin:22px 4px 6px;text-align:center}
+.slider-group .sl-title{
+font:700 13px 'Poppins',sans-serif;letter-spacing:1.6px;text-transform:uppercase;
+color:#eceff1;margin-bottom:10px;
+}
+.range-wrap{position:relative;height:22px}
+.range-wrap .rail{
+position:absolute;top:9px;left:0;right:0;height:3px;border-radius:2px;background:var(--track);
+}
+.range-wrap .fill{
+position:absolute;top:9px;height:3px;border-radius:2px;background:var(--track-fill);
+}
+.range-wrap input[type=range]{
+position:absolute;top:0;left:0;width:100%;height:22px;
+-webkit-appearance:none;appearance:none;background:transparent;pointer-events:none;margin:0;
+}
+.range-wrap input[type=range]::-webkit-slider-thumb{
+-webkit-appearance:none;appearance:none;pointer-events:auto;
+width:14px;height:14px;border-radius:50%;background:#fff;
+border:none;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.5);
+}
+.range-wrap input[type=range]::-moz-range-thumb{
+pointer-events:auto;width:14px;height:14px;border-radius:50%;
+background:#fff;border:none;cursor:pointer;
+}
+.sl-vals{display:flex;justify-content:space-between;margin-top:2px}
+.sl-vals input{
+background:transparent;border:none;border-bottom:1px solid #eceff1;
+color:#eceff1;font:700 13px 'Poppins',sans-serif;text-align:center;
+width:56px;padding:1px 2px;outline:none;color-scheme:dark;cursor:text;
+}
+.sl-vals input:focus{border-bottom-color:#fff;background:rgba(255,255,255,.08)}
+.sl-vals input.date{width:106px;font-size:12px}
+.sl-vals input::-webkit-outer-spin-button,
+.sl-vals input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.sl-vals input[type=number]{-moz-appearance:textfield;appearance:textfield}
+/* #157A60 rather than the lighter #1C9E7D: at this size (11px bold) white on
+   #1C9E7D measures 3.37:1, under the 4.5:1 needed for normal-size text.
+   #157A60 is the same green darkened until it clears the bar at 5.27:1. */
+#resetAll{
+margin-top:22px;width:100%;padding:9px;border:1px solid #157A60;border-radius:8px;
+background:#157A60;color:#ffffff;cursor:pointer;
+font:700 11px 'Poppins',sans-serif;letter-spacing:1.5px;text-transform:uppercase;
+}
+/* Hover lifts the green only as far as it can go while still passing (4.76:1)
+   and leans on the same white ring the facet buttons and #editToggle already
+   use, so the state change is obvious without leaning on colour alone. */
+#resetAll:hover{background:#168264;border-color:#168264;color:#ffffff;
+box-shadow:0 0 0 2px rgba(255,255,255,.25)}
+/* collapse control (desktop only) */
+#sbCollapse{
+width:100%;margin-bottom:10px;padding:8px;border:1px solid #4a565e;border-radius:8px;
+background:transparent;color:#b0bec5;cursor:pointer;
+font:700 11px 'Poppins',sans-serif;letter-spacing:1.5px;text-transform:uppercase;
+}
+#sbCollapse:hover{border-color:#eceff1;color:#fff}
+#sbExpand{
+display:none;width:34px;min-width:34px;height:100%;
+background:var(--bg-soft);border:none;cursor:pointer;color:#b0bec5;font-size:17px;
+align-items:center;justify-content:center;
+}
+#sbExpand:hover{background:#28313a;color:#fff}
+@media(min-width:761px){
+body.sbCollapsed #sidebar{display:none}
+body.sbCollapsed #sbExpand{display:flex}
+body.sbCollapsed #grid{grid-template-columns:repeat(12,1fr)}
+}
+@media(max-width:760px){
+#sbCollapse,#sbExpand{display:none !important}
+}
+/* ---------- MAIN ---------- */
+#main{flex:1;min-width:0;height:100%;display:flex;flex-direction:column;padding:14px 10px 14px 4px;position:relative}
+.pagerBar{
+display:flex;align-items:center;
+background:var(--bar);border-radius:6px;height:52px;
+user-select:none;
+}
+#pagerTop{margin-bottom:12px}
+#pagerBottom{margin-top:12px}
+.pgRail{
+position:absolute;top:70px;bottom:70px;width:30px;z-index:40;
+display:flex;flex-direction:column;justify-content:space-around;align-items:center;
+background:transparent;border:none;cursor:pointer;color:#fff;
+opacity:.32;transition:opacity .15s,background .15s;border-radius:6px;
+}
+.pgRail:hover{opacity:.95;background:rgba(255,255,255,.12)}
+.pgRail span{font-size:24px;line-height:1}
+#railPrev{left:0}
+#railNext{right:0}
+@media(max-width:760px){ .pgRail{width:24px} .pgRail span{font-size:20px} }
+.pagerBar .pg-arrow{
+width:44px;height:100%;display:flex;align-items:center;justify-content:center;
+background:transparent;border:none;color:#fff;font-size:26px;cursor:pointer;border-radius:6px;
+}
+.pagerBar .pg-arrow:hover:not(:disabled){background:rgba(255,255,255,.18)}
+.pagerBar .pg-arrow:disabled{opacity:.35;cursor:default}
+.pagerBar .pg-label{
+flex:1;text-align:center;
+font:700 34px 'Poppins',sans-serif;letter-spacing:2px;color:var(--bar-text);
+}
+#grid{
+flex:1;min-height:0;overflow-y:auto;
+display:grid;
+grid-template-columns:repeat(10,1fr);
+gap:12px;align-content:start;
+scrollbar-width:none;
+}
+#grid::-webkit-scrollbar{display:none}
+.card{
+position:relative;display:block;border-radius:6px;overflow:hidden;
+background:var(--bg-soft);
+height:0;padding-bottom:150%; /* 2:3 poster ratio, works in all render modes */
+transition:transform .15s, box-shadow .15s;text-decoration:none;
+/* Off-screen cards skip layout/paint entirely. The box height comes from
+padding-bottom rather than content, so nothing shifts. */
+content-visibility:auto;
+}
+.card:hover{transform:scale(1.045);box-shadow:0 6px 18px rgba(0,0,0,.6);z-index:5}
+.card img{
+position:absolute;top:0;left:0;width:100%;height:100%;
+object-fit:cover;display:block;
+}
+.card .ph{
+position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+padding:10px;text-align:center;color:#b0bec5;
+font:700 13px 'Poppins',sans-serif;letter-spacing:.5px;
+}
+.card .edit-tag{
+position:absolute;top:6px;right:6px;background:var(--accent);color:#fff;
+border-radius:50%;width:26px;height:26px;display:none;
+align-items:center;justify-content:center;font-size:13px;cursor:pointer;
+box-shadow:0 1px 4px rgba(0,0,0,.5);
+}
+body.editing .card .edit-tag{display:flex}
+.card .watch-tag{
+position:absolute;bottom:6px;left:6px;border:none;cursor:pointer;
+border-radius:50%;width:26px;height:26px;display:none;
+align-items:center;justify-content:center;font-size:13px;color:#fff;
+box-shadow:0 1px 4px rgba(0,0,0,.5);
+}
+.card .watch-tag.to-watched{background:#2e7d32} /* action: mark as Watched */
+.card .watch-tag.to-need{background:#ef6c00} /* action: back to Need to Watch */
+.card .watch-tag:disabled{opacity:.5;cursor:default}
+body.editing .card .watch-tag{display:flex}
+body.editing .card{outline:2px dashed rgba(255,255,255,.35)}
+/* Small always-on info icon, bottom-right of every poster -- opens the
+   Description text in a lightweight popover near the click, independent of
+   edit mode (this one's for browsing, not editing). */
+.card .info-tag{
+position:absolute;bottom:6px;right:6px;background:rgba(0,0,0,.55);color:#fff;
+border-radius:50%;width:18px;height:18px;display:flex;
+align-items:center;justify-content:center;font-size:12px;line-height:1;cursor:pointer;
+box-shadow:0 1px 4px rgba(0,0,0,.5);opacity:.85;
+}
+.card .info-tag:hover{background:rgba(0,0,0,.85);opacity:1}
+#descPop{
+position:fixed;background:#fff;color:#37474f;border-radius:10px;
+width:min(320px, calc(100vw - 24px));max-height:min(70vh, 420px);overflow-y:auto;
+box-shadow:0 10px 30px rgba(0,0,0,.5);padding:16px 18px;display:none;z-index:110;
+}
+#descPop.open{display:block}
+#descPop h3{font:700 15px 'Poppins',sans-serif;letter-spacing:.3px;margin-bottom:8px;padding-right:22px}
+#descPop p{font:700 13px 'Poppins',sans-serif;line-height:1.55;color:#455a64;white-space:pre-wrap}
+#descPop .close{
+position:absolute;top:10px;right:12px;background:none;border:none;
+font-size:16px;cursor:pointer;color:#78909c;line-height:1;
+}
+#toast{
+position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:120;
+background:#263238;color:#eceff1;border-radius:8px;padding:10px 18px;
+font:700 13px 'Poppins',sans-serif;letter-spacing:.5px;
+box-shadow:0 4px 14px rgba(0,0,0,.5);opacity:0;pointer-events:none;
+transition:opacity .25s;
+}
+#toast.show{opacity:1}
+#toast.err{background:#b71c1c}
+#tokenWrap{
+position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:130;
+display:none;align-items:center;justify-content:center;padding:20px;
+}
+#tokenWrap.open{display:flex}
+#tokenBox{
+background:#fff;color:#37474f;border-radius:10px;width:min(360px,100%);
+padding:20px;box-shadow:0 10px 30px rgba(0,0,0,.5);
+}
+#tokenBox h3{font:700 16px 'Poppins',sans-serif;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px}
+#tokenBox p{font:700 12.5px 'Poppins',sans-serif;color:#78909c;margin-bottom:12px}
+#tokenInput{
+width:100%;border:1px solid #cfd8dc;border-radius:6px;padding:9px 11px;
+font:700 14px 'Poppins',sans-serif;outline:none;margin-bottom:12px;
+color-scheme:light;background:#ffffff;color:var(--pill-text);
+}
+#tokenInput:focus{border-color:#607d8b}
+#tokenBox .row{display:flex;gap:8px;justify-content:flex-end}
+#tokenBox button{
+border:none;border-radius:6px;padding:9px 18px;cursor:pointer;
+font:700 12px 'Poppins',sans-serif;letter-spacing:1px;text-transform:uppercase;
+}
+#tokenOk{background:var(--accent);color:#fff}
+#tokenCancel{background:#eceff1;color:#546e7a}
+/* The loading readout (#status), the top progress bar (#topbar) and the
+placeholder tiles (.skel) all live in the CRITICAL CSS block at the top of
+<head>, so they can paint in the first frame instead of waiting for this
+stylesheet. Don't re-declare them here -- these rules would win and the
+indicator would move back to the corner. */
+@media(prefers-reduced-motion:reduce){ .card{transition:none} }
+/* edit toggle (in sidebar — Google Sites places its own pencil bottom-right) */
+#editToggle{
+margin-top:10px;width:100%;padding:10px;border:none;border-radius:8px;
+background:var(--pill);color:var(--pill-text);cursor:pointer;
+font:700 12.5px 'Poppins',sans-serif;letter-spacing:1.2px;text-transform:uppercase;
+}
+#editToggle:hover{box-shadow:0 0 0 2px rgba(255,255,255,.25)}
+body.editing #editToggle{background:var(--accent);color:#fff}
+/* modal
+   #modal opens positioned at wherever the edit icon was clicked (see
+   openEditor/positionFloating in the script) rather than centered, so it's
+   always right where you were looking instead of possibly off-screen. */
+#modalWrap{
+position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:100;
+display:none;
+}
+#modalWrap.open{display:block}
+#modal{
+position:fixed;background:#fff;color:#37474f;border-radius:10px;width:min(680px,calc(100vw - 24px));
+max-height:90vh;display:flex;flex-direction:column;overflow:hidden;
+}
+#modal header{
+display:flex;align-items:center;justify-content:space-between;
+padding:14px 18px;border-bottom:1px solid #eceff1;
+}
+#modal header h2{font:700 18px 'Poppins',sans-serif;letter-spacing:1px;text-transform:uppercase}
+#modal header button{background:none;border:none;font-size:20px;cursor:pointer;color:#78909c}
+#modalBody{padding:16px 18px;overflow-y:auto;display:grid;grid-template-columns:1fr 1fr;gap:10px 14px}
+#modalBody .field{display:flex;flex-direction:column;gap:3px}
+#modalBody .field.full{grid-column:1/-1}
+#modalBody label{font:700 10.5px 'Poppins',sans-serif;letter-spacing:1.2px;text-transform:uppercase;color:#78909c}
+#modalBody input,#modalBody textarea{
+border:1px solid #cfd8dc;border-radius:5px;padding:7px 9px;
+font:700 13px 'Poppins',sans-serif;outline:none;width:100%;
+color-scheme:light;background:#ffffff;color:var(--pill-text);
+}
+#modalBody textarea{resize:vertical;min-height:64px}
+#modalBody input:focus,#modalBody textarea:focus{border-color:#607d8b}
+#modalBody [data-pending]{background:#f5f7f8;color:#90a4ae}
+#modal footer{
+padding:12px 18px;border-top:1px solid #eceff1;
+display:flex;align-items:center;gap:10px;
+}
+#modal footer .msg{font-size:12.5px;color:#78909c;flex:1}
+#modal footer .msg.err{color:#c62828}
+#modal footer .msg.ok{color:#2e7d32}
+#modal footer a{font-size:12px;color:#1565c0}
+#modal footer button{
+border:none;border-radius:6px;padding:9px 20px;cursor:pointer;
+font:700 12px 'Poppins',sans-serif;letter-spacing:1px;text-transform:uppercase;
+}
+#saveBtn{background:var(--accent);color:#fff}
+#saveBtn:disabled{opacity:.5;cursor:default}
+#cancelBtn{background:#eceff1;color:#546e7a}
+#mobileFilterBtn{
+display:none;margin:12px 12px 0;padding:12px;border:none;border-radius:8px;
+background:var(--pill);color:var(--pill-text);cursor:pointer;
+font:700 13px 'Poppins',sans-serif;letter-spacing:1.2px;text-transform:uppercase;
+}
+body.filtersOpen #mobileFilterBtn{background:var(--accent);color:#fff}
+@media(max-width:900px){
+#grid{grid-template-columns:repeat(4,1fr);gap:7px}
+}
+@media(max-width:760px){
+#app{flex-direction:column;align-items:stretch}
+#mobileFilterBtn{display:block;flex:none}
+#sidebar{display:none;width:100%;min-width:0;height:auto;max-height:55%;flex:none}
+body.filtersOpen #sidebar{display:block}
+#main{width:100%;flex:1;min-height:0;padding:12px 8px 12px}
+#grid{grid-template-columns:repeat(4,1fr);gap:7px}
+}
+</style>
+<!-- Favicon: the avatar, at the sizes browsers actually ask for. Served from
+     /assets/ so they are cached immutably alongside the nav mark. -->
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png">
+<link rel="icon" type="image/png" sizes="96x96" href="/assets/favicon-96.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/assets/favicon-180.png"></head>
+<body>
+<!-- ==== SHARED NAV =========================================================
+     Google Sites drew this bar; on Netlify the pages own it. Inlined rather
+     than pulled from a stylesheet so it paints in the first frame with no
+     extra round trip -- it is under 1KB and never changes independently.
+     ==================================================================== -->
+<style>
+:root{--dd-nav-h:52px}
+.dd-nav{position:fixed;top:0;left:0;right:0;height:var(--dd-nav-h);z-index:150;
+  display:flex;align-items:center;gap:4px;padding:0 18px;background:#000;
+  border-bottom:1px solid #23292e;
+  font-family:'Poppins','Segoe UI',system-ui,sans-serif;font-weight:700}
+.dd-brand{display:flex;align-items:center;gap:9px;margin-right:22px;flex:0 0 auto;
+  color:#fff;text-decoration:none;font-size:16px;letter-spacing:.6px;white-space:nowrap}
+/* Transparent PNG, so it needs no plate behind it -- it sits straight on the
+   bar. object-fit:contain keeps the whole avatar rather than cropping the
+   popcorn out of the bottom-left corner. */
+.dd-brand-img{width:32px;height:32px;flex:0 0 auto;object-fit:contain}
+.dd-links{display:flex;align-items:center;gap:2px;overflow-x:auto;
+  scrollbar-width:none;-ms-overflow-style:none}
+.dd-links::-webkit-scrollbar{display:none}
+.dd-links a{color:#eceff1;text-decoration:none;font-size:15px;letter-spacing:.3px;
+  padding:8px 13px;border-radius:6px;white-space:nowrap;
+  transition:color .12s ease,background .12s ease}
+.dd-links a:hover{color:#fff;background:#1b2126}
+.dd-links a[aria-current=page]{color:#ef5350}
+.dd-links a[aria-current=page]:hover{background:transparent}
+/* Everything the pages already draw starts below the bar. */
+body{padding-top:var(--dd-nav-h);box-sizing:border-box}
+/* The loading toast is fixed near the top and would sit under the bar. */
+#status{top:calc(var(--dd-nav-h) + 20px)!important}
+@media(max-width:760px){
+  :root{--dd-nav-h:46px}
+  .dd-nav{padding:0 10px}
+  .dd-brand{margin-right:12px;font-size:14px}
+  .dd-brand-img{width:27px;height:27px}
+  .dd-links a{font-size:13.5px;padding:7px 9px}
+}
+</style><nav class="dd-nav">
+  <a class="dd-brand" href="/">
+    <img class="dd-brand-img" src="/assets/brand-64.png"
+         srcset="/assets/brand-64.png 1x, /assets/brand-128.png 2x"
+         width="30" height="30" alt="" decoding="async">
+    Donny's Digital
+  </a>
+  <div class="dd-links">
+    <a href="/" aria-current="page">Movies</a>
+    <a href="/wishlist">Wishlist</a>
+    <a href="/data">Data</a>
+    <a href="/sales">Sales</a>
+    <a href="/ma-compare">MA Compare</a>
+    <a href="/d2d">D2D</a>
+  </div>
+</nav>
+<!-- Paints in the first frame, before any data exists. -->
+<div id="topbar" class="indet"><div id="topfill"></div></div>
+<div id="app">
+<button id="mobileFilterBtn">&#9776; Filters &amp; search</button>
+<aside id="sidebar" class="pending">
+<button id="sbCollapse">&#10094; Hide filters</button>
+<input id="searchBox" type="search" placeholder="Text search" autocomplete="off">
+<div id="sortWrap">
+<select id="sortSel" title="Sort collection">
+<option value="dateAdded|desc" selected>Sort: Recently Added</option>
+<option value="dateAdded|asc">Sort: First Added</option>
+<option value="sortTitle|asc">Sort: Title A &rarr; Z</option>
+<option value="sortTitle|desc">Sort: Title Z &rarr; A</option>
+<option value="year|desc">Sort: Year (newest)</option>
+<option value="year|asc">Sort: Year (oldest)</option>
+<option value="imdb|desc">Sort: IMDB Rating (high)</option>
+<option value="imdb|asc">Sort: IMDB Rating (low)</option>
+<option value="tomato|desc">Sort: Tomato Meter (high)</option>
+<option value="tomato|asc">Sort: Tomato Meter (low)</option>
+<option value="runtime|desc">Sort: Runtime (longest)</option>
+<option value="runtime|asc">Sort: Runtime (shortest)</option>
+</select>
+</div>
+<div id="facets"></div>
+<div id="sliders"></div>
+<button id="resetAll">Reset all filters</button>
+<button id="editToggle">&#9998; Unlock editing</button>
+</aside>
+<button id="sbExpand" title="Show filters">&#9776;</button>
+<main id="main">
+<div class="pagerBar" id="pagerTop">
+<button class="pg-arrow" id="prevPg" title="Previous page">&#10094;</button>
+<div class="pg-label" id="pgLabel">&ndash;</div>
+<button class="pg-arrow" id="nextPg" title="Next page">&#10095;</button>
+</div>
+<div id="grid"></div>
+<script>
+/* Placeholder tiles, written during HTML parse so the grid never looks like a
+   dead rectangle. The first real renderPage() replaces them wholesale. */
+(function(){var g=document.getElementById('grid'),h='',i=0;for(;i<72;i++)h+='<div class="skel"></div>';g.innerHTML=h;})();
+</script>
+<button class="pgRail" id="railPrev" title="Previous page" style="display:none">
+<span>&#10094;</span><span>&#10094;</span><span>&#10094;</span>
+</button>
+<button class="pgRail" id="railNext" title="Next page" style="display:none">
+<span>&#10095;</span><span>&#10095;</span><span>&#10095;</span>
+</button>
+<div class="pagerBar" id="pagerBottom">
+<button class="pg-arrow" id="prevPg2" title="Previous page">&#10094;</button>
+<div class="pg-label" id="pgLabel2">&ndash;</div>
+<button class="pg-arrow" id="nextPg2" title="Next page">&#10095;</button>
+</div>
+</main>
+</div>
+<div id="status"><div class="spin"></div><div id="statusTxt">Loading collection&hellip;</div></div>
+<div id="toast"></div>
+<div id="descPop">
+<button class="close" id="closeDescPop" title="Close">&#10005;</button>
+<h3 id="descPopTitle"></h3>
+<p id="descPopBody"></p>
+</div>
+<div id="tokenWrap">
+<div id="tokenBox">
+<h3>Edit token</h3>
+<p>Enter your edit token to save changes to the collection.</p>
+<input id="tokenInput" type="password" autocomplete="off">
+<div class="row">
+<button id="tokenCancel">Cancel</button>
+<button id="tokenOk">Unlock editing</button>
+</div>
+</div>
+</div>
+<div id="modalWrap">
+<div id="modal">
+<header><h2 id="modalTitle">Edit entry</h2><button id="closeModal">&#10005;</button></header>
+<div id="modalBody"></div>
+<footer>
+<div class="msg" id="modalMsg"></div>
+<a id="sheetRowLink" href="#" target="_blank" rel="noopener">Open row in Sheet</a>
+<button id="cancelBtn">Cancel</button>
+<button id="saveBtn">Save changes</button>
+</footer>
+</div>
+</div>
+<script>
+/* ================= CONFIGURATION ================= */
+const SHEET_ID = '1IHUqVvrGcjIESpHaClR9uvmjP3jutcz-ReijMqI7x38';
+const SHEET_NAME = 'Movies';
+const SHEET_GID = '0'; // gid of the Movies tab (see the #gid= number in the sheet URL)
+// ---- Covers per page --------------------------------------------------------
+// Only the first 20 posters load eagerly (see loading="eager" below); the rest
+// are loading="lazy" and are not fetched until they scroll near the viewport,
+// and every off-screen card is skipped entirely by content-visibility:auto.
+// So the page size does NOT change what the browser downloads for the first
+// screen -- 100 -> 150 costs 50 extra card subtrees in the render string (a
+// couple of ms, well inside one frame) and buys 50% more collection per flip.
+// `wide` is used with the sidebar hidden, where the grid is a fixed 12
+// columns (see body.sbCollapsed #grid in the CSS) — 180 = exactly 15 full
+// rows, same as normal's 150 = exactly 15 rows at the sidebar-open 10 columns.
+// Keep wide >= normal: the collapsed view has MORE room on screen, so it must
+// never end up showing fewer covers than the sidebar-open one.
+const PAGE_SIZES = { mobile:48, wide:180, normal:150 };
+// ---- Poster + link URL repair (BOTH OFF BY DEFAULT) ------------------------
+// The sheet stores posters as .../poster2/<id>-l. That suffix is very likely
+// correct -- it is what has always been in this sheet. Do NOT enable the
+// rewrite below unless you have confirmed with the poster-format test that a
+// numeric-width suffix actually resolves for your IDs.
+//
+// Why it matters: a poster URL that 404s does not fail cheaply. It fails, then
+// walks the whole proxy fallback chain, then finally renders a text
+// placeholder -- several dead round-trips per cover, times every cover on the
+// page. A wrong rewrite here makes the page both broken AND slower, so the
+// safe default is to leave the sheet's URLs exactly as they are.
+const FIX_POSTER_SUFFIX = false; // rewrite -l / -142 to -<POSTER_W>
+const FIX_LINK_PATH = false; // rewrite /content/browse/ to /content/movies/
+const POSTER_W = 300; // only used when FIX_POSTER_SUFFIX is on
+const IMG_BASE = 'https://images2.vudu.com/poster2/';
+const LINK_OLD = '/content/browse/details/title/';
+const LINK_NEW = '/content/movies/details/title/';
+// ---- Descriptions -----------------------------------------------------------
+// Description is 29% of this sheet's bytes and is never rendered on a card --
+// it feeds the text search and the edit modal. Fetched separately once the
+// grid is already up. Set to 'never' to skip it entirely (search then covers
+// title/director/actors/genre only); 'eager' puts it back in the first request.
+const DESCRIPTIONS = 'eager'; // 'lazy' | 'eager' | 'never'
+// 'eager' = Description comes down with everything else, exactly as it always
+// has. With the streaming CSV source this costs nothing on the critical path:
+// the first page of covers is rendered from the first ~600 rows, so the other
+// 3.3MB of descriptions arrive behind an already-populated grid.
+// ---- Offline cache ----------------------------------------------------------
+// The parsed collection is kept in IndexedDB (localStorage caps out around 5MB;
+// this collection is bigger than that). A revisit paints from the cache
+// immediately and only repaints if the sheet actually changed.
+const CACHE_VER = 'v1';
+const CACHE_TTL = 24 * 60 * 60 * 1000;
+// To enable saving edits from the site, deploy the companion Apps Script
+// (apps-script-editor.gs) as a Web App and paste its /exec URL + token here:
+const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxqwpDw4jKh2qu9kSg-_S5ocEndQfO9PUuyLbMX1MGS_PLWuUJ8wmzhxQIuhf9raFiBlw/exec';
+// The edit token is NOT stored in this code. When you turn on edit mode,
+// the site asks for it and remembers it for the current browser session only.
+// The fast data source (published CSV) is configured at the very TOP of this
+// file, in the EARLY DATA LOADER — set CSV_URL there.
+const PUBLISHED_CSV_URL = window.__CSV_URL || '';
+// Rows parsed per idle slice when building the full collection. Small enough
+// that each slice stays under a frame, so the spinner and the already-rendered
+// first page stay responsive while the other 18,000 rows are processed.
+const PARSE_CHUNK = 2500;
+/* ================================================= */
+let PER_PAGE = PAGE_SIZES.normal;
+const mobileMq = window.matchMedia('(max-width:760px)');
+function syncPerPage(){
+const firstShown = page * PER_PAGE; // keep roughly the same spot
+PER_PAGE = mobileMq.matches ? PAGE_SIZES.mobile
+: document.body.classList.contains('sbCollapsed') ? PAGE_SIZES.wide
+: PAGE_SIZES.normal;
+page = Math.floor(firstShown / PER_PAGE);
+}
+(mobileMq.addEventListener ? mobileMq.addEventListener('change', ()=>{ syncPerPage(); if(movies.length) renderPage(); })
+: mobileMq.addListener(()=>{ syncPerPage(); if(movies.length) renderPage(); }));
+const FACETS = [
+{label:'Director', key:'director', csv:true},
+{label:'Actors', key:'actors', csv:true},
+{label:'Genre', key:'genre', csv:true},
+{label:'MPAA Rating', key:'mpaa'},
+{label:'Quality', key:'quality'},
+{label:'Media Type', key:'mediaType'},
+{label:'Viewing Status', key:'viewStatus', csv:true},
+{label:'Studio', key:'studio'},
+{label:'Where to Watch', key:'whereWatch', csv:true},
+{label:'Highest Quality', key:'highQ', csv:true},
+{label:'Awards', key:'awards', csv:true},
+{label:'Acquired by', key:'acqBy'},
+{label:'Language', key:'lang'},
+];
+const SLIDERS = [
+{label:'Year', key:'year', min:1918, max:2026, step:1},
+{label:'Tomato Meter',key:'tomato', min:0, max:100, step:1},
+{label:'IMDB Rating', key:'imdb', min:0, max:10, step:0.1},
+{label:'Runtime', key:'runtime', min:0, max:240, step:1},
+{label:'Date Added', key:'dateAdded', type:'date'},
+];
+// column header -> internal key (headers come from row 1 of the sheet)
+const COLMAP = {
+'Title':'title','Sort Title':'sortTitle','Director':'directorRaw','Actors':'actorsRaw',
+'Description':'desc','Genre':'genreRaw','Img':'img','Link':'link','MPAA Rating':'mpaa',
+'Quality':'quality','Media Type':'mediaType','Viewing Status':'viewStatusRaw','Studio':'studio',
+'Where to Watch':'whereWatchRaw','Highest Quality':'highQRaw','Awards':'awardsRaw',
+'Acquired by':'acqBy','Language':'lang','Year':'year','Tomato Meter':'tomato',
+'IMDB Rating':'imdb','Runtime':'runtime','Date Added':'dateAdded','Color':'color'
+};
+const EDIT_FIELDS = [
+{h:'Title'},{h:'Sort Title'},{h:'Director'},{h:'Actors',full:true},
+{h:'Description',full:true,area:true},{h:'Genre',full:true},{h:'Img',full:true},{h:'Link',full:true},
+{h:'MPAA Rating'},{h:'Quality'},{h:'Media Type'},{h:'Viewing Status'},{h:'Studio'},
+{h:'Where to Watch'},{h:'Highest Quality'},{h:'Awards',full:true},{h:'Acquired by'},
+{h:'Language'},{h:'Year'},{h:'Tomato Meter'},{h:'IMDB Rating'},{h:'Runtime'},
+];
+let movies=[], filtered=[], page=0, editMode=false, currentEdit=null;
+let enriched=false, descriptionsLoaded=(DESCRIPTIONS==='never');
+let rowIndex=new Map(); // sheetRow -> movie
+const selected={}; // facetKey -> Set of values
+const facetValues={}; // facetKey -> [ [value,count], ... ] sorted
+const rangeState={}; // sliderKey -> {lo,hi}
+FACETS.forEach(f=>{ selected[f.key]=new Set(); }); // exist before facets are built
+const $=s=>document.querySelector(s);
+// The escape table is built once. The old form allocated a fresh five-entry
+// object for EVERY character it replaced -- roughly seven escaped fields per
+// card, on every card, on every render.
+const ESC_MAP={'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'};
+const ESC_RE=/[&<>"']/g;
+const esc=s=>String(s??'').replace(ESC_RE,c=>ESC_MAP[c]);
+const splitCsv=s=>String(s??'').split(',').map(x=>x.trim()).filter(Boolean);
+/* Places a fixed-position floating element (the edit modal, the description
+   popover) with its top-left near (x,y) -- normally right where the user just
+   clicked -- then nudges it back on-screen if that would run it off an edge.
+   Measures the element's real rendered size first rather than guessing, so it
+   works regardless of content length. */
+function positionFloating(el, x, y, margin=12){
+el.style.left='0px'; el.style.top='0px';
+const r=el.getBoundingClientRect();
+let left=x, top=y;
+if(left + r.width + margin > window.innerWidth) left = window.innerWidth - r.width - margin;
+if(top + r.height + margin > window.innerHeight) top = window.innerHeight - r.height - margin;
+if(left < margin) left = margin;
+if(top < margin) top = margin;
+el.style.left = left+'px';
+el.style.top = top+'px';
+}
+const idle = cb => (window.requestIdleCallback||(f=>setTimeout(f,1)))(cb,{timeout:600});
+// One reusable collator. Calling String.prototype.localeCompare inside a sort
+// rebuilds the collation table on every comparison; on the Actors facet
+// (29,000+ unique names) that is the single slowest thing the sidebar does.
+const collator = new Intl.Collator(undefined,{sensitivity:'base',numeric:true});
+function setStatus(html, spinning=true, isErr=false){
+const s=$('#status');
+if(html===null){ s.classList.add('hidden'); return; }
+s.classList.remove('hidden');
+s.classList.toggle('err', isErr);
+s.querySelector('.spin').style.display = spinning ? '' : 'none';
+$('#statusTxt').innerHTML = html;
+}
+/* ---------- TOP PROGRESS BAR ----------
+The bar is already on screen (it is in the static HTML, styled by the critical
+CSS block), so this only has to drive it. Indeterminate until there is a real
+percentage to show; the expected download size is remembered from the previous
+visit, because gzipped responses carry no Content-Length. */
+const topbarEl=$('#topbar'), barFill=$('#topfill');
+let barPct=0;
+function setBar(p){
+if(p==null){ topbarEl.classList.add('indet'); return; }
+p=Math.max(0,Math.min(1,p));
+if(p<barPct) return;              // never let the bar run backwards
+barPct=p;
+topbarEl.classList.remove('indet');
+barFill.style.width=(p*100).toFixed(1)+'%';
+}
+function barDone(){
+topbarEl.classList.remove('indet');
+barFill.style.width='100%';
+topbarEl.classList.add('done');
+}
+const fmtMB = b => (b/1048576).toFixed(1)+' MB';
+const fmtN  = n => n.toLocaleString();
+// Bar budget: download is the bulk of the wait, so it owns 0-70%; parsing and
+// indexing share the rest.
+function progressFromLoader(o){
+if(o.stage==='connect'){ setStatus('Connecting to the collection…'); setBar(null); }
+else if(o.stage==='download'){
+setStatus('Loading collection… '+fmtMB(o.bytes)+(o.rows?' · '+fmtN(o.rows)+' titles':''));
+setBar(o.total ? Math.min(0.70, o.bytes/o.total*0.70) : null);
+}
+else if(o.stage==='revalidate'){ setStatus('Checking the sheet for changes…'); setBar(0.45); }
+else if(o.stage==='downloaded'){ setStatus('Loaded '+fmtN(o.rows)+' titles — indexing…'); setBar(0.72); }
+else if(o.stage==='fallback'){
+// The fallback now says WHY it fired. Only 'error' means the published link
+// itself is at fault; 'slow' and 'stalled' are network conditions, and
+// blaming the link for those is what made this message so misleading.
+const why=o.reason||'';
+const detail=o.msg ? ' <span style="opacity:.7">('+esc(o.msg)+')</span>' : '';
+setStatus(
+why==='error'   ? 'Published CSV unavailable'+detail+' — trying the live sheet…' :
+why==='stalled' ? 'Published CSV stopped responding — also trying the live sheet…' :
+why==='nocsv'   ? 'Reading the live sheet…' :
+                  'Published CSV is slow to answer — also trying the live sheet…');
+setBar(null);
+}
+}
+window.__prog(progressFromLoader);
+// ---- HOVER TOOLTIP ----
+function fmtRuntime(min){
+const h=Math.floor(min/60), r=Math.round(min%60);
+return h ? (r? h+'h '+r+'m' : h+'h') : r+'m';
+}
+function tooltip(m){
+const lines=[ m.title + (m.year?' ('+m.year+')':'') ];
+if(m.runtime!=null) lines.push('Runtime: '+fmtRuntime(m.runtime));
+if(m.imdb!=null) lines.push('IMDb: '+m.imdb);
+if(m.tomato!=null) lines.push('Rotten Tomatoes: '+m.tomato+'%');
+return lines.join('\n');
+}
+/* ---------- POSTER PROXYING ----------
+Vudu posters are blocked outright on some networks, so they go through an
+image proxy. The chain used to be walked for EVERY poster, and each miss
+cost a full round-trip before the next was tried. Now the first proxy that
+returns an image is remembered and every later poster starts there.
+Order below is YOUR original tested order -- statically.io first. Reorder it
+if the poster test shows a different one is faster on your network.
+Two things this handles that the first version got wrong:
+- the walk WRAPS AROUND, so a poster starting at proxy 2 still gets to try
+0 and 1 rather than giving up at the end of the list;
+- a failure at the remembered proxy releases the lock, so one bad
+remembered choice can't strand every cover for the whole session. */
+const stripScheme = u => u.replace(/^https?:\/\//,'');
+const PROXY_W = 300; // width requested from the proxy
+const VUDU_PROXIES = [
+u => 'https://cdn.statically.io/img/' + stripScheme(u) + '?w=' + PROXY_W,
+u => 'https://i0.wp.com/' + stripScheme(u) + '?w=' + PROXY_W,
+u => 'https://wsrv.nl/?w=' + PROXY_W + '&url=' + encodeURIComponent(u),
+u => 'https://images1-focus-opensocial.googleusercontent.com/gadgets/proxy?container=focus&resize_w=' + PROXY_W + '&url=' + encodeURIComponent(u),
+];
+const NPROXY = VUDU_PROXIES.length;
+const isVudu = u => /vudu\.com/i.test(u);
+let proxyIdx=0, proxyLocked=false;
+try{
+const saved=sessionStorage.getItem('dd_proxy');
+if(saved!==null && +saved>=0 && +saved<NPROXY){ proxyIdx=+saved; proxyLocked=true; }
+}catch(e){}
+function lockProxy(i){
+proxyIdx=i; proxyLocked=true;
+try{ sessionStorage.setItem('dd_proxy', String(i)); }catch(e){}
+}
+function unlockProxy(){
+proxyLocked=false;
+try{ sessionStorage.removeItem('dd_proxy'); }catch(e){}
+}
+/* Direct-route probe. Resolved by the early loader in <head>, in parallel with
+the data download, so it has almost always settled before the grid renders. It
+is only ever allowed to make things faster: direct URLs are used ONLY on a
+positive result, and a direct cover that fails still walks the full proxy chain
+below. `null` = not answered yet, treat as "use the proxy". */
+let directOk=null;
+window.__directOk.then(v=>{ directOk=v; });
+// data-pidx = which proxy this <img> is using.
+//   >= 0  index into VUDU_PROXIES
+//    -1   a direct, non-Vudu URL
+//    -2   a direct Vudu URL (probe said the network allows it)
+// data-n = how many routes have been tried for this cover so far.
+const proxied = u => VUDU_PROXIES[proxyIdx](u);
+const firstSrc = u => !u ? '' : (isVudu(u) ? (directOk===true ? u : proxied(u)) : u);
+const firstIdx = u => (u && isVudu(u)) ? (directOk===true ? -2 : proxyIdx) : -1;
+function posterOk(img){
+const p=+(img.getAttribute('data-pidx'));
+// Only a real proxy index is worth remembering. The old version's condition
+// parsed as (p>=0 && p!==proxyIdx) || !proxyLocked, so a direct URL loading
+// first could lockProxy(-1) -- after which VUDU_PROXIES[-1] is undefined and
+// every remaining Vudu cover on the page threw instead of loading.
+if(p>=0 && (!proxyLocked || p!==proxyIdx)) lockProxy(p);
+}
+function posterError(img){
+const orig=img.getAttribute('data-src')||'';
+const n=(+(img.getAttribute('data-n')||'0'))+1;
+let pidx=+(img.getAttribute('data-pidx'));
+if(pidx===-2){
+// Direct Vudu route failed after the probe said it would work (blocked
+// mid-session, or this one poster is genuinely gone). Stand the whole
+// session's direct routing down and hand this cover to the proxy chain.
+directOk=false;
+try{ sessionStorage.setItem('dd_direct','0'); }catch(e){}
+img.setAttribute('data-pidx',proxyIdx);
+img.setAttribute('data-n',n);
+img.src=proxied(orig);
+return;
+}
+if(!isVudu(orig)){
+// Direct URL failed once: try wsrv, then give up.
+if(n<2){
+img.setAttribute('data-n',n);
+img.src='https://wsrv.nl/?w='+PROXY_W+'&url='+encodeURIComponent(orig);
+return;
+}
+}else if(n<NPROXY){
+if(pidx===proxyIdx) unlockProxy(); // the remembered choice just failed
+pidx=(pidx+1)%NPROXY; // wrap around instead of running out
+img.setAttribute('data-pidx',pidx);
+img.setAttribute('data-n',n);
+img.src=VUDU_PROXIES[pidx](orig);
+return;
+}
+const p=img.parentNode, t=(img.alt||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+img.remove();
+if(p) p.insertAdjacentHTML('afterbegin','<div class="ph">'+t+'</div>');
+}
+/* load and error are delegated from #grid in the CAPTURE phase -- neither
+event bubbles, but both do capture. Every cover used to carry its own
+onload="..." onerror="..." pair: ~45 bytes of extra markup and two inline
+handler functions compiled per image, which at 150 covers a page is 300
+throwaway functions on every single render. One pair of listeners for the
+life of the page does exactly the same job. */
+(function(){
+const g=document.getElementById('grid');
+g.addEventListener('load', e=>{ if(e.target.tagName==='IMG') posterOk(e.target); }, true);
+g.addEventListener('error',e=>{ if(e.target.tagName==='IMG') posterError(e.target); }, true);
+})();
+// Optional repair of the stored poster/link URLs. Both are no-ops unless the
+// corresponding flag above is switched on.
+const VUDU_ID=/\/poster2\/(\d+)/;
+function fixPoster(u){
+if(!u || !FIX_POSTER_SUFFIX) return u||'';
+const m=u.match(VUDU_ID);
+return m ? IMG_BASE+m[1]+'-'+POSTER_W : u;
+}
+function fixLink(u){
+if(!u || !FIX_LINK_PATH) return u||'';
+return u.replace(LINK_OLD, LINK_NEW);
+}
+/* ---------- PARSE ----------
+Consumes the flat {cols, rows} shape the loader produces. Both sources -- the
+streamed CSV and the gviz fallbacks -- are flattened to that same shape up
+there, so there is now ONE parser instead of two code paths.
+The old version wrapped every cell in a {v:...} object on the way from CSV to
+the gviz shape: 18,883 rows x 24 columns = ~450,000 throwaway objects before a
+single movie was built. Rows are read straight out of the string arrays now.
+Only the fields the grid needs are computed here. The comma-splitting for seven
+facet columns and the search index (another ~11MB of strings) are deferred to
+enrich(), which runs after the first paint. */
+let COLIDX=null;
+function mapCols(cols){
+const idx={};
+for(let i=0;i<cols.length;i++){ const k=COLMAP[String(cols[i]).trim()]; if(k && idx[k]==null) idx[k]=i; }
+return idx;
+}
+/* Date Added arrives as "2026-08-08" or "8/8/2026" from a published CSV, or as
+"Date(2026,7,8)" from gviz. All three are built as LOCAL calendar dates -- read
+as UTC they would land on the previous evening in US timezones. new Date(str) is
+only the last resort; called 19,000 times it is measurably slow. */
+const RE_YMD=/^(\d{4})-(\d{1,2})-(\d{1,2})/, RE_MDY=/^(\d{1,2})\/(\d{1,2})\/(\d{4})/;
+function toTime(v){
+if(v==null||v==='') return null;
+if(typeof v==='number') return v>1e11?v:null;      // already epoch ms
+const str=String(v); let m;
+if(str.charCodeAt(0)===68 && str.startsWith('Date(')){
+const q=str.slice(5,-1).split(',');
+return new Date(+q[0], +q[1]||0, +q[2]||1).getTime();
+}
+if((m=RE_YMD.exec(str))) return new Date(+m[1], +m[2]-1, +m[3]).getTime();
+if((m=RE_MDY.exec(str))) return new Date(+m[3], +m[1]-1, +m[2]).getTime();
+const d=new Date(str); return isNaN(d)?null:d.getTime();
+}
+/* Builds movie objects for rows[from..to) and appends them to out. Row numbers
+stay tied to the ORIGINAL index so sheetRow keeps pointing at the right line
+even though blank rows are skipped. */
+function parseRows(cols, rows, from, to, out){
+const idx = COLIDX || (COLIDX = mapCols(cols));
+const iTitle=idx.title;
+if(iTitle==null) throw new Error('no Title column — check the published tab');
+const S=(r,k)=>{ const i=idx[k]; if(i==null) return ''; const v=r[i]; return v==null?'':String(v); };
+const N=(r,k)=>{ const i=idx[k]; if(i==null) return null; const v=r[i];
+if(v==null||v==='') return null;
+const n=typeof v==='number'?v:parseFloat(v); return isNaN(n)?null:n; };
+const iDate=idx.dateAdded;
+for(let ri=from; ri<to; ri++){
+const r=rows[ri]; if(!r) continue;
+const rawTitle=r[iTitle];
+if(rawTitle==null) continue;
+const title=String(rawTitle);
+const t=title.trim();
+if(!t) continue;                                  // blank row
+// Legacy AwesomeTable directive row. The old code skipped ANY row titled
+// "Hidden", which silently ate the two real films actually called Hidden
+// (1987, Jack Sholder / 2015, the Duffer brothers). A directive row carries
+// no poster and no link, so require that before dropping it.
+if(t==='Hidden' && !S(r,'img') && !S(r,'link')) continue;
+const vsRaw=S(r,'viewStatusRaw');
+out.push({
+sheetRow: ri+2,                                   // header row is 1; row 0 = sheet row 2
+title,
+sortTitle:S(r,'sortTitle')||title,
+desc:S(r,'desc'),
+img:fixPoster(S(r,'img')),
+link:fixLink(S(r,'link')),
+mpaa:S(r,'mpaa').trim(),
+quality:S(r,'quality').trim(),
+mediaType:S(r,'mediaType').trim(),
+studio:S(r,'studio').trim(),
+acqBy:S(r,'acqBy').trim(),
+lang:S(r,'lang').trim(),
+directorRaw:S(r,'directorRaw'),
+actorsRaw:S(r,'actorsRaw'),
+genreRaw:S(r,'genreRaw'),
+viewStatusRaw:vsRaw,
+whereWatchRaw:S(r,'whereWatchRaw'),
+highQRaw:S(r,'highQRaw'),
+awardsRaw:S(r,'awardsRaw'),
+// Viewing Status is needed by the card itself (the watch button), and it
+// only ever holds two values, so it is the one split done up front.
+viewStatus:splitCsv(vsRaw),
+year:N(r,'year'), tomato:N(r,'tomato'), imdb:N(r,'imdb'), runtime:N(r,'runtime'),
+dateAdded: iDate==null ? null : toTime(r[iDate]),
+color:S(r,'color').trim(),
+search:''
+});
+}
+return out;
+}
+/* Builds the whole collection in idle slices, so the first page of covers --
+already on screen and already loading its images -- is not frozen out while
+18,000 rows are turned into objects. */
+function parseAllSliced(cols, rows, onProgress){
+return new Promise((resolve,reject)=>{
+const out=[]; let i=0;
+(function step(){
+try{
+const end=Math.min(i+PARSE_CHUNK, rows.length);
+parseRows(cols, rows, i, end, out);
+i=end;
+}catch(e){ reject(e); return; }
+if(onProgress) onProgress(i, rows.length);
+if(i<rows.length) idle(step); else resolve(out);
+})();
+});
+}
+/* ---------- DEFERRED ENRICHMENT ----------
+Splits the facet columns and builds the search index in chunks, so the
+main thread stays responsive while ~19,000 rows are processed. */
+function enrichRow(m){
+m.director = splitCsv(m.directorRaw);
+m.actors = splitCsv(m.actorsRaw);
+m.genre = splitCsv(m.genreRaw);
+m.whereWatch = splitCsv(m.whereWatchRaw);
+m.highQ = splitCsv(m.highQRaw);
+m.awards = splitCsv(m.awardsRaw);
+if(!m.viewStatus) m.viewStatus = splitCsv(m.viewStatusRaw);
+m.search=[m.sortTitle,m.title,m.desc,m.year,m.directorRaw,m.actorsRaw,m.genreRaw]
+.join(' ').toLowerCase();
+}
+function enrich(){
+return new Promise(resolve=>{
+// 4000 rows per slice overran the frame budget on this collection, which is
+// what made the page feel gluey right after the covers appeared. 1500 keeps
+// each slice comfortably under one frame.
+const CHUNK=1500;
+let i=0;
+(function step(){
+const end=Math.min(i+CHUNK, movies.length);
+for(;i<end;i++) enrichRow(movies[i]);
+if(i<movies.length){ setBar(0.80+0.18*(i/movies.length)); idle(step); }
+else { enriched=true; resolve(); }
+})();
+});
+}
+function rebuildSearchIndex(){
+for(const m of movies){
+m.search=[m.sortTitle,m.title,m.desc,m.year,m.directorRaw,m.actorsRaw,m.genreRaw]
+.join(' ').toLowerCase();
+}
+}
+/* ---------- CACHE (IndexedDB) ---------- */
+const IDB_NAME='dd-cache', IDB_STORE='kv';
+const IDB_KEY='movies:'+CACHE_VER;
+// A second, deliberately tiny record holding just the newest rows. Reading the
+// full record back means deserializing ~8MB, which is most of a second on its
+// own -- so on a revisit this one is read first and paints page 1 in a few tens
+// of milliseconds, and the full record swaps in behind it.
+const IDB_HEAD='head:'+CACHE_VER;
+const HEAD_N=700;
+// Derived fields are rebuilt by enrich(), so they're stripped before storing —
+// the search index alone would roughly double the cache.
+// A Set, not an array: slim() asks this question once per KEY per ROW, so on
+// this collection an Array.includes() scan was ~3 million string compares
+// every time the cache was written.
+const DERIVED=new Set(['search','director','actors','genre','whereWatch','highQ','awards']);
+// One connection, reused for the life of the page. The head read, the full
+// read and the write each used to run their own open() handshake -- two of
+// those sit directly on the startup path, in front of the first paint.
+let idbConn=null;
+function openIdb(){
+if(idbConn) return idbConn;
+idbConn=new Promise((res,rej)=>{
+const r=indexedDB.open(IDB_NAME,1);
+r.onupgradeneeded=()=>{ if(!r.result.objectStoreNames.contains(IDB_STORE)) r.result.createObjectStore(IDB_STORE); };
+r.onsuccess=()=>res(r.result);
+r.onerror=()=>{ idbConn=null; rej(r.error); };
+});
+return idbConn;
+}
+function idbGet(db,key){
+return new Promise((res,rej)=>{
+const q=db.transaction(IDB_STORE,'readonly').objectStore(IDB_STORE).get(key);
+q.onsuccess=()=>res(q.result); q.onerror=()=>rej(q.error);
+});
+}
+function usable(rec){
+if(!rec || !Array.isArray(rec.d) || !rec.d.length) return null;
+if(Date.now()-rec.t > CACHE_TTL) return null;
+return rec;
+}
+async function cacheGet(which){
+try{
+const db=await openIdb();
+return usable(await idbGet(db, which==='head' ? IDB_HEAD : IDB_KEY));
+}catch(e){ return null; }
+}
+function slim(list){
+return list.map(m=>{ const o={}; for(const k in m) if(!DERIVED.has(k)) o[k]=m[k]; return o; });
+}
+async function cacheSet(list, sig, hasDesc){
+try{
+const full=slim(list), t=Date.now();
+const db=await openIdb();
+await new Promise((res,rej)=>{
+const tx=db.transaction(IDB_STORE,'readwrite');
+const st=tx.objectStore(IDB_STORE);
+st.put({t, sig, hasDesc, d:full}, IDB_KEY);
+st.put({t, sig, hasDesc, d:full.slice(0,HEAD_N)}, IDB_HEAD);
+tx.oncomplete=res; tx.onerror=()=>rej(tx.error);
+});
+/* Mirror of the cache timestamp, in localStorage because the early loader in
+   <head> has to read it synchronously -- long before IndexedDB could answer --
+   to decide whether to revalidate or just download the sheet. */
+try{ localStorage.setItem('dd_cache_t', String(t)); }catch(e){}
+}catch(e){ /* private mode / quota — caching is optional */ }
+}
+// Cheap 32-bit fingerprint. Used to skip a pointless repaint when the sheet
+// hasn't changed since the cached copy.
+function signature(list){
+let h=0x811c9dc5;
+for(const m of list){
+const s=m.title+'|'+m.dateAdded+'|'+m.viewStatusRaw+'|'+m.quality;
+for(let i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,0x01000193); }
+}
+return (h>>>0).toString(36)+':'+list.length;
+}
+/* ---------- REVALIDATION SIGNATURES ----------
+The same fingerprint as signature() above, but computed from the four-column
+probe instead of from a fully parsed collection -- so the two can be compared
+without the 11.1MB download ever happening.
+
+The two sides have to agree on shape, so both are normalised here:
+  * Date Added reaches us as epoch ms on the cached side and as the sheet's
+    own text ("8/28/26" today) on the probe side, so both are reduced to
+    Y-M-D numbers. An unrecognised date shape is passed through verbatim,
+    which simply compares unequal and forces the full refresh.
+  * parseRows() drops rows with a blank Title, so the probe does too --
+    otherwise one blank line in the sheet would shift every row after it.
+  * The row COUNT is part of the fingerprint, so any drift in what either
+    side chose to skip shows up as "changed" rather than as a false match. */
+function ymdFromProbe(v){
+const t=String(v==null?'':v).trim();
+if(!t) return '';
+let m=/^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(t);
+if(m) return (+m[1])+'-'+(+m[2])+'-'+(+m[3]);
+m=/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/.exec(t);
+if(m){ let y=+m[3]; if(m[3].length<=2) y+=2000; return y+'-'+(+m[1])+'-'+(+m[2]); }
+return '?'+t;   // unknown shape -> never matches -> full download
+}
+function ymdFromEpoch(t){
+if(t==null) return '';
+const d=new Date(t);
+return d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate();
+}
+function fnvStep(h,s){
+for(let i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,0x01000193); }
+return h;
+}
+// rows come from the probe as [Title, Quality, Viewing Status, Date Added]
+function probeSigFromRows(rows){
+let h=0x811c9dc5, n=0;
+for(let r=0;r<rows.length;r++){
+const row=rows[r];
+const title=String(row[0]==null?'':row[0]);
+if(!title.trim()) continue;                       // matches parseRows
+n++;
+h=fnvStep(h, title+'|'+ymdFromProbe(row[3])+'|'
+  +String(row[2]==null?'':row[2])+'|'
+  +String(row[1]==null?'':row[1]).trim());       // parseRows trims Quality
+}
+return (h>>>0).toString(36)+':'+n;
+}
+function probeSigFromMovies(list){
+let h=0x811c9dc5;
+for(let r=0;r<list.length;r++){
+const m=list[r];
+h=fnvStep(h, m.title+'|'+ymdFromEpoch(m.dateAdded)+'|'+m.viewStatusRaw+'|'+m.quality);
+}
+return (h>>>0).toString(36)+':'+list.length;
+}
+/* ---------- FACET UI ---------- */
+function buildFacetValues(){
+const counts={};
+FACETS.forEach(f=>{ counts[f.key]=new Map(); if(!selected[f.key]) selected[f.key]=new Set(); });
+for(const m of movies){
+for(const f of FACETS){
+const map=counts[f.key];
+if(f.csv){ const a=m[f.key]; if(a) for(let i=0;i<a.length;i++) map.set(a[i],(map.get(a[i])||0)+1); }
+else { const v=m[f.key]; if(v) map.set(v,(map.get(v)||0)+1); }
+}
+}
+FACETS.forEach(f=>{
+facetValues[f.key]=[...counts[f.key].entries()].sort((a,b)=>collator.compare(a[0],b[0]));
+});
+}
+function buildFacets(){
+const host=$('#facets'); host.innerHTML='';
+FACETS.forEach(f=>{
+const el=document.createElement('div');
+el.className='facet'; el.dataset.key=f.key;
+const many=facetValues[f.key].length>12;
+el.innerHTML=`
+<button class="facet-btn">
+<span>${esc(f.label)}</span>
+<span class="count-badge" style="display:none">0</span>
+<span class="icon">${many?'+':'▾'}</span>
+</button>
+<div class="facet-panel">
+${facetValues[f.key].length>10?'<input class="opt-search" placeholder="Search…">':''}
+<div class="opt-list"></div>
+<button class="facet-clear">Clear</button>
+</div>`;
+host.appendChild(el);
+const list=el.querySelector('.opt-list');
+const search=el.querySelector('.opt-search');
+const render=(q='')=>{
+const ql=q.toLowerCase();
+const items=facetValues[f.key].filter(([v])=>!ql||v.toLowerCase().includes(ql));
+const shown=items.slice(0,250);
+list.innerHTML=shown.map(([v,n])=>`
+<label><input type="checkbox" value="${esc(v)}" ${selected[f.key].has(v)?'checked':''}>
+<span>${esc(v)}</span><span class="n">${n}</span></label>`).join('')
++(items.length>250?`<div class="opt-more">${items.length-250} more — type to narrow down</div>`:'');
+};
+el.querySelector('.facet-btn').addEventListener('click',()=>{
+const was=el.classList.contains('open');
+document.querySelectorAll('.facet.open').forEach(x=>x.classList.remove('open'));
+// The panel's checkbox list is only built when the panel is opened, so
+// the 29,000-entry Actors list never touches the DOM unless asked for.
+if(!was){ el.classList.add('open'); render(search?search.value:''); if(search) search.focus(); }
+});
+if(search) search.addEventListener('input',()=>render(search.value));
+list.addEventListener('change',e=>{
+if(e.target.type!=='checkbox') return;
+const v=e.target.value;
+e.target.checked?selected[f.key].add(v):selected[f.key].delete(v);
+updateBadge(el,f.key); applyFilters();
+});
+el.querySelector('.facet-clear').addEventListener('click',()=>{
+selected[f.key].clear(); render(search?search.value:''); updateBadge(el,f.key); applyFilters();
+});
+updateBadge(el,f.key);
+});
+}
+function updateBadge(el,key){
+const b=el.querySelector('.count-badge'), n=selected[key].size;
+b.style.display=n?'inline-block':'none'; b.textContent=n;
+}
+document.addEventListener('click',e=>{
+if(!e.target.closest('.facet')) document.querySelectorAll('.facet.open').forEach(x=>x.classList.remove('open'));
+});
+/* ---------- SLIDERS ---------- */
+// Math.min(...vals) with 19,000 arguments is both slow and a stack-overflow
+// risk; a plain loop is neither.
+function minMax(list,key){
+let mn=Infinity, mx=-Infinity, any=false;
+for(const m of list){ const v=m[key]; if(v==null) continue; any=true; if(v<mn)mn=v; if(v>mx)mx=v; }
+return any?{mn,mx}:null;
+}
+function buildSliders(){
+const host=$('#sliders'); host.innerHTML='';
+SLIDERS.forEach(s=>{
+const isDate=s.type==='date';
+const mm=minMax(movies,s.key);
+if(isDate){
+const DAY=86400000;
+const now=new Date();
+const todayLocal=new Date(now.getFullYear(),now.getMonth(),now.getDate()).getTime();
+s.min=mm?mm.mn:todayLocal-365*DAY;
+s.max=Math.max(mm?mm.mx:todayLocal, todayLocal);
+s.step=DAY;
+} else if(mm){
+s.min=Math.floor(Math.min(s.min,mm.mn)); s.max=Math.ceil(Math.max(s.max,mm.mx));
+}
+rangeState[s.key]={lo:s.min,hi:s.max};
+const pad=n=>String(n).padStart(2,'0');
+const toStr=v=>{ if(!isDate) return String(v);
+const d=new Date(v); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; };
+const fromStr=str=>{
+if(isDate){
+const p=String(str).split('-').map(Number);
+if(p.length!==3||p.some(isNaN)) return null;
+return new Date(p[0],p[1]-1,p[2]).getTime();
+}
+const n=parseFloat(str); return isNaN(n)?null:n;
+};
+const el=document.createElement('div');
+el.className='slider-group';
+el.innerHTML=`
+<div class="sl-title">${esc(s.label)}</div>
+<div class="range-wrap">
+<div class="rail"></div><div class="fill"></div>
+<input type="range" class="lo" min="${s.min}" max="${s.max}" step="${s.step}" value="${s.min}">
+<input type="range" class="hi" min="${s.min}" max="${s.max}" step="${s.step}" value="${s.max}">
+</div>
+<div class="sl-vals">
+<input class="v-lo ${isDate?'date':'number'}"
+${isDate?'':`min="${s.min}" max="${s.max}" step="${s.step}"`} title="Type a value">
+<input class="v-hi ${isDate?'date':'number'}"
+${isDate?'':`min="${s.min}" max="${s.max}" step="${s.step}"`} title="Type a value">
+</div>`;
+host.appendChild(el);
+const lo=el.querySelector('.lo'), hi=el.querySelector('.hi'),
+fill=el.querySelector('.fill'), vlo=el.querySelector('.v-lo'), vhi=el.querySelector('.v-hi');
+const paint=()=>{
+const a=+lo.value,b=+hi.value;
+let mn=Math.min(a,b),mx=Math.max(a,b);
+if(mn < s.min + s.step/2) mn = s.min; // treat end positions as exact bounds
+if(mx > s.max - s.step/2) mx = s.max; // (step snapping + DST can leave them ~1h short)
+rangeState[s.key]={lo:mn,hi:mx};
+const pct=v=>(v-s.min)/(s.max-s.min)*100;
+fill.style.left=pct(mn)+'%'; fill.style.width=(pct(mx)-pct(mn))+'%';
+vlo.value=toStr(mn); vhi.value=toStr(mx);
+};
+paint();
+let t;
+const onInput=()=>{ paint(); clearTimeout(t); t=setTimeout(applyFilters,150); };
+lo.addEventListener('input',onInput); hi.addEventListener('input',onInput);
+const manual=(inputEl,rangeEl)=>{
+let v=fromStr(inputEl.value);
+if(v==null){ paint(); return; } // bad entry: snap back
+v=Math.max(s.min,Math.min(s.max,v));
+rangeEl.value=v;
+paint(); applyFilters();
+};
+vlo.addEventListener('change',()=>manual(vlo,lo));
+vhi.addEventListener('change',()=>manual(vhi,hi));
+vlo.addEventListener('keydown',e=>{ if(e.key==='Enter') vlo.blur(); });
+vhi.addEventListener('keydown',e=>{ if(e.key==='Enter') vhi.blur(); });
+s._reset=()=>{ lo.value=s.min; hi.value=s.max; paint(); };
+});
+}
+/* ---------- FILTER + SORT + RENDER ---------- */
+function applyFilters(keepPage, soft){
+const q=$('#searchBox').value.trim().toLowerCase();
+/* Which facets and sliders are actually narrowing anything is decided ONCE,
+   here, instead of being re-decided inside the row loop 19,000 times. The old
+   version walked all 13 facets and all 5 sliders for every row even when
+   nothing was selected -- ~340,000 property lookups and 19,000 throwaway
+   one-element arrays (`[m[f.key]]`) per pass. That pass runs on every paint,
+   and startup paints up to four times before the grid settles. */
+const activeFacets=[];
+for(const f of FACETS){
+const sel=selected[f.key];
+if(sel && sel.size) activeFacets.push({key:f.key, csv:f.csv, sel});
+}
+const activeRanges=[];
+for(const s of SLIDERS){
+const r=rangeState[s.key];
+if(!r) continue;                          // sliders not built yet
+if(r.lo>s.min || r.hi<s.max){
+// A date range includes the whole of its end day; folded in once here rather
+// than recomputed for every row.
+activeRanges.push({key:s.key, lo:r.lo, hi:s.type==='date' ? r.hi+86399999 : r.hi});
+}
+}
+if(!q && !activeFacets.length && !activeRanges.length){
+filtered=movies.slice();                  // nothing is filtering: skip the walk
+}else{
+filtered=movies.filter(m=>{
+// m.search is built by enrich(), which runs after the first paint. If a query
+// is typed before that finishes, fall back to the raw fields rather than
+// silently returning nothing.
+if(q){
+const hay = m.search ||
+(m.sortTitle+' '+m.title+' '+m.desc+' '+m.year+' '+m.directorRaw+' '+m.actorsRaw+' '+m.genreRaw).toLowerCase();
+if(!hay.includes(q)) return false;
+}
+for(let i=0;i<activeFacets.length;i++){
+const f=activeFacets[i];
+if(f.csv){
+const a=m[f.key];
+if(!a) return false;                  // not enriched yet, or genuinely empty
+let hit=false;
+for(let j=0;j<a.length;j++){ if(f.sel.has(a[j])){ hit=true; break; } }
+if(!hit) return false;
+}else if(!f.sel.has(m[f.key])) return false;
+}
+for(let i=0;i<activeRanges.length;i++){
+const r=activeRanges[i], v=m[r.key];
+if(v==null || v<r.lo || v>r.hi) return false;
+}
+return true;
+});
+}
+sortNow();
+if(!keepPage) page=0;
+renderPage(soft?{ifChanged:true}:null);
+}
+function sortNow(){
+const [key,dir]=$('#sortSel').value.split('|');
+const mul=dir==='desc'?-1:1;
+// Secondary key: alphabetical by title, always A→Z regardless of the
+// primary sort's direction. Used to break ties on every sort mode except
+// the default (Recently/First Added), which is left exactly as it was.
+const alphaTitle=(a,b)=>collator.compare(a.sortTitle||'', b.sortTitle||'');
+filtered.sort((a,b)=>{
+if(key==='sortTitle'){
+return mul*alphaTitle(a,b);
+}
+if(key==='dateAdded'){
+// Blank/unreadable dates: fall back to sheet position. New titles are
+// added at the top of the sheet, so an undated row near the top counts
+// as the most recently added instead of vanishing to the end.
+const eff=m=> m.dateAdded!=null ? m.dateAdded : (9e15 - m.sheetRow);
+return mul*(eff(a)-eff(b));
+}
+const x=a[key], y=b[key];
+if(x==null&&y==null) return alphaTitle(a,b);
+if(x==null) return 1; // blanks last either direction
+if(y==null) return -1;
+if(x===y) return alphaTitle(a,b);
+return mul*(x-y);
+});
+}
+// Set while the grid is showing the streamed first slice rather than the whole
+// sheet, so the pager doesn't claim a total it doesn't have yet.
+let partialData=false;
+// Fingerprint of what is currently in the grid. Lets the post-load repaint be
+// skipped when it would produce byte-identical cards -- rewriting innerHTML
+// restarts every <img>, which would throw away posters that are already
+// halfway downloaded.
+let renderedKey=null;
+function renderPage(opts){
+const total=filtered.length;
+const pages=Math.max(1,Math.ceil(total/PER_PAGE));
+page=Math.min(page,pages-1);
+const start=page*PER_PAGE, end=Math.min(start+PER_PAGE,total);
+const label= total? `${start+1} - ${end} / ${partialData?'…':total}` : (partialData?'…':'0 results');
+$('#pgLabel').textContent=label; $('#pgLabel2').textContent=label;
+const atFirst=page===0, atLast=page>=pages-1;
+$('#prevPg').disabled=atFirst; $('#nextPg').disabled=atLast;
+$('#prevPg2').disabled=atFirst; $('#nextPg2').disabled=atLast;
+$('#railPrev').style.display=atFirst?'none':'flex';
+$('#railNext').style.display=atLast?'none':'flex';
+const grid=$('#grid');
+const slice=filtered.slice(start,end);
+// Only card-affecting data goes into the key -- deliberately NOT the result
+// total, which jumps from the streamed slice to the full sheet while the very
+// same 60 covers stay on screen.
+// m.title IS card-affecting and used to be missing here: it is the hover
+// tooltip, the img alt, and the text shown when a cover cannot be fetched.
+// Without it, renaming a title in the Sheet refreshed the DATA but the soft
+// render then decided the cards were identical and left the old name on
+// screen until something else forced a repaint.
+let k=page+'|';
+for(const m of slice) k+=m.sheetRow+'\u0001'+m.title+'\u0001'+m.img+'\u0001'+m.link+'\u0001'+m.color+'\u0001'
++(m.viewStatus&&m.viewStatus.length?m.viewStatus.join(','):'')+'\u0002';
+if(opts && opts.ifChanged && k===renderedKey) return;  // identical -> leave the loading images alone
+renderedKey=k;
+// First ~2 rows load eagerly so the fold fills instantly; the rest lazy-load
+// as you scroll. decoding=async keeps poster decode off the main thread.
+grid.innerHTML=slice.map((m,i)=>`
+<a class="card" href="${esc(m.link)||'#'}" target="_blank" rel="noopener"
+data-row="${m.sheetRow}" title="${esc(tooltip(m))}"
+style="background:${esc(m.color)||'var(--bg-soft)'}">
+${m.img?`<img loading="${i<20?'eager':'lazy'}" ${i<10?'fetchpriority="high"':''} decoding="async"
+width="250" height="375" alt="${esc(m.title)}"
+src="${esc(m.img)}" data-pidx="${firstIdx(m.img)}">`
+:`<div class="ph">${esc(m.title)}</div>`}
+<span class="edit-tag" title="Edit details">&#9998;</span>
+<span class="info-tag" title="Description">&#8505;</span>
+${(m.viewStatus||[]).includes('Watched')
+?`<button class="watch-tag to-need" title="Move back to Need to Watch">&#8634;</button>`
+:`<button class="watch-tag to-watched" title="Mark as Watched">&#10003;</button>`}
+</a>`).join('');
+}
+function toTop(){
+$('#grid').scrollTop=0; // reset the wall's inner scroll
+// scrollIntoView also reaches the surrounding Google Sites page,
+// bringing the top pager bar back into view after a page flip
+$('#pagerTop').scrollIntoView({behavior:'smooth', block:'start'});
+}
+function goPrev(){ if(page>0){ page--; renderPage(); toTop(); } }
+function goNext(){ page++; renderPage(); toTop(); }
+$('#prevPg').addEventListener('click',goPrev);
+$('#nextPg').addEventListener('click',goNext);
+$('#prevPg2').addEventListener('click',goPrev);
+$('#nextPg2').addEventListener('click',goNext);
+$('#railPrev').addEventListener('click',goPrev);
+$('#railNext').addEventListener('click',goNext);
+let st; $('#searchBox').addEventListener('input',()=>{clearTimeout(st);st=setTimeout(applyFilters,220);});
+$('#sortSel').addEventListener('change',()=>{sortNow();page=0;renderPage();});
+function setSbCollapsed(v){
+document.body.classList.toggle('sbCollapsed',v);
+try{ localStorage.setItem('dd_sb', v?'1':'0'); }catch(e){}
+syncPerPage();
+if(movies.length) renderPage(); // filter selections live in memory — untouched
+}
+$('#sbCollapse').addEventListener('click',()=>setSbCollapsed(true));
+$('#sbExpand').addEventListener('click',()=>setSbCollapsed(false));
+try{ if(localStorage.getItem('dd_sb')==='1') document.body.classList.add('sbCollapsed'); }catch(e){}
+$('#mobileFilterBtn').addEventListener('click',()=>{
+const open=document.body.classList.toggle('filtersOpen');
+$('#mobileFilterBtn').innerHTML = open ? '&#10005; Hide filters' : '&#9776; Filters &amp; search';
+});
+$('#resetAll').addEventListener('click',()=>{
+$('#searchBox').value='';
+FACETS.forEach(f=>selected[f.key].clear());
+document.querySelectorAll('.facet').forEach(el=>updateBadge(el,el.dataset.key));
+SLIDERS.forEach(s=>s._reset&&s._reset());
+applyFilters();
+});
+/* ---------- EDIT MODE ---------- */
+let sessionToken = sessionStorage.getItem('dd_token') || '';
+function jsonpSave(payload){
+return new Promise((resolve,reject)=>{
+const cb='__save_cb_'+Math.random().toString(36).slice(2);
+const timer=setTimeout(()=>{ cleanup(); reject(new Error('save timed out')); },30000);
+function cleanup(){ clearTimeout(timer); delete window[cb]; tag.remove(); }
+window[cb]=d=>{ cleanup(); resolve(d); };
+const tag=document.createElement('script');
+tag.src=APPS_SCRIPT_URL+'?callback='+cb+'&payload='+encodeURIComponent(JSON.stringify(payload));
+tag.onerror=()=>{ cleanup(); reject(new Error('request blocked — check the Apps Script is deployed with access set to "Anyone"')); };
+document.head.appendChild(tag);
+});
+}
+async function saveToSheet(payload){
+try{
+const res=await fetch(APPS_SCRIPT_URL,{
+method:'POST',
+headers:{'Content-Type':'text/plain;charset=utf-8'},
+body:JSON.stringify(payload)
+});
+return await res.json();
+}catch(e){
+return await jsonpSave(payload); // sandbox blocked the POST — go around it
+}
+}
+let tokenResolve=null;
+function askToken(){ // in-page dialog: window.prompt() is blocked in Google Sites embeds
+return new Promise(res=>{
+tokenResolve=res;
+$('#tokenInput').value='';
+$('#tokenWrap').classList.add('open');
+setTimeout(()=>$('#tokenInput').focus(),60);
+});
+}
+function finishToken(ok){
+const v = ok ? $('#tokenInput').value.trim() : '';
+$('#tokenWrap').classList.remove('open');
+if(v){ sessionToken=v; sessionStorage.setItem('dd_token',v); }
+const r=tokenResolve; tokenResolve=null; if(r) r(v);
+}
+$('#tokenOk').addEventListener('click',()=>finishToken(true));
+$('#tokenCancel').addEventListener('click',()=>finishToken(false));
+$('#tokenInput').addEventListener('keydown',e=>{ if(e.key==='Enter') finishToken(true); if(e.key==='Escape') finishToken(false); });
+$('#tokenWrap').addEventListener('click',e=>{ if(e.target.id==='tokenWrap') finishToken(false); });
+async function getToken(){
+if(sessionToken) return sessionToken;
+return await askToken();
+}
+function dropToken(){ sessionToken=''; sessionStorage.removeItem('dd_token'); }
+$('#editToggle').addEventListener('click',async()=>{
+if(!editMode){
+if(!APPS_SCRIPT_URL){
+toast('Paste your Apps Script URL into APPS_SCRIPT_URL in the embed code first',true);
+return;
+}
+const t=await getToken();
+if(!t){ toast('Edit mode needs a token',true); return; }
+}
+editMode=!editMode; document.body.classList.toggle('editing',editMode);
+$('#editToggle').innerHTML = editMode ? '&#128274; Lock editing' : '&#9998; Unlock editing';
+toast(editMode?'Edit mode on — ✓ marks watched, ✎ edits details':'Edit mode off');
+});
+$('#grid').addEventListener('click',e=>{
+// The info icon works whether or not edit mode is on -- it's for anyone
+// browsing, not just whoever's editing the sheet.
+if(e.target.closest('.info-tag')){
+e.preventDefault();
+const card=e.target.closest('.card'); if(!card) return;
+showDescription(+card.dataset.row, e.clientX, e.clientY);
+return;
+}
+if(!editMode) return;
+const card=e.target.closest('.card'); if(!card) return;
+if(e.target.closest('.watch-tag')){
+e.preventDefault();
+toggleWatched(+card.dataset.row, e.target.closest('.watch-tag'));
+return;
+}
+if(e.target.closest('.edit-tag')){
+e.preventDefault();
+openEditor(+card.dataset.row, e.clientX, e.clientY);
+return;
+}
+// any other click on the cover: let the link open the movie's page as usual
+});
+let toastTimer;
+function toast(msg,isErr){
+const t=$('#toast');
+t.textContent=msg; t.className=isErr?'show err':'show';
+clearTimeout(toastTimer);
+toastTimer=setTimeout(()=>{ t.className=''; },2600);
+}
+async function toggleWatched(sheetRow,btn){
+const m=rowIndex.get(sheetRow); if(!m) return;
+const token=await getToken();
+if(!token){ toast('A token is required to save changes',true); return; }
+const newVal=(m.viewStatus||[]).includes('Watched') ? 'Need to Watch' : 'Watched';
+btn.disabled=true;
+try{
+const data=await saveToSheet({token,action:'update',sheetRow,
+key:{Link:m.link,Title:m.title},
+updates:{'Viewing Status':newVal}});
+if(!data.ok){
+if(/token/i.test(data.error||'')) dropToken();
+throw new Error(data.error||'save failed');
+}
+m.viewStatusRaw=newVal;
+m.viewStatus=splitCsv(newVal);
+if(enriched) buildFacetValues();
+toast(`"${m.title}" → ${newVal}`);
+const keep=page;
+applyFilters(true);
+page=Math.min(keep, Math.max(0,Math.ceil(filtered.length/PER_PAGE)-1));
+renderPage();
+}catch(err){
+toast('Could not save: '+err.message,true);
+btn.disabled=false;
+}
+}
+function openEditor(sheetRow, x, y){
+const m=rowIndex.get(sheetRow); if(!m) return;
+currentEdit=m;
+$('#modalTitle').textContent='Edit: '+m.title;
+$('#modalMsg').textContent= APPS_SCRIPT_URL ? '' :
+'Saving is not set up yet — deploy the Apps Script and add its URL to the embed, or edit directly in the Sheet.';
+$('#modalMsg').className='msg';
+$('#saveBtn').disabled=!APPS_SCRIPT_URL;
+$('#sheetRowLink').href=`https://docs.google.com/spreadsheets/d/${SHEET_ID}/edit#gid=${sheetRow}`;
+const body=$('#modalBody');
+body.innerHTML=EDIT_FIELDS.map(f=>{
+const key=COLMAP[f.h];
+let v=m[key]; if(v==null) v='';
+// Description arrives after the grid does. Until it lands, the field is
+// marked pending and excluded from the save, so an unloaded description
+// can never be written back over a real one.
+const pending = (f.h==='Description' && !descriptionsLoaded);
+const attrs = pending ? ' data-pending="1" readonly' : '';
+const shown = pending ? 'Loading description…' : v;
+return `<div class="field${f.full?' full':''}">
+<label>${esc(f.h)}</label>
+${f.area?`<textarea data-h="${esc(f.h)}"${attrs}>${esc(shown)}</textarea>`
+:`<input data-h="${esc(f.h)}"${attrs} value="${esc(shown)}">`}
+</div>`;
+}).join('');
+const modal=$('#modal');
+// Positioned, then made visible -- not the other way around -- so it never
+// flashes at the top-left corner before jumping to the click point.
+modal.style.visibility='hidden';
+$('#modalWrap').classList.add('open');
+positionFloating(modal, x!=null?x:window.innerWidth/2, y!=null?y:window.innerHeight/3);
+modal.style.visibility='';
+}
+function closeEditor(){ $('#modalWrap').classList.remove('open'); currentEdit=null; }
+$('#closeModal').addEventListener('click',closeEditor);
+$('#cancelBtn').addEventListener('click',closeEditor);
+$('#modalWrap').addEventListener('click',e=>{ if(e.target.id==='modalWrap') closeEditor(); });
+/* ---------- description popover ----------
+   A very small read-only popup, independent of the (much bigger) edit modal
+   above -- opens right where the info icon was clicked. Descriptions are
+   loaded lazily (see loadDescriptions), so a click before they've landed
+   shows a brief loading message and fills in once they arrive. */
+function closeDescPop(){ $('#descPop').classList.remove('open'); }
+async function showDescription(sheetRow, x, y){
+const m=rowIndex.get(sheetRow); if(!m) return;
+const pop=$('#descPop');
+$('#descPopTitle').textContent = m.title + (m.year ? ` (${m.year})` : '');
+$('#descPopBody').textContent = descriptionsLoaded ? (m.desc||'No description available.') : 'Loading description…';
+pop.style.visibility='hidden';
+pop.classList.add('open');
+positionFloating(pop, x, y);
+pop.style.visibility='';
+if(!descriptionsLoaded){
+await loadDescriptions();
+// The popover may have moved on to a different movie, or been closed,
+// by the time the (slower, lazy) description fetch resolves.
+if(pop.classList.contains('open') && $('#descPopTitle').textContent === m.title + (m.year ? ` (${m.year})` : '')){
+$('#descPopBody').textContent = m.desc || 'No description available.';
+positionFloating(pop, x, y); // text just changed height -- keep it fully on-screen
+}
+}
+}
+$('#closeDescPop').addEventListener('click',closeDescPop);
+document.addEventListener('click',e=>{
+if($('#descPop').classList.contains('open') && !e.target.closest('#descPop') && !e.target.closest('.info-tag')) closeDescPop();
+});
+document.addEventListener('keydown',e=>{
+if(e.key==='Escape'){ closeDescPop(); if($('#modalWrap').classList.contains('open')) closeEditor(); }
+});
+$('#saveBtn').addEventListener('click',async()=>{
+if(!currentEdit||!APPS_SCRIPT_URL) return;
+const token=await getToken();
+if(!token){ $('#modalMsg').textContent='A token is required to save changes.'; $('#modalMsg').className='msg err'; return; }
+const updates={};
+document.querySelectorAll('#modalBody [data-h]').forEach(el=>{
+if(el.hasAttribute('data-pending')) return; // never save a field that hasn't loaded
+updates[el.dataset.h]=el.value;
+});
+const msg=$('#modalMsg'); msg.textContent='Saving…'; msg.className='msg';
+$('#saveBtn').disabled=true;
+try{
+const data=await saveToSheet({token,action:'update',sheetRow:currentEdit.sheetRow,
+key:{Link:currentEdit.link,Title:currentEdit.title},updates});
+if(!data.ok){
+if(/token/i.test(data.error||'')) dropToken();
+throw new Error(data.error||'Save failed');
+}
+const m=currentEdit;
+for(const [h,v] of Object.entries(updates)){
+const key=COLMAP[h]; if(!key) continue;
+if(['year','tomato','imdb','runtime'].includes(key)){ const n=parseFloat(v); m[key]=isNaN(n)?null:n; }
+else if(key==='img') m.img=fixPoster(v);
+else if(key==='link') m.link=fixLink(v);
+else m[key]=v;
+}
+enrichRow(m);
+if(enriched) buildFacetValues();
+msg.textContent='Saved ✓'; msg.className='msg ok';
+setTimeout(()=>{ closeEditor(); applyFilters(true); },600);
+}catch(err){
+msg.textContent='Could not save: '+err.message; msg.className='msg err';
+}finally{
+$('#saveBtn').disabled=false;
+}
+});
+/* ---------- DESCRIPTIONS (lazy second request) ----------
+Same tab, same row order, no WHERE clause — so the Nth returned row is the
+Nth row of the display request. Merged by position against sheetRow. */
+async function loadDescriptions(){
+if(DESCRIPTIONS==='never' || descriptionsLoaded) return;
+/* Prefer the snapshot's description tier: it is a static, immutable CDN file,
+   whereas __GVIZ_DESC below is another multi-megabyte query against the live
+   sheet. Both return one entry per sheet row in sheet order, so the
+   merge-by-position is identical either way. */
+if(window.__snapDesc){
+try{
+const rows=await window.__snapDesc();
+for(let ri=0;ri<rows.length;ri++){
+const m=rowIndex.get(ri+2);
+if(m) m.desc=rows[ri]||'';
+}
+descriptionsLoaded=true;
+if(enriched) rebuildSearchIndex();
+return;
+}catch(e){
+console.warn('[collection] snapshot descriptions unavailable, trying live sheet:', e && e.message);
+}
+}
+try{
+const url=window.__GVIZ_DESC;
+const d=await Promise.any([window.__gvizDirect(url), window.__gvizJsonp(url)]);
+const rows=d.json.table.rows||[];
+rows.forEach((r,ri)=>{
+const m=rowIndex.get(ri+2);
+if(!m) return;
+const c=r.c && r.c[0];
+m.desc = c && c.v!=null ? String(c.v) : '';
+});
+descriptionsLoaded=true;
+if(enriched) rebuildSearchIndex();
+}catch(e){
+// Search simply stays limited to title/director/actors/genre.
+console.warn('[collection] descriptions unavailable:', e && e.message);
+}
+}
+/* ---------- INIT ----------
+Staged, so that something useful is on screen at every point:
+  0 ms    static shell + top progress bar + placeholder tiles (needs no JS)
+  ~30 ms  cached collection, if this browser has one -> complete grid at once
+  ~400 ms first ~600 streamed rows -> page 1 renders, POSTERS START LOADING
+  ~2-4 s  the rest of the sheet lands and is parsed in idle slices
+  then    facets + sliders built, search index built, cache written
+The old version had exactly one stage: wait for every byte of the sheet, parse
+all of it, sort all of it, and only then write the first <img>. That is why the
+page sat there looking static for ~10s -- the covers could not even be
+requested until all of that was done. Nothing has been dropped; the same work
+still happens, just no longer in front of the posters. */
+(async function init(){
+const t0=performance.now();
+let cachedSig=null, painted=false;
+const paint=(soft)=>{
+// Built with a plain loop. new Map(movies.map(...)) allocated a 19,000-entry
+// array of 19,000 two-element arrays first, and paint() runs up to four times
+// during startup.
+rowIndex=new Map();
+for(let i=0;i<movies.length;i++) rowIndex.set(movies[i].sheetRow, movies[i]);
+syncPerPage();
+applyFilters(true, soft);
+painted=true;
+};
+// Everything the sidebar needs, off the critical path.
+const buildSidebar=()=>idle(()=>{
+buildFacetValues();
+buildSliders();
+buildFacets();
+$('#sidebar').classList.remove('pending');
+});
+try{
+// 1a. The small head record: page 1 straight out of IndexedDB, before the
+//     full cache (let alone the network) has been touched.
+const head=await cacheGet('head');
+if(head){
+movies=head.d;
+partialData=true;
+paint();
+setStatus('Loading the rest of the collection…'); setBar(0.35);
+}
+// 1b. The full cached copy.
+const rec=await cacheGet();
+if(rec){
+movies=rec.d;
+cachedSig=rec.sig;
+descriptionsLoaded = !!rec.hasDesc || DESCRIPTIONS==='never';
+partialData=false;
+paint(true);   // soft: the head record already put these very covers on screen
+setStatus('Checking for changes…'); setBar(0.55);
+await enrich();
+buildSidebar();
+}
+/* 1b-bis. NO IndexedDB CACHE -> fall back to the Netlify snapshot.
+   This is the first-visit path, and it is the one that was slow: with no
+   cache there was nothing to paint and nothing to revalidate against, so the
+   page had no choice but to pull the whole 3.45MB export from Google before
+   it could request a single cover.
+
+   The snapshot is the same collection at ~589KB from an immutable CDN URL, so
+   a browser that has never seen this site still gets to start from a complete
+   grid. From here on it is treated EXACTLY like a cache hit -- same paint,
+   same signature, same probe, same catch-up -- because signature() only
+   fingerprints Title/Date Added/Viewing Status/Quality, all of which are in
+   the core tier. Nothing below this block needed to change. */
+let snapUsed=false;
+if(!rec && window.__snapCore){
+try{
+const snap=await window.__snapCore;
+const built=await parseAllSliced(snap.cols, snap.rows, (i,n)=>setBar(0.20+0.30*(i/n)));
+if(built.length){
+movies=built;
+partialData=false;
+// The snapshot's core tier deliberately carries no Description, and its
+// Director/Actors arrive separately below -- so this is not a "has
+// descriptions" state and must not be cached as one.
+descriptionsLoaded=false;
+cachedSig=signature(movies);
+snapUsed=true;
+paint();
+setStatus('Checking for changes…'); setBar(0.55);
+/* Director and Actors ride in the second tier. enrich() builds the search
+   index and buildSidebar() builds the facet lists, and both read those two
+   fields -- so they are patched in first, by sheet position rather than by
+   array index, because parseRows() drops blank rows and the two sequences
+   are therefore not aligned. */
+try{
+const fac=await window.__snapFacets;
+for(const m of movies){
+const f=fac[m.sheetRow-2];
+if(f){ m.directorRaw=f['Director']||''; m.actorsRaw=f['Actors']||''; }
+}
+}catch(e){
+// Facets missing just means those two panels start empty; the live
+// catch-up below fills them in when the sheet download lands.
+console.warn('[collection] snapshot facets unavailable:', e && e.message);
+}
+await enrich();
+buildSidebar();
+}
+}catch(e){
+// Snapshot is an optimisation, never a dependency. Falling through here
+// leaves cachedSig null, which makes the revalidate step below call
+// __startCsv() -- i.e. exactly the behaviour from before it existed.
+console.warn('[collection] snapshot unavailable, using live sheet:', e && e.message);
+}
+}
+/* 1c. REVALIDATE.
+   At this point the grid is already painted from the cache. The old code went
+   straight on to pull all 11.1MB purely to find out whether any of it was
+   different -- and on the overwhelmingly common "nothing changed" visit, threw
+   the whole download away again (see the `unchanged` branch below).
+
+   The probe answers that same question for ~955KB, using exactly the four
+   columns signature() has always compared. Three outcomes:
+     match      -> the sheet is unchanged; the download is never started at all
+     mismatch   -> start the full download and carry on exactly as before
+     no answer  -> ditto; the probe never gets to decide anything on its own */
+let revalidated=false;
+if(window.__probe){
+if(!cachedSig){
+// localStorage said there was a cache but IndexedDB disagreed (cleared, private
+// mode, quota). Nothing to compare against, so stop waiting and just download.
+window.__startCsv();
+}else{
+const probeRows=await window.__probe;
+if(probeRows){
+const probeSig=probeSigFromRows(probeRows);
+const localSig=probeSigFromMovies(movies);
+revalidated = probeSig===localSig;
+console.info('[collection] revalidation: '+(revalidated?'unchanged':'CHANGED')
+  +' (sheet '+probeSig+' vs cached '+localSig+')');
+}
+if(!revalidated) window.__startCsv();
+}
+}
+
+if(revalidated){
+// Unchanged: the painted grid is already correct and complete. Stop the full
+// export if the grace timer managed to open it while the probe was still in
+// the air, and make sure nothing can start it after this point.
+window.__cancelCsv();
+if(!descriptionsLoaded) await loadDescriptions();
+// Re-stamp the cache so a collection that is simply not changing doesn't
+// expire out from under the 24h TTL and force a cold download anyway.
+idle(()=>cacheSet(movies, cachedSig, descriptionsLoaded));
+barDone(); setStatus(null);
+console.info(`[collection] ${movies.length} titles in ${Math.round(performance.now()-t0)}ms`
+  + ` (source: cache + revalidation probe, full download skipped,`
+  + ` posters: ${directOk===true?'direct':'proxy '+proxyIdx})`);
+return;
+}
+
+// 2. First slice of the live sheet. This is the change that moves the needle:
+//    page 1 is rendered from the first rows off the wire, so the browser starts
+//    pulling covers while the other ~11MB is still arriving. The sheet is kept
+//    newest-first, which is also the default sort, so these are the rows page 1
+//    actually wants. Skipped when the cache already painted a full grid.
+if(!painted){
+try{
+const head=await window.__firstRows;
+if(head.partial){
+partialData=true;
+movies=parseRows(head.cols, head.rows, 0, head.rows.length, []);
+paint();
+}
+}catch(e){ /* the real failure surfaces on __allRows, just below */ }
+}
+// 3. The whole sheet.
+const d=await window.__allRows;
+setStatus('Indexing '+d.rows.length.toLocaleString()+' rows…');
+const fresh=await parseAllSliced(d.cols, d.rows, (i,n)=>setBar(0.72+0.08*(i/n)));
+if(!fresh.length) throw new Error('no rows returned');
+const hasDesc = d.src==='csv' || DESCRIPTIONS==='eager';
+partialData=false;
+// signature() walks every row, so it is only computed when there is actually a
+// cached fingerprint to compare it against.
+let freshSig=null;
+const unchanged = !!cachedSig && descriptionsLoaded && (freshSig=signature(fresh))===cachedSig;
+if(unchanged){
+// Nothing changed — leave the painted grid alone, just refresh the pager.
+renderPage({ifChanged:true});
+}else{
+movies=fresh;
+enriched=false;
+descriptionsLoaded=hasDesc;
+// Soft render: if the streamed first page and the final first page hold the
+// same covers (the normal case), the <img> tags are left exactly as they are
+// rather than being rewritten, so posters already half-downloaded are kept.
+paint(true);
+await enrich();
+buildSidebar();
+}
+// 4. Descriptions, if they weren't in the payload.
+if(!descriptionsLoaded) await loadDescriptions();
+idle(()=>{
+if(freshSig===null) freshSig=signature(movies);
+cacheSet(movies, freshSig, descriptionsLoaded);
+});
+barDone(); setStatus(null);
+console.info(`[collection] ${movies.length} titles in ${Math.round(performance.now()-t0)}ms`
++ ` (source: ${d.src}, cache: ${cachedSig?(unchanged?'hit':'stale'):'miss'},`
++ ` posters: ${directOk===true?'direct':'proxy '+proxyIdx},`
++ ` urls: ${FIX_POSTER_SUFFIX?'rewritten':'as-stored'})`);
+}catch(err){
+barDone();
+if(movies.length){
+partialData=false;
+renderPage();
+setStatus('Showing the collection that loaded — refresh failed', false, true);
+}else{
+setStatus('Could not load the sheet.<br><small>'
++'1. Check the published CSV link at the top of this embed is still live:<br>'
++'&nbsp;&nbsp;&nbsp;&nbsp;in the Sheet, File &rarr; Share &rarr; Publish to web &rarr; &ldquo;Movies&rdquo; tab &rarr; CSV.<br>'
++'2. Check the spreadsheet is also shared as &ldquo;Anyone with the link &ndash; Viewer&rdquo;,<br>'
++'&nbsp;&nbsp;&nbsp;&nbsp;which is what the live-sheet fallback needs.<br>'
++'<span style="color:#607d8b">('+esc(err.message)+')</span></small>', false, true);
+}
+}
+})();
+</script>
+</body>
+</html>
+

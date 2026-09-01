@@ -1,0 +1,1170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Donny's Movies Anywhere Compare</title>
+<!-- Warm up every origin the page talks to, so the DNS/TLS handshakes are
+     already done by the time the real requests fire. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://docs.google.com">
+<link rel="preconnect" href="https://images.moviesanywhere.com">
+<style>
+/* ============ CRITICAL CSS ============
+   Just the loading indicator, inlined ahead of everything else so the bar and
+   the spinner are on screen in the first painted frame -- before the main
+   stylesheet, the fonts, or a byte of data. */
+html,body{margin:0;padding:0;background:#171C20}
+#topbar{position:fixed;top:0;left:0;right:0;height:3px;z-index:200;
+  background:rgba(255,255,255,.09);overflow:hidden}
+#topbar.done{opacity:0;transition:opacity .4s .25s}
+#topfill{height:100%;width:0;background:linear-gradient(90deg,#8e1f1f,#c62828,#ef5350);
+  transition:width .3s ease-out}
+#topbar.indet #topfill{width:38%;animation:ddslide 1.15s ease-in-out infinite}
+@keyframes ddslide{0%{transform:translateX(-110%)}100%{transform:translateX(275%)}}
+#status{position:fixed;top:23px;left:50%;transform:translateX(-50%);z-index:201;
+  display:flex;flex-direction:row;gap:10px;align-items:center;
+  background:#263238;border-radius:20px;padding:8px 17px 8px 13px;
+  font:700 12.5px 'Poppins','Segoe UI',system-ui,sans-serif;letter-spacing:.5px;color:#cfd8dc;
+  box-shadow:0 4px 16px rgba(0,0,0,.55);max-width:min(92vw,520px)}
+#status.hidden{display:none}
+#status.err{background:#b71c1c;color:#fff;border-radius:10px}
+.spin{width:15px;height:15px;border:2px solid rgba(255,255,255,.22);border-top-color:#fff;
+  border-radius:50%;animation:sp .8s linear infinite;flex:none}
+@keyframes sp{to{transform:rotate(360deg)}}
+.skel{border-radius:6px;height:0;padding-bottom:150%;background:#1f262b;
+  animation:ddpulse 1.5s ease-in-out infinite}
+@keyframes ddpulse{0%,100%{opacity:.5}50%{opacity:.92}}
+@media(prefers-reduced-motion:reduce){
+  .spin,.skel{animation:none}
+  #topbar.indet #topfill{animation:none;width:100%}
+}
+</style>
+<script>
+/* ============ EARLY DATA LOADER ============
+   Starts the sheet download before the CSS, the fonts and the main script are
+   even parsed.
+   WHY THE PAGE FELT SLOW
+   The data here is tiny -- about 11KB gzipped for ~130 titles -- so the wait
+   was never really the download. Two other things caused it:
+   1. #status was a full-page cover (position:absolute; inset:0 with a solid
+      background) sitting on top of everything until the rows landed. The
+      sidebar, the pager and the grid all existed the whole time; nobody could
+      see them. It is now a small chip at the top with a progress bar.
+   2. The "Need to Add" tab is a FILTER spill, so its used range runs far past
+      the last real title. A plain gviz request hands back every one of those
+      blank rows. The request now asks Google to drop them first:
+          select * where F is not null and F <> ''
+      F is the Title column. `select *` (rather than naming columns) is
+      deliberate -- the page reads cells BY POSITION, so pruning columns would
+      shift every index and break the whole thing.
+   If the filtered query is ever rejected, it retries unfiltered, so a schema
+   change can't take the page down.                                          */
+(function(){
+  var id='1iCuGBc7f0J_Dddshqf2Ho86ypPh2b1QIMkQOsB3fSrI';
+  var gid='1970076351';
+  // The "Need to Add" tab has ONE header row (row 1); the FILTER in B2 spills
+  // the movies starting at row 2. So only 1 row is a header -- using 2 here
+  // silently drops the first movie. If you ever add a banner row above the
+  // header, bump this back to 2 to match.
+  var headers=1;
+  /* OPTIONAL, and the single biggest win left on this page.
+     gviz runs Google's query engine over the whole workbook before it answers,
+     which is most of the wait. A published CSV is a static CDN file with no
+     engine in front of it. To turn it on:
+        File > Share > Publish to web > the "Need to Add" tab > CSV
+     then paste the resulting link (it contains /d/e/2PACX-...&output=csv) here.
+     Leave '' and everything keeps working exactly as it does now via gviz.
+     NOTE: a published CSV can lag live edits by a few minutes. */
+  var CSV_URL = '/mirror/ma-compare.csv';
+/* Was the published Google CSV below. That endpoint answers
+   "Cache-Control: private, max-age=300" and is regenerated per request, so no
+   CDN could hold it and every visit paid for the whole file again. The mirror
+   is the same bytes, rebuilt at deploy time and served by Netlify with Brotli
+   and a real revalidate. If it is ever missing, this page still falls back to
+   the live sheet on its own, exactly as it did before.
+   Original: https://docs.google.com/spreadsheets/d/e/2PACX-1vRqFCFR3Ip1QuEdDACRkq4V-QyHQdqfywoen6DY_WOFdCjvm4YaoO77aQhY2yYIQRpjsgIXY2jvBRua/pub?gid=1970076351&single=true&output=csv */
+  var TITLE_COL='F';                       // column holding Title (see COL.title = 5)
+  var base='https://docs.google.com/spreadsheets/d/'+id+'/gviz/tq?headers='+headers+'&gid='+gid;
+  var rowFilter='&tq='+encodeURIComponent("select * where "+TITLE_COL+" is not null and "+TITLE_COL+" <> ''");
+  /* ---- progress hub: the indicator subscribes later and replays the last ---- */
+  var subs=[], last=null;
+  window.__MA_PROG=function(cb){ subs.push(cb); if(last){ try{cb(last);}catch(e){} } };
+  function emit(o){ last=o; for(var i=0;i<subs.length;i++){ try{subs[i](o);}catch(e){} } }
+  emit({stage:'connect'});
+  try{ window.__MA_EXP = +(localStorage.getItem('ma_bytes')||0) || 0; }catch(e){ window.__MA_EXP = 0; }
+  /* Reads a response as a stream so the bar shows real bytes rather than a
+     guess, then hands back the full text. */
+  function readWithProgress(res){
+    if(!res.body || !res.body.getReader) return res.text();
+    var reader=res.body.getReader(), dec=new TextDecoder('utf-8'), out='', bytes=0;
+    return (function pump(){
+      return reader.read().then(function(r){
+        if(r.done){
+          try{ localStorage.setItem('ma_bytes', String(bytes)); }catch(e){}
+          return out;
+        }
+        bytes+=r.value.byteLength;
+        out+=dec.decode(r.value,{stream:true});
+        emit({stage:'download', bytes:bytes, total:window.__MA_EXP});
+        return pump();
+      });
+    })();
+  }
+  function get(url){
+    return fetch(url).then(function(r){
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      return readWithProgress(r);
+    });
+  }
+  var early=null;
+  try{
+    if(CSV_URL){
+      // A published CSV is a single static file -- no row filter, no
+      // "unfiltered tab" retry to fall back to. If it fails, the main
+      // script's loadSheet() will still fall back to gviz on its own.
+      early=get(CSV_URL);
+      early.catch(function(){});
+    }else{
+      // Filtered first; if Google rejects the query, fall back to the plain tab.
+      early=get(base+rowFilter+'&tqx=out:json').catch(function(){
+        emit({stage:'retry'});
+        return get(base+'&tqx=out:json');
+      });
+      early.catch(function(){});   // swallow here; handled properly later
+    }
+  }catch(e){}
+  window.__SHEET={id:id, gid:gid, headers:headers, url:base, urlFiltered:base+rowFilter,
+                  csvUrl:CSV_URL, early:early};
+})();
+</script>
+<!-- PERF: load the webfonts without blocking first paint. media="print"
+     makes the stylesheet non-render-blocking; onload flips it live. -->
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@700&display=swap"
+      rel="stylesheet" media="print" onload="this.media='all'">
+<noscript>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@700&display=swap" rel="stylesheet">
+</noscript>
+<style>
+:root{
+  --bg:#171C20;
+  --bg-soft:#1f262b;
+  --pill:#ffffff;
+  --pill-text:#37474f;
+  --bar:#8a9096;
+  --bar-text:#ffffff;
+  --accent:#c62828;
+  --track:#4a565e;
+  --track-fill:#eceff1;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg)}
+html{scrollbar-width:none;-ms-overflow-style:none}
+html::-webkit-scrollbar,body::-webkit-scrollbar{display:none}
+body{
+  background:var(--bg);
+  font-family:'Poppins','Segoe UI',sans-serif;
+  font-weight:700;
+  color:#eceff1;
+  overflow:hidden;
+}
+#app{display:flex;height:100%}
+/* ---------- SIDEBAR ---------- */
+#sidebar{
+  width:250px;min-width:250px;
+  padding:16px 12px 30px 14px;
+  height:100%;
+  overflow-y:auto;
+  scrollbar-width:thin;scrollbar-color:#4a565e transparent;
+}
+#sidebar::-webkit-scrollbar{width:6px}
+#sidebar::-webkit-scrollbar-thumb{background:#4a565e;border-radius:3px}
+#searchBox{
+  width:100%;padding:9px 12px;border:none;border-radius:6px;
+  font:700 13.5px 'Poppins',sans-serif;color:var(--pill-text);
+  margin-bottom:12px;outline:none;
+}
+#searchBox::placeholder{color:#78909c}
+.facet{position:relative;margin-bottom:10px}
+.facet-btn{
+  width:100%;display:flex;align-items:center;justify-content:space-between;
+  background:var(--pill);color:var(--pill-text);
+  border:none;border-radius:8px;padding:10px 14px;cursor:pointer;
+  font:700 12.5px 'Poppins',sans-serif;letter-spacing:1.2px;text-transform:uppercase;
+  transition:box-shadow .15s;
+}
+.facet-btn:hover{box-shadow:0 0 0 2px rgba(255,255,255,.25)}
+.facet-btn .icon{font-size:13px;color:#607d8b;transition:transform .2s}
+.facet.open .facet-btn .icon{transform:rotate(180deg)}
+.facet-btn .count-badge{
+  background:var(--accent);color:#fff;border-radius:10px;
+  font-size:10px;padding:1px 7px;margin-left:auto;margin-right:8px;
+}
+.facet-panel{
+  display:none;position:relative;z-index:30;
+  background:#fff;border-radius:8px;margin-top:5px;
+  box-shadow:0 8px 22px rgba(0,0,0,.45);
+  padding:8px;color:var(--pill-text);
+}
+.facet.open .facet-panel{display:block}
+.facet-panel input.opt-search{
+  width:100%;padding:6px 9px;margin-bottom:6px;
+  border:1px solid #cfd8dc;border-radius:5px;font:700 12.5px 'Poppins',sans-serif;outline:none;
+}
+.opt-list{max-height:240px;overflow-y:auto;scrollbar-width:thin}
+.opt-list label{
+  display:flex;align-items:center;gap:8px;
+  font:700 13px 'Poppins',sans-serif;padding:5px 6px;border-radius:4px;cursor:pointer;
+}
+.opt-list label:hover{background:#eceff1}
+.opt-list input{accent-color:var(--accent)}
+.opt-list .n{margin-left:auto;color:#90a4ae;font-size:11px}
+.opt-more{font-size:11px;color:#90a4ae;padding:5px 6px}
+.facet-clear{
+  display:block;width:100%;margin-top:6px;padding:6px;
+  background:#eceff1;border:none;border-radius:5px;cursor:pointer;
+  font:700 11px 'Poppins',sans-serif;letter-spacing:1px;text-transform:uppercase;color:#546e7a;
+}
+.facet-clear:hover{background:#cfd8dc}
+/* sort */
+#sortWrap select{
+  width:100%;background:var(--pill);color:var(--pill-text);
+  border:none;border-radius:8px;padding:10px 12px;cursor:pointer;
+  font:700 12.5px 'Poppins',sans-serif;letter-spacing:1.2px;text-transform:uppercase;
+  margin-bottom:10px;outline:none;
+}
+/* sliders */
+.slider-group{margin:22px 4px 6px;text-align:center}
+.slider-group .sl-title{
+  font:700 13px 'Poppins',sans-serif;letter-spacing:1.6px;text-transform:uppercase;
+  color:#eceff1;margin-bottom:10px;
+}
+.range-wrap{position:relative;height:22px}
+.range-wrap .rail{
+  position:absolute;top:9px;left:0;right:0;height:3px;border-radius:2px;background:var(--track);
+}
+.range-wrap .fill{
+  position:absolute;top:9px;height:3px;border-radius:2px;background:var(--track-fill);
+}
+.range-wrap input[type=range]{
+  position:absolute;top:0;left:0;width:100%;height:22px;
+  -webkit-appearance:none;appearance:none;background:transparent;pointer-events:none;margin:0;
+}
+.range-wrap input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;appearance:none;pointer-events:auto;
+  width:14px;height:14px;border-radius:50%;background:#fff;
+  border:none;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.5);
+}
+.range-wrap input[type=range]::-moz-range-thumb{
+  pointer-events:auto;width:14px;height:14px;border-radius:50%;
+  background:#fff;border:none;cursor:pointer;
+}
+.sl-vals{display:flex;justify-content:space-between;margin-top:2px}
+.sl-vals input{
+  background:transparent;border:none;border-bottom:1px solid #eceff1;
+  color:#eceff1;font:700 13px 'Poppins',sans-serif;text-align:center;
+  width:56px;padding:1px 2px;outline:none;color-scheme:dark;cursor:text;
+}
+.sl-vals input:focus{border-bottom-color:#fff;background:rgba(255,255,255,.08)}
+.sl-vals input::-webkit-outer-spin-button,
+.sl-vals input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.sl-vals input[type=number]{-moz-appearance:textfield;appearance:textfield}
+#resetAll{
+  margin-top:22px;width:100%;padding:9px;border:1px solid #4a565e;border-radius:8px;
+  background:transparent;color:#b0bec5;cursor:pointer;
+  font:700 11px 'Poppins',sans-serif;letter-spacing:1.5px;text-transform:uppercase;
+}
+#resetAll:hover{border-color:#eceff1;color:#fff}
+/* collapse control (desktop only) */
+#sbCollapse{
+  width:100%;margin-bottom:10px;padding:8px;border:1px solid #4a565e;border-radius:8px;
+  background:transparent;color:#b0bec5;cursor:pointer;
+  font:700 11px 'Poppins',sans-serif;letter-spacing:1.5px;text-transform:uppercase;
+}
+#sbCollapse:hover{border-color:#eceff1;color:#fff}
+#sbExpand{
+  display:none;width:34px;min-width:34px;height:100%;
+  background:var(--bg-soft);border:none;cursor:pointer;color:#b0bec5;font-size:17px;
+  align-items:center;justify-content:center;
+}
+#sbExpand:hover{background:#28313a;color:#fff}
+@media(min-width:761px){
+  body.sbCollapsed #sidebar{display:none}
+  body.sbCollapsed #sbExpand{display:flex}
+  body.sbCollapsed #grid{grid-template-columns:repeat(12,1fr)}
+}
+@media(max-width:760px){
+  #sbCollapse,#sbExpand{display:none !important}
+}
+/* ---------- MAIN ---------- */
+#main{flex:1;min-width:0;height:100%;display:flex;flex-direction:column;padding:14px 10px 14px 4px;position:relative}
+.pagerBar{
+  display:flex;align-items:center;
+  background:var(--bar);border-radius:6px;height:52px;
+  user-select:none;
+}
+#pagerTop{margin-bottom:12px}
+#pagerBottom{margin-top:12px}
+.pgRail{
+  position:absolute;top:70px;bottom:70px;width:30px;z-index:40;
+  display:flex;flex-direction:column;justify-content:space-around;align-items:center;
+  background:transparent;border:none;cursor:pointer;color:#fff;
+  opacity:.32;transition:opacity .15s,background .15s;border-radius:6px;
+}
+.pgRail:hover{opacity:.95;background:rgba(255,255,255,.12)}
+.pgRail span{font-size:24px;line-height:1}
+#railPrev{left:0}
+#railNext{right:0}
+@media(max-width:760px){ .pgRail{width:24px} .pgRail span{font-size:20px} }
+.pagerBar .pg-arrow{
+  width:44px;height:100%;display:flex;align-items:center;justify-content:center;
+  background:transparent;border:none;color:#fff;font-size:26px;cursor:pointer;border-radius:6px;
+}
+.pagerBar .pg-arrow:hover:not(:disabled){background:rgba(255,255,255,.18)}
+.pagerBar .pg-arrow:disabled{opacity:.35;cursor:default}
+.pagerBar .pg-label{
+  flex:1;text-align:center;
+  font:700 34px 'Poppins',sans-serif;letter-spacing:2px;color:var(--bar-text);
+}
+#grid{
+  flex:1;min-height:0;overflow-y:auto;
+  display:grid;
+  grid-template-columns:repeat(10,1fr);
+  gap:12px;align-content:start;
+  scrollbar-width:none;
+}
+#grid::-webkit-scrollbar{display:none}
+.card{
+  position:relative;display:block;border-radius:6px;overflow:hidden;
+  background:var(--bg-soft);
+  height:0;padding-bottom:150%;   /* 2:3 poster ratio */
+  transition:transform .15s, box-shadow .15s;text-decoration:none;
+  /* PERF: lets the browser skip painting/layout for cards that are
+     scrolled out of view. The card's size comes from its own
+     padding-bottom, so nothing shifts when contents are skipped. */
+  content-visibility:auto;
+}
+.card:hover{transform:scale(1.045);box-shadow:0 6px 18px rgba(0,0,0,.6);z-index:5}
+.card img{
+  position:absolute;top:0;left:0;width:100%;height:100%;
+  object-fit:cover;display:block;
+}
+.card .ph{
+  position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  padding:10px;text-align:center;color:#b0bec5;
+  font:700 13px 'Poppins',sans-serif;letter-spacing:.5px;
+}
+.card .price-tag{
+  position:absolute;bottom:6px;right:6px;z-index:2;
+  background:rgba(15,20,24,.85);color:#eceff1;border-radius:6px;
+  padding:3px 7px;font:700 11.5px 'Poppins',sans-serif;letter-spacing:.4px;
+  pointer-events:none;
+}
+.card .where-tag{
+  position:absolute;top:6px;left:6px;z-index:2;
+  background:rgba(198,40,40,.92);color:#fff;border-radius:6px;
+  padding:2px 6px;font:700 10px 'Poppins',sans-serif;letter-spacing:.6px;text-transform:uppercase;
+  pointer-events:none;max-width:calc(100% - 12px);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.card .type-tag{
+  position:absolute;top:6px;right:6px;z-index:2;
+  background:rgba(21,101,192,.92);color:#fff;border-radius:6px;
+  padding:2px 6px;font:700 10px 'Poppins',sans-serif;letter-spacing:.6px;
+  pointer-events:none;
+}
+#toast{
+  position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:120;
+  background:#263238;color:#eceff1;border-radius:8px;padding:10px 18px;
+  font:700 13px 'Poppins',sans-serif;letter-spacing:.5px;
+  box-shadow:0 4px 14px rgba(0,0,0,.5);opacity:0;pointer-events:none;
+  transition:opacity .25s;
+}
+#toast.show{opacity:1}
+#toast.err{background:#b71c1c}
+/* The loading readout (#status), the top bar (#topbar) and the placeholder
+   tiles (.skel) are declared in the CRITICAL CSS block at the top of <head>
+   so they paint in the first frame. Don't re-declare them here -- these rules
+   would win and the old full-page cover would come back. */
+#mobileFilterBtn{
+  display:none;margin:12px 12px 0;padding:12px;border:none;border-radius:8px;
+  background:var(--pill);color:var(--pill-text);cursor:pointer;
+  font:700 13px 'Poppins',sans-serif;letter-spacing:1.2px;text-transform:uppercase;
+}
+body.filtersOpen #mobileFilterBtn{background:var(--accent);color:#fff}
+@media(max-width:900px){
+  #grid{grid-template-columns:repeat(4,1fr);gap:7px}
+}
+@media(max-width:760px){
+  #app{flex-direction:column;align-items:stretch}
+  #mobileFilterBtn{display:block;flex:none}
+  #sidebar{display:none;width:100%;min-width:0;height:auto;max-height:55%;flex:none}
+  body.filtersOpen #sidebar{display:block}
+  #main{width:100%;flex:1;min-height:0;padding:12px 8px 12px}
+  #grid{grid-template-columns:repeat(4,1fr);gap:7px}
+}
+</style>
+<!-- Favicon: the avatar, at the sizes browsers actually ask for. Served from
+     /assets/ so they are cached immutably alongside the nav mark. -->
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png">
+<link rel="icon" type="image/png" sizes="96x96" href="/assets/favicon-96.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/assets/favicon-180.png"></head>
+<body>
+<!-- ==== SHARED NAV =========================================================
+     Google Sites drew this bar; on Netlify the pages own it. Inlined rather
+     than pulled from a stylesheet so it paints in the first frame with no
+     extra round trip -- it is under 1KB and never changes independently.
+     ==================================================================== -->
+<style>
+:root{--dd-nav-h:52px}
+.dd-nav{position:fixed;top:0;left:0;right:0;height:var(--dd-nav-h);z-index:150;
+  display:flex;align-items:center;gap:4px;padding:0 18px;background:#000;
+  border-bottom:1px solid #23292e;
+  font-family:'Poppins','Segoe UI',system-ui,sans-serif;font-weight:700}
+.dd-brand{display:flex;align-items:center;gap:9px;margin-right:22px;flex:0 0 auto;
+  color:#fff;text-decoration:none;font-size:16px;letter-spacing:.6px;white-space:nowrap}
+/* Transparent PNG, so it needs no plate behind it -- it sits straight on the
+   bar. object-fit:contain keeps the whole avatar rather than cropping the
+   popcorn out of the bottom-left corner. */
+.dd-brand-img{width:32px;height:32px;flex:0 0 auto;object-fit:contain}
+.dd-links{display:flex;align-items:center;gap:2px;overflow-x:auto;
+  scrollbar-width:none;-ms-overflow-style:none}
+.dd-links::-webkit-scrollbar{display:none}
+.dd-links a{color:#eceff1;text-decoration:none;font-size:15px;letter-spacing:.3px;
+  padding:8px 13px;border-radius:6px;white-space:nowrap;
+  transition:color .12s ease,background .12s ease}
+.dd-links a:hover{color:#fff;background:#1b2126}
+.dd-links a[aria-current=page]{color:#ef5350}
+.dd-links a[aria-current=page]:hover{background:transparent}
+/* Everything the pages already draw starts below the bar. */
+body{padding-top:var(--dd-nav-h);box-sizing:border-box}
+/* The loading toast is fixed near the top and would sit under the bar. */
+#status{top:calc(var(--dd-nav-h) + 20px)!important}
+@media(max-width:760px){
+  :root{--dd-nav-h:46px}
+  .dd-nav{padding:0 10px}
+  .dd-brand{margin-right:12px;font-size:14px}
+  .dd-brand-img{width:27px;height:27px}
+  .dd-links a{font-size:13.5px;padding:7px 9px}
+}
+</style><nav class="dd-nav">
+  <a class="dd-brand" href="/">
+    <img class="dd-brand-img" src="/assets/brand-64.png"
+         srcset="/assets/brand-64.png 1x, /assets/brand-128.png 2x"
+         width="30" height="30" alt="" decoding="async">
+    Donny's Digital
+  </a>
+  <div class="dd-links">
+    <a href="/">Movies</a>
+    <a href="/wishlist">Wishlist</a>
+    <a href="/data">Data</a>
+    <a href="/sales">Sales</a>
+    <a href="/ma-compare" aria-current="page">MA Compare</a>
+    <a href="/d2d">D2D</a>
+  </div>
+</nav>
+<!-- Paints in the very first frame, before any data exists. -->
+<div id="topbar" class="indet"><div id="topfill"></div></div>
+<div id="app">
+  <button id="mobileFilterBtn">&#9776; Filters &amp; search</button>
+  <aside id="sidebar">
+    <button id="sbCollapse">&#10094; Hide filters</button>
+    <input id="searchBox" type="search" placeholder="Title search" autocomplete="off">
+    <div id="sortWrap">
+      <select id="sortSel" title="Sort titles">
+        <option value="sortTitle|asc" selected>Sort: Title A → Z</option>
+        <option value="sortTitle|desc">Sort: Title Z → A</option>
+        <option value="price|asc">Sort: Best price (low)</option>
+        <option value="price|desc">Sort: Best price (high)</option>
+        <option value="tomato|desc">Sort: Rotten Tomatoes (high)</option>
+        <option value="imdb|desc">Sort: IMDb (high)</option>
+        <option value="year|desc">Sort: Year (newest)</option>
+        <option value="year|asc">Sort: Year (oldest)</option>
+      </select>
+    </div>
+    <div id="facets"></div>
+    <div id="sliders"></div>
+    <button id="resetAll">Reset all filters</button>
+  </aside>
+  <button id="sbExpand" title="Show filters">&#9776;</button>
+  <main id="main">
+    <div class="pagerBar" id="pagerTop">
+      <button class="pg-arrow" id="prevPg" title="Previous page">&#10094;</button>
+      <div class="pg-label" id="pgLabel">–</div>
+      <button class="pg-arrow" id="nextPg" title="Next page">&#10095;</button>
+    </div>
+    <div id="grid"></div>
+    <script>
+    /* Placeholder tiles, written during HTML parse so the grid reads as
+       "filling in" rather than as a dead rectangle. The first renderPage()
+       replaces them wholesale. */
+    (function(){var g=document.getElementById('grid'),h='',i=0;for(;i<60;i++)h+='<div class="skel"></div>';g.innerHTML=h;})();
+    </script>
+    <button class="pgRail" id="railPrev" title="Previous page" style="display:none">
+      <span>&#10094;</span><span>&#10094;</span><span>&#10094;</span>
+    </button>
+    <button class="pgRail" id="railNext" title="Next page" style="display:none">
+      <span>&#10095;</span><span>&#10095;</span><span>&#10095;</span>
+    </button>
+    <div class="pagerBar" id="pagerBottom">
+      <button class="pg-arrow" id="prevPg2" title="Previous page">&#10094;</button>
+      <div class="pg-label" id="pgLabel2">–</div>
+      <button class="pg-arrow" id="nextPg2" title="Next page">&#10095;</button>
+    </div>
+  </main>
+</div>
+<div id="status"><div class="spin"></div><div id="statusTxt">Loading titles…</div></div>
+<div id="toast"></div>
+<script>
+/* ================= CONFIGURATION =================
+   The sheet id / gid / header-rows live in the tiny inline script in
+   <head> (window.__SHEET) so the download can start before anything else
+   on the page — edit them there. */
+const SHEET_ID = window.__SHEET.id;
+const GID = window.__SHEET.gid;
+const MA_BASE = 'https://www.moviesanywhere.com';
+// PERF: parsed rows are cached so a revisit renders instantly while a fresh
+// copy downloads in the background; if the data changed, the grid silently
+// updates (keeping your filters, sliders, and page).
+//
+// This uses localStorage now rather than sessionStorage. sessionStorage is
+// wiped the moment the tab closes, so it only ever helped a reload -- every
+// real visit was still a cold wait. localStorage survives, which makes coming
+// back to the page instant. ~130 rows is a few tens of KB, well inside quota.
+const CACHE_KEY = 'maCompare:v2:' + SHEET_ID + ':' + GID;
+const CACHE_TTL = 6 * 60 * 60 * 1000;   // 6h; fresh data still loads behind it
+// Fixed column positions (0-based, A=0), confirmed directly against the sheet.
+// Column A is a small Google-cached =IMAGE() thumbnail (not link text), so the
+// outbound link is built from the MA ID page path in column P instead. Columns
+// C and E are both labeled "Quality" (owned quality / best-available quality),
+// so we read them by position rather than by header text.
+// Column P ("MA ID") holds the relative page path, e.g. "/movie/<slug>".
+// Column Q holds the full poster URL, e.g.
+//   https://images.moviesanywhere.com/<hash>/<uuid>.webp?h=375&resize=fit&w=250
+const COL = {
+  owned:1, ownedQ:2, md2d:3, bestQ:4, title:5, year:6,
+  vudu:7, itunes:8, gplay:9, amazon:10, studio:11, tomato:12, imdb:13,
+  vuduId:14, maId:15, imgRaw:16,   // vuduId currently unused
+};
+const RETAILERS = [
+  {key:'vudu',   label:'Vudu'},
+  {key:'itunes', label:'iTunes'},
+  {key:'gplay',  label:'Google Play'},
+  {key:'amazon', label:'Amazon'},
+];
+// Covers per page adapts to the layout so every row is full
+let PER_PAGE = 150;
+const mobileMq = window.matchMedia('(max-width:760px)');
+function syncPerPage(){
+  const firstShown = page * PER_PAGE;
+  PER_PAGE = mobileMq.matches ? 148
+           : document.body.classList.contains('sbCollapsed') ? 180
+           : 150;
+  page = Math.floor(firstShown / PER_PAGE);
+}
+(mobileMq.addEventListener ? mobileMq.addEventListener('change', ()=>{ syncPerPage(); if(items.length) renderPage(); })
+                           : mobileMq.addListener(()=>{ syncPerPage(); if(items.length) renderPage(); }));
+/* ================================================= */
+const FACETS = [
+  {label:'Owned',         key:'owned'},
+  {label:'Owned Quality', key:'ownedQ'},
+  {label:'MD2D',          key:'md2d'},
+  {label:'Best Quality',  key:'bestQ'},
+  {label:'Studio',        key:'studio'},
+  // Pricing filters: discrete dollar-amount checkboxes (like Owned), not
+  // ranges. numeric:true sorts the options $ low → high instead of lexically.
+  {label:'Best Price',        key:'priceBand',  numeric:true},
+  {label:'Vudu Price',        key:'vuduBand',   numeric:true},
+  {label:'iTunes Price',      key:'itunesBand', numeric:true},
+  {label:'Google Play Price', key:'gplayBand',  numeric:true},
+  {label:'Amazon Price',      key:'amazonBand', numeric:true},
+];
+const SLIDERS = [
+  {label:'Year',           key:'year',   min:1920, max:2026, step:1},
+  {label:'Rotten Tomatoes',key:'tomato', min:0, max:100, step:1},
+  {label:'IMDb',           key:'imdb',   min:0, max:10,  step:0.1},
+];
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let items=[], filtered=[], page=0;
+const selected={}, rangeState={}, facetValues={};
+function toast(msg,isErr=false){
+  const t=$('#toast'); t.textContent=msg;
+  t.className=isErr?'err show':'show';
+  setTimeout(()=>t.classList.remove('show'), isErr?5000:3000);
+}
+/* ---------- STATUS + TOP PROGRESS BAR ----------
+   #status is a chip at the top now, not a full-page cover, so the sidebar,
+   pager and grid are visible and usable from the first frame. */
+function setStatus(txt, spinning=true, isErr=false){
+  const s=$('#status');
+  if(txt===null){ s.classList.add('hidden'); return; }
+  s.classList.remove('hidden');
+  s.classList.toggle('err', isErr);
+  s.querySelector('.spin').style.display = spinning ? '' : 'none';
+  $('#statusTxt').textContent = txt;
+}
+const topbarEl=$('#topbar'), barFill=$('#topfill');
+let barPct=0;
+function setBar(p){
+  if(p==null){ topbarEl.classList.add('indet'); return; }
+  p=Math.max(0,Math.min(1,p));
+  if(p<barPct) return;                       // never let it run backwards
+  barPct=p;
+  topbarEl.classList.remove('indet');
+  barFill.style.width=(p*100).toFixed(1)+'%';
+}
+function barDone(){ topbarEl.classList.remove('indet'); barFill.style.width='100%'; topbarEl.classList.add('done'); }
+const fmtKB = b => b<1048576 ? Math.round(b/1024)+' KB' : (b/1048576).toFixed(1)+' MB';
+window.__MA_PROG(o=>{
+  if(o.stage==='connect'){ setStatus('Connecting to the sheet…'); setBar(null); }
+  else if(o.stage==='download'){
+    setStatus('Loading titles… '+fmtKB(o.bytes));
+    setBar(o.total ? Math.min(0.75, o.bytes/o.total*0.75) : null);
+  }
+  else if(o.stage==='retry'){ setStatus('Retrying without the row filter…'); setBar(null); }
+});
+/* ---------- LOAD DATA FROM GOOGLE SHEET ----------
+   The <head> script has (usually) already started this download; fetchGviz
+   consumes that in-flight response first. If a plain fetch is blocked by
+   CORS, we retry as JSONP (a <script> tag with a callback), which works for
+   any public sheet. */
+function gvizUrl(){
+  return window.__SHEET.urlFiltered || window.__SHEET.url;
+}
+/* ---------- CSV LOADING (optional fast path) ----------
+   Turns a published-CSV export into the same {table:{rows:[{c:[{v},...]}]}}
+   shape gviz returns, so parseRows() below doesn't need to know which
+   transport actually fetched the data. */
+function parseCsvText(text){
+  const rows=[]; let row=[], field='', inQuotes=false;
+  for(let i=0;i<text.length;i++){
+    const c=text[i];
+    if(inQuotes){
+      if(c==='"'){
+        if(text[i+1]==='"'){ field+='"'; i++; }
+        else inQuotes=false;
+      }else field+=c;
+    }else{
+      if(c==='"') inQuotes=true;
+      else if(c===',') { row.push(field); field=''; }
+      else if(c==='\r') { /* ignore; \n (below) ends the row */ }
+      else if(c==='\n') { row.push(field); rows.push(row); row=[]; field=''; }
+      else field+=c;
+    }
+  }
+  if(field!=='' || row.length){ row.push(field); rows.push(row); }
+  return rows;
+}
+function csvRowsToGvizJson(rows, headerRows){
+  const dataRows=rows.slice(headerRows||0);
+  return { table: { rows: dataRows.map(cols => ({
+    c: cols.map(v => (v===''||v==null) ? {v:null} : {v})
+  })) } };
+}
+async function fetchCsv(){
+  const url=window.__SHEET.csvUrl;
+  let txt=null;
+  // Reuse the request the <head> kicked off, if it's still available.
+  const early=window.__SHEET && window.__SHEET.early;
+  if(early){
+    window.__SHEET.early=null;           // one-shot; refreshes re-fetch
+    try{ txt=await early; }catch(e){ txt=null; }
+  }
+  if(txt==null){
+    const res=await fetch(url);
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    txt=await res.text();
+  }
+  const json=csvRowsToGvizJson(parseCsvText(txt), window.__SHEET.headers||1);
+  if(!json.table.rows.length) throw new Error('CSV had no data rows');
+  return json;
+}
+async function fetchGviz(url){
+  let txt=null;
+  // Reuse the request the <head> kicked off, if it's still available.
+  const early=window.__SHEET && window.__SHEET.early;
+  if(early){
+    window.__SHEET.early=null;           // one-shot; refreshes re-fetch
+    try{ txt=await early; }catch(e){ txt=null; }
+  }
+  if(txt==null){
+    const res=await fetch(url+'&tqx=out:json');
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    txt=await res.text();
+  }
+  const json=JSON.parse(txt.substring(txt.indexOf('(')+1, txt.lastIndexOf(')')));
+  if(json && json.status==='error')
+    throw new Error((json.errors&&json.errors[0]&&json.errors[0].detailed_message)||'sheet error');
+  return json;
+}
+function jsonpGviz(url){
+  return new Promise((resolve,reject)=>{
+    const cb='__gviz_cb_'+Math.random().toString(36).slice(2);
+    const timer=setTimeout(()=>{ cleanup(); reject(new Error('timed out')); },45000);
+    function cleanup(){ clearTimeout(timer); delete window[cb]; script.remove(); }
+    window[cb]=json=>{
+      cleanup();
+      if(json && json.status==='error'){
+        reject(new Error((json.errors&&json.errors[0]&&json.errors[0].detailed_message)||'sheet returned an error'));
+      } else resolve(json);
+    };
+    const script=document.createElement('script');
+    script.src=url+'&tqx=out:json;responseHandler:'+cb;
+    script.onerror=()=>{ cleanup(); reject(new Error('script blocked or sheet not public')); };
+    document.head.appendChild(script);
+  });
+}
+async function loadSheet(){
+  if(window.__SHEET.csvUrl){
+    try{ return await fetchCsv(); }
+    catch(e0){ /* fall through to gviz below -- the fetchGviz/jsonpGviz calls
+                  below still have their own early-response reuse via
+                  window.__SHEET.early, which fetchCsv() would have already
+                  consumed and released above if the CSV attempt got that far. */ }
+  }
+  try{ return await fetchGviz(gvizUrl()); }
+  catch(e1){
+    // JSONP on the filtered query, then on the plain tab as a last resort.
+    try{ return await jsonpGviz(gvizUrl()); }
+    catch(e2){ return await jsonpGviz(window.__SHEET.url); }
+  }
+}
+const clean=v=>String(v??'').trim();
+// Retailer price cells read like "$24.99 UHD" / "$9.99 SD" —
+// split into a number and a quality tier (rank: SD < HD/HDX < UHD/4K).
+function parsePriceCell(raw){
+  if(raw==null||raw==='') return null;
+  const s=String(raw);
+  const pm=s.match(/([0-9]+(?:\.[0-9]+)?)/);
+  if(!pm) return null;
+  const price=parseFloat(pm[1]);
+  const qm=s.match(/\b(UHD|4K|HDX|HD|SD)\b/i);
+  let tier=1, label='SD';
+  if(qm){
+    const q=qm[1].toUpperCase();
+    if(q==='UHD'||q==='4K'){ tier=3; label='4K UHD'; }
+    else if(q==='HDX'||q==='HD'){ tier=2; label='HD'; }
+    else { tier=1; label='SD'; }
+  }
+  return {price, tier, label};
+}
+// Owned/Owned-Quality display labels: the raw sheet values are terse
+// (blank, "FALSE", "SD", "HD"), so we translate them into labels that read
+// clearly as filter options.
+function ownedDisplay(raw){
+  const c=clean(raw);
+  if(c.toUpperCase()==='FALSE') return 'UNOWNED';
+  return c||'—';
+}
+function ownedQDisplay(raw){
+  const c=clean(raw);
+  const u=c.toUpperCase();
+  if(!c || c==='—') return 'UNOWNED';
+  if(u==='HD') return 'HD UPGRADEABLE';
+  if(u==='SD') return 'SD UPGRADEABLE';
+  return c;
+}
+function parseRows(json){
+  const out=[];
+  // Guard against the same title appearing more than once. The "Need to Add"
+  // tab is generated from other tabs, so a title can legitimately exist twice.
+  // We key on the MA ID page path (the most reliably unique field), falling
+  // back to the Vudu ID, then to title+year. First occurrence wins.
+  const seen=new Set();
+  (json.table.rows||[]).forEach(r=>{
+    const cell=i=>{ const c=r.c && r.c[i]; return c==null?null:(c.v==null?null:c.v); };
+    const title=clean(cell(COL.title));
+    if(!title) return;
+    // Skip anything already owned outright. "UPGRADE" (owned at a lower
+    // quality) and "FALSE" (not owned) still belong on a want-to-buy list.
+    const ownedRaw=cell(COL.owned);
+    if(String(ownedRaw).trim().toUpperCase()==='TRUE') return;
+    let yearN=cell(COL.year);
+    yearN=typeof yearN==='number'?yearN:parseInt(String(yearN??''),10);
+    let tomN=cell(COL.tomato);
+    tomN=typeof tomN==='number'?tomN:parseFloat(String(tomN??'').replace('%',''));
+    let imdbN=cell(COL.imdb);
+    imdbN=typeof imdbN==='number'?imdbN:parseFloat(String(imdbN??''));
+    // Gather each retailer's offer, find the highest quality tier available,
+    // then the cheapest price within that tier (ties broken by retailer order).
+    const offers=RETAILERS.map(rt=>{
+      const parsed=parsePriceCell(cell(COL[rt.key]));
+      return parsed?{...parsed, retailer:rt.label}:null;
+    }).filter(Boolean);
+    let best=null;
+    if(offers.length){
+      const maxTier=Math.max(...offers.map(o=>o.tier));
+      best=offers.filter(o=>o.tier===maxTier).reduce((a,b)=>b.price<a.price?b:a);
+    }
+    const bestQRaw=clean(cell(COL.bestQ));
+    const bestQ=bestQRaw==='4K'?'4K UHD':(bestQRaw||'—');
+    // ---- DEDUP CHECK ----
+    const maIdPath=clean(cell(COL.maId));
+    const vuduIdVal=clean(cell(COL.vuduId));
+    const dupKey = maIdPath || vuduIdVal || (title+'|'+(isNaN(yearN)?'':yearN));
+    if(seen.has(dupKey)) return;   // already have this title — skip the repeat
+    seen.add(dupKey);
+    // Column Q holds a complete image URL. Use it as-is; only backfill a
+    // scheme / extension / sizing params if a future pull leaves any off.
+    let img=clean(cell(COL.imgRaw));
+    if(img){
+      if(img.startsWith('//')) img='https:'+img;
+      else if(!/^https?:\/\//i.test(img)) img='https://'+img.replace(/^\/+/,'');
+      else img=img.replace(/^http:\/\//i,'https://');
+      const qi=img.indexOf('?');
+      let base=qi>=0?img.slice(0,qi):img;
+      const query=qi>=0?img.slice(qi+1):'';
+      if(!/\.(webp|jpe?g|png|avif)$/i.test(base)) base+='.webp';
+      img=base+'?'+(query||'h=375&resize=fit&w=250');
+    }
+    const item={
+      title,
+      sortTitle:title.replace(/^(the|a|an)\s+/i,'').toLowerCase(),
+      year:isNaN(yearN)?null:yearN,
+      owned:ownedDisplay(ownedRaw),
+      ownedQ:ownedQDisplay(cell(COL.ownedQ)),
+      md2d:clean(cell(COL.md2d))||'—',
+      bestQ,
+      studio:clean(cell(COL.studio))||'—',
+      tomato:isNaN(tomN)?null:(tomN>0&&tomN<=1?Math.round(tomN*100):tomN),
+      imdb:isNaN(imdbN)?null:imdbN,
+      price: best?best.price:null,
+      priceBand: best?('$'+best.price.toFixed(2)):null,
+      priceQuality: best?best.label:'',
+      retailer: best?best.retailer:'',
+      url: maIdPath?MA_BASE+maIdPath:'',
+      img,
+    };
+    RETAILERS.forEach(rt=>{
+      const p=parsePriceCell(cell(COL[rt.key]));
+      item[rt.key+'Price']=p?p.price:null;                 // numeric (kept for sorting/future use)
+      item[rt.key+'Band']=p?('$'+p.price.toFixed(2)):null; // string label for the price checkboxes
+    });
+    item.search=[item.title,item.studio,item.year].join(' ').toLowerCase();
+    out.push(item);
+  });
+  return out;
+}
+async function loadAll(){
+  const json=await loadSheet();
+  return parseRows(json);
+}
+/* ---------- FACET UI ---------- */
+function buildFacetValues(){
+  FACETS.forEach(f=>{
+    const counts=new Map();
+    items.forEach(m=>{
+      const vals=f.csv?m[f.key]:[m[f.key]].filter(Boolean);
+      vals.forEach(v=>{
+        // MD2D's "—" placeholder (no MD2D status) is noise, not a useful
+        // filter option, so it's excluded here rather than shown as a choice.
+        if(f.key==='md2d' && v==='—') return;
+        counts.set(v,(counts.get(v)||0)+1);
+      });
+    });
+    facetValues[f.key]=[...counts.entries()].sort(f.numeric
+      ? (a,b)=>(parseFloat(a[0].replace(/[^0-9.]/g,''))||0)-(parseFloat(b[0].replace(/[^0-9.]/g,''))||0)
+      : (a,b)=>a[0].localeCompare(b[0]));
+    if(!selected[f.key]) selected[f.key]=new Set();
+    // Drop any previously-selected value that no longer exists in the data
+    // (matters when a background refresh replaces the catalog).
+    selected[f.key]=new Set([...selected[f.key]].filter(v=>counts.has(v)));
+  });
+}
+function buildFacets(){
+  const host=$('#facets'); host.innerHTML='';
+  FACETS.forEach(f=>{
+    const el=document.createElement('div');
+    el.className='facet'; el.dataset.key=f.key;
+    const many=facetValues[f.key].length>12;
+    el.innerHTML=`
+      <button class="facet-btn">
+        <span>${esc(f.label)}</span>
+        <span class="count-badge" style="display:none">0</span>
+        <span class="icon">${many?'+':'▾'}</span>
+      </button>
+      <div class="facet-panel">
+        ${facetValues[f.key].length>10?'<input class="opt-search" placeholder="Search…">':''}
+        <div class="opt-list"></div>
+        <button class="facet-clear">Clear</button>
+      </div>`;
+    host.appendChild(el);
+    const list=el.querySelector('.opt-list');
+    const search=el.querySelector('.opt-search');
+    const render=(q='')=>{
+      const ql=q.toLowerCase();
+      const itemsF=facetValues[f.key].filter(([v])=>!ql||v.toLowerCase().includes(ql));
+      const shown=itemsF.slice(0,250);
+      list.innerHTML=shown.map(([v,n])=>`
+        <label><input type="checkbox" value="${esc(v)}" ${selected[f.key].has(v)?'checked':''}>
+        <span>${esc(v)}</span><span class="n">${n}</span></label>`).join('')
+        +(itemsF.length>250?`<div class="opt-more">${itemsF.length-250} more — type to narrow down</div>`:'');
+    };
+    el.querySelector('.facet-btn').addEventListener('click',()=>{
+      const was=el.classList.contains('open');
+      document.querySelectorAll('.facet.open').forEach(x=>x.classList.remove('open'));
+      if(!was){ el.classList.add('open'); render(search?search.value:''); if(search) search.focus(); }
+    });
+    if(search) search.addEventListener('input',()=>render(search.value));
+    list.addEventListener('change',e=>{
+      if(e.target.type!=='checkbox') return;
+      const v=e.target.value;
+      e.target.checked?selected[f.key].add(v):selected[f.key].delete(v);
+      updateBadge(el,f.key); applyFilters();
+    });
+    el.querySelector('.facet-clear').addEventListener('click',()=>{
+      selected[f.key].clear(); render(search?search.value:''); updateBadge(el,f.key); applyFilters();
+    });
+    // Keep the badge correct if this is a rebuild with selections intact.
+    updateBadge(el,f.key);
+  });
+  if(!buildFacets._outsideBound){
+    document.addEventListener('click',e=>{
+      if(!e.target.closest('.facet')) document.querySelectorAll('.facet.open').forEach(x=>x.classList.remove('open'));
+    });
+    buildFacets._outsideBound=true;
+  }
+}
+function updateBadge(el,key){
+  const b=el.querySelector('.count-badge'), n=selected[key].size;
+  b.style.display=n?'inline-block':'none'; b.textContent=n;
+}
+/* ---------- SLIDERS ---------- */
+// preserve=true keeps the user's current lo/hi (clamped to the possibly
+// new min/max) instead of resetting — used when a background refresh
+// rebuilds the sidebar under the user.
+function buildSliders(preserve){
+  const host=$('#sliders'); host.innerHTML='';
+  SLIDERS.forEach(s=>{
+    const prev=preserve?rangeState[s.key]:null;
+    const vals=items.map(m=>m[s.key]).filter(v=>v!=null);
+    if(vals.length){
+      s.min=Math.floor(Math.min(s.min,...vals));
+      s.max=Math.ceil(Math.max(s.max,...vals));
+    }
+    let startLo=s.min, startHi=s.max;
+    if(prev){
+      startLo=Math.max(s.min,Math.min(s.max,prev.lo));
+      startHi=Math.max(s.min,Math.min(s.max,prev.hi));
+    }
+    rangeState[s.key]={lo:startLo,hi:startHi};
+    const el=document.createElement('div');
+    el.className='slider-group';
+    el.innerHTML=`
+      <div class="sl-title">${esc(s.label)}</div>
+      <div class="range-wrap">
+        <div class="rail"></div><div class="fill"></div>
+        <input type="range" class="lo" min="${s.min}" max="${s.max}" step="${s.step}" value="${startLo}">
+        <input type="range" class="hi" min="${s.min}" max="${s.max}" step="${s.step}" value="${startHi}">
+      </div>
+      <div class="sl-vals">
+        <input class="v-lo" type="number" min="${s.min}" max="${s.max}" step="${s.step}" value="${startLo}" title="Type a value">
+        <input class="v-hi" type="number" min="${s.min}" max="${s.max}" step="${s.step}" value="${startHi}" title="Type a value">
+      </div>`;
+    host.appendChild(el);
+    const lo=el.querySelector('.lo'), hi=el.querySelector('.hi'),
+          fill=el.querySelector('.fill'), vlo=el.querySelector('.v-lo'), vhi=el.querySelector('.v-hi');
+    const paint=()=>{
+      const a=+lo.value,b=+hi.value;
+      let mn=Math.min(a,b),mx=Math.max(a,b);
+      if(mn < s.min + s.step/2) mn = s.min;
+      if(mx > s.max - s.step/2) mx = s.max;
+      rangeState[s.key]={lo:mn,hi:mx};
+      const pct=v=>(v-s.min)/(s.max-s.min)*100;
+      fill.style.left=pct(mn)+'%'; fill.style.width=(pct(mx)-pct(mn))+'%';
+      vlo.value=mn; vhi.value=mx;
+    };
+    paint();
+    let t;
+    const onInput=()=>{ paint(); clearTimeout(t); t=setTimeout(applyFilters,150); };
+    lo.addEventListener('input',onInput); hi.addEventListener('input',onInput);
+    const manual=(inputEl,rangeEl)=>{
+      let v=parseFloat(inputEl.value);
+      if(isNaN(v)){ paint(); return; }
+      v=Math.max(s.min,Math.min(s.max,v));
+      rangeEl.value=v;
+      paint(); applyFilters();
+    };
+    vlo.addEventListener('change',()=>manual(vlo,lo));
+    vhi.addEventListener('change',()=>manual(vhi,hi));
+    vlo.addEventListener('keydown',e=>{ if(e.key==='Enter') vlo.blur(); });
+    vhi.addEventListener('keydown',e=>{ if(e.key==='Enter') vhi.blur(); });
+    s._reset=()=>{ lo.value=s.min; hi.value=s.max; paint(); };
+  });
+}
+/* ---------- FILTER + SORT + RENDER ---------- */
+function applyFilters(){
+  const q=$('#searchBox').value.trim().toLowerCase();
+  filtered=items.filter(m=>{
+    if(q && !m.search.includes(q)) return false;
+    for(const f of FACETS){
+      const sel=selected[f.key]; if(!sel.size) continue;
+      const vals=f.csv?m[f.key]:[m[f.key]];
+      if(!vals.some(v=>sel.has(v))) return false;
+    }
+    for(const s of SLIDERS){
+      const r=rangeState[s.key];
+      if(r.lo>s.min || r.hi<s.max){
+        const v=m[s.key];
+        if(v==null || v<r.lo || v>r.hi) return false;
+      }
+    }
+    return true;
+  });
+  sortItems();
+  page=0;
+  renderPage();
+}
+function sortItems(){
+  const [key,dir]=$('#sortSel').value.split('|');
+  const mul=dir==='asc'?1:-1;
+  filtered.sort((a,b)=>{
+    if(key==='sortTitle'){
+      const x=a.sortTitle,y=b.sortTitle;
+      return mul*(x<y?-1:x>y?1:0);
+    }
+    const x=a[key], y=b[key];
+    if(x==null&&y==null) return 0;
+    if(x==null) return 1;
+    if(y==null) return -1;
+    return mul*(x-y);
+  });
+}
+function renderPage(){
+  const total=filtered.length;
+  const pages=Math.max(1,Math.ceil(total/PER_PAGE));
+  page=Math.min(page,pages-1);
+  const start=page*PER_PAGE, end=Math.min(start+PER_PAGE,total);
+  const label= total? `${start+1} - ${end} / ${total}` : '0 results';
+  $('#pgLabel').textContent=label; $('#pgLabel2').textContent=label;
+  const atFirst=page===0, atLast=page>=pages-1;
+  $('#prevPg').disabled=atFirst;  $('#nextPg').disabled=atLast;
+  $('#prevPg2').disabled=atFirst; $('#nextPg2').disabled=atLast;
+  $('#railPrev').style.display=atFirst?'none':'flex';
+  $('#railNext').style.display=atLast?'none':'flex';
+  const grid=$('#grid');
+  // The first ~20 covers load eagerly with a high fetch priority so the top of
+  // the grid fills straight away; the rest stay lazy. decoding="async" keeps
+  // poster decode work off the main thread so scrolling/paging stays smooth.
+  grid.innerHTML=filtered.slice(start,end).map((m,i)=>{
+    const tip=`${m.title}${m.year?' ('+m.year+')':''}${m.retailer?' — cheapest at '+m.retailer:''}`;
+    return `
+    <a class="card" href="${esc(m.url)||'#'}" target="_blank" rel="noopener"
+       title="${esc(tip)}">
+      ${m.img?`<img loading="${i<20?'eager':'lazy'}" ${i<10?'fetchpriority="high"':''} decoding="async"
+        width="250" height="375" src="${esc(m.img)}"
+        onerror="this.remove();this.parentNode.insertAdjacentHTML('afterbegin','<div class=ph>${esc(m.title).replace(/'/g,'&#39;')}</div>')">`
+        :`<div class="ph">${esc(m.title)}</div>`}
+      ${m.retailer?`<span class="where-tag">${esc(m.retailer)}</span>`:''}
+      ${m.price!=null?`<span class="price-tag">$${m.price.toFixed(2)}${m.priceQuality?' '+m.priceQuality:''}</span>`:''}
+    </a>`;
+  }).join('');
+}
+function toTop(){
+  $('#grid').scrollTop=0;
+  $('#pagerTop').scrollIntoView({behavior:'smooth', block:'start'});
+}
+function goPrev(){ if(page>0){ page--; renderPage(); toTop(); } }
+function goNext(){ page++; renderPage(); toTop(); }
+$('#prevPg').addEventListener('click',goPrev);   $('#nextPg').addEventListener('click',goNext);
+$('#prevPg2').addEventListener('click',goPrev);  $('#nextPg2').addEventListener('click',goNext);
+$('#railPrev').addEventListener('click',goPrev); $('#railNext').addEventListener('click',goNext);
+let searchTimer;
+$('#searchBox').addEventListener('input',()=>{ clearTimeout(searchTimer); searchTimer=setTimeout(applyFilters,200); });
+$('#sortSel').addEventListener('change',()=>{ sortItems(); page=0; renderPage(); });
+$('#resetAll').addEventListener('click',()=>{
+  $('#searchBox').value='';
+  FACETS.forEach(f=>selected[f.key].clear());
+  document.querySelectorAll('.facet').forEach(el=>updateBadge(el,el.dataset.key));
+  SLIDERS.forEach(s=>s._reset&&s._reset());
+  applyFilters();
+});
+$('#mobileFilterBtn').addEventListener('click',()=>document.body.classList.toggle('filtersOpen'));
+$('#sbCollapse').addEventListener('click',()=>{ document.body.classList.add('sbCollapsed'); syncPerPage(); renderPage(); });
+$('#sbExpand').addEventListener('click',()=>{ document.body.classList.remove('sbCollapsed'); syncPerPage(); renderPage(); });
+/* ---------- CACHE ----------
+   localStorage first (survives the tab closing), sessionStorage as a fallback
+   for embeds where localStorage is blocked. */
+function cacheStores(){
+  const out=[];
+  try{ if(window.localStorage) out.push(window.localStorage); }catch(e){}
+  try{ if(window.sessionStorage) out.push(window.sessionStorage); }catch(e){}
+  return out;
+}
+function readCache(){
+  for(const store of cacheStores()){
+    try{
+      const raw=store.getItem(CACHE_KEY);
+      if(!raw) continue;
+      const c=JSON.parse(raw);
+      if(!c || !Array.isArray(c.d) || !c.d.length) continue;
+      if(Date.now()-c.t > CACHE_TTL) continue;
+      return c.d;
+    }catch(e){ /* try the next store */ }
+  }
+  return null;
+}
+function writeCache(list){
+  const idle = window.requestIdleCallback || (f=>setTimeout(f,1));
+  idle(()=>{
+    let payload;
+    try{ payload=JSON.stringify({t:Date.now(), d:list}); }catch(e){ return; }
+    for(const store of cacheStores()){
+      try{ store.setItem(CACHE_KEY, payload); return; }catch(e){}
+    }
+  });
+}
+/* ---------- BOOT ----------
+   Order of operations for the fastest possible first paint:
+   1. If there are cached rows, render them IMMEDIATELY (no network wait) and
+      hide the spinner.
+   2. Await the sheet download (already in flight since <head>).
+   3. First visit: render fresh data as soon as it lands.
+      Revisit: if the fresh data differs from the cache, swap it in silently,
+      preserving the user's filters, sliders, and current page. */
+(async function(){
+  syncPerPage();
+  let cached=readCache();
+  if(cached && cached.length){
+    items=cached;
+    buildFacetValues(); buildFacets(); buildSliders();
+    applyFilters();
+    setStatus('Checking for updates…');
+    setBar(0.4);
+  }
+  try{
+    const fresh=await loadAll();
+    if(!fresh.length) throw new Error('No rows found — is the sheet shared as "Anyone with the link"?');
+    setBar(0.9);
+    const freshStr=JSON.stringify(fresh);
+    if(!cached || !cached.length){
+      items=fresh;
+      buildFacetValues(); buildFacets(); buildSliders();
+      applyFilters();
+    }else if(freshStr!==JSON.stringify(items)){
+      const keepPage=page;
+      items=fresh;
+      buildFacetValues(); buildFacets(); buildSliders(true);
+      applyFilters();          // resets to page 0 internally…
+      page=keepPage;           // …so restore it (renderPage clamps if needed)
+      renderPage();
+      toast('Catalog updated with the latest sheet data');
+    }
+    writeCache(fresh);
+    setBar(1); barDone(); setStatus(null);
+    console.info(`[ma] ${fresh.length} titles`);
+  }catch(err){
+    barDone();
+    if(!cached || !cached.length){
+      setStatus('Could not load the sheet: '+err.message, false, true);
+    }else{
+      setStatus(null);
+      toast('Could not refresh the sheet — showing cached data', true);
+    }
+  }
+})();
+</script>
+</body>
+</html>

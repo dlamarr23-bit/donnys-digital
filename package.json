@@ -1,0 +1,8 @@
+{
+  "name": "donnys-digital",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build-data.mjs"
+  }
+}

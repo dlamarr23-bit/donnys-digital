@@ -1,0 +1,1586 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Donny's Sales</title>
+<link rel="preconnect" href="https://docs.google.com" crossorigin>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://images2.vudu.com" crossorigin>
+<link rel="preconnect" href="https://i0.wp.com" crossorigin>
+<!-- Fonts no longer block the first paint (media=print flips to all on load). -->
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@700&display=swap"
+      rel="stylesheet" media="print" onload="this.media='all'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=Poppins:wght@700&display=swap" rel="stylesheet"></noscript>
+
+<style>
+/* ============ CRITICAL CSS ============
+   Only the loading indicator, inlined ahead of everything else so the bar and
+   spinner are on screen in the first painted frame -- before the main
+   stylesheet, the fonts, or a single tab of data. */
+html,body{margin:0;padding:0;background:#171C20}
+#topbar{position:fixed;top:0;left:0;right:0;height:3px;z-index:200;
+  background:rgba(255,255,255,.09);overflow:hidden}
+#topbar.done{opacity:0;transition:opacity .4s .25s}
+#topfill{height:100%;width:0;background:linear-gradient(90deg,#8e1f1f,#c62828,#ef5350);
+  transition:width .3s ease-out}
+#topbar.indet #topfill{width:38%;animation:ddslide 1.15s ease-in-out infinite}
+@keyframes ddslide{0%{transform:translateX(-110%)}100%{transform:translateX(275%)}}
+#status{position:fixed;top:23px;left:50%;transform:translateX(-50%);z-index:201;
+  display:flex;flex-direction:row;gap:10px;align-items:center;
+  background:#263238;border-radius:20px;padding:8px 17px 8px 13px;
+  font:700 12.5px 'Poppins','Segoe UI',system-ui,sans-serif;letter-spacing:.5px;color:#cfd8dc;
+  box-shadow:0 4px 16px rgba(0,0,0,.55);max-width:min(92vw,520px)}
+#status.hidden{display:none}
+#status.err{background:#b71c1c;color:#fff;border-radius:10px}
+.spin{width:15px;height:15px;border:2px solid rgba(255,255,255,.22);border-top-color:#fff;
+  border-radius:50%;animation:sp .8s linear infinite;flex:none}
+@keyframes sp{to{transform:rotate(360deg)}}
+.skel{border-radius:6px;height:0;padding-bottom:150%;background:#1f262b;
+  animation:ddpulse 1.5s ease-in-out infinite}
+@keyframes ddpulse{0%,100%{opacity:.5}50%{opacity:.92}}
+@media(prefers-reduced-motion:reduce){
+  .spin,.skel{animation:none}
+  #topbar.indet #topfill{animation:none;width:100%}
+}
+</style>
+
+<style>
+:root{
+  --bg:#171C20;
+  --bg-soft:#1f262b;
+  --pill:#ffffff;
+  --pill-text:#37474f;
+  --bar:#8a9096;
+  --bar-text:#ffffff;
+  --accent:#c62828;
+  --track:#4a565e;
+  --track-fill:#eceff1;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg)}
+html{scrollbar-width:none;-ms-overflow-style:none}
+html::-webkit-scrollbar,body::-webkit-scrollbar{display:none}
+body{
+  background:var(--bg);
+  font-family:'Poppins','Segoe UI',sans-serif;
+  font-weight:700;
+  color:#eceff1;
+  overflow:hidden;
+}
+/* One typeface, one weight, everywhere. Form controls don't inherit font by
+   default, so they're named explicitly rather than left to the UA stylesheet. */
+body, input, select, textarea, button, optgroup, option{
+  font-family:'Poppins','Segoe UI',sans-serif;
+  font-weight:700;
+}
+#app{display:flex;height:100%}
+/* ---------- SIDEBAR ---------- */
+#sidebar{
+  width:250px;min-width:250px;
+  padding:16px 12px 30px 14px;
+  height:100%;
+  overflow-y:auto;
+  scrollbar-width:thin;scrollbar-color:#4a565e transparent;
+}
+#sidebar::-webkit-scrollbar{width:6px}
+#sidebar::-webkit-scrollbar-thumb{background:#4a565e;border-radius:3px}
+#searchBox{
+  width:100%;padding:9px 12px;border:none;border-radius:6px;
+  font:700 13.5px 'Poppins',sans-serif;color:var(--pill-text);
+  margin-bottom:12px;outline:none;
+}
+#searchBox::placeholder{color:#78909c}
+.facet{position:relative;margin-bottom:10px}
+.facet-btn{
+  width:100%;display:flex;align-items:center;justify-content:space-between;
+  background:var(--pill);color:var(--pill-text);
+  border:none;border-radius:8px;padding:10px 14px;cursor:pointer;
+  font:700 12.5px 'Poppins',sans-serif;letter-spacing:1.2px;text-transform:uppercase;
+  transition:box-shadow .15s;
+}
+.facet-btn:hover{box-shadow:0 0 0 2px rgba(255,255,255,.25)}
+.facet-btn .icon{font-size:13px;color:#607d8b;transition:transform .2s}
+.facet.open .facet-btn .icon{transform:rotate(180deg)}
+.facet-btn .count-badge{
+  background:var(--accent);color:#fff;border-radius:10px;
+  font-size:10px;padding:1px 7px;margin-left:auto;margin-right:8px;
+}
+.facet-panel{
+  display:none;position:relative;z-index:30;
+  background:#fff;border-radius:8px;margin-top:5px;
+  box-shadow:0 8px 22px rgba(0,0,0,.45);
+  padding:8px;color:var(--pill-text);
+}
+.facet.open .facet-panel{display:block}
+.facet-panel input.opt-search{
+  width:100%;padding:6px 9px;margin-bottom:6px;
+  border:1px solid #cfd8dc;border-radius:5px;font:700 12.5px 'Poppins',sans-serif;outline:none;
+}
+.opt-list{max-height:240px;overflow-y:auto;scrollbar-width:thin}
+.opt-list label{
+  display:flex;align-items:center;gap:8px;
+  font:700 13px 'Poppins',sans-serif;padding:5px 6px;border-radius:4px;cursor:pointer;
+}
+.opt-list label:hover{background:#eceff1}
+.opt-list input{accent-color:var(--accent)}
+.opt-list .n{margin-left:auto;color:#90a4ae;font-size:11px}
+.opt-more{font-size:11px;color:#90a4ae;padding:5px 6px}
+.facet-clear{
+  display:block;width:100%;margin-top:6px;padding:6px;
+  background:#eceff1;border:none;border-radius:5px;cursor:pointer;
+  font:700 11px 'Poppins',sans-serif;letter-spacing:1px;text-transform:uppercase;color:#546e7a;
+}
+.facet-clear:hover{background:#cfd8dc}
+#quickFilters{
+  background:var(--pill);border-radius:8px;padding:4px 10px;margin-bottom:10px;
+}
+#quickFilters .quick-check{
+  display:flex;align-items:center;gap:8px;padding:8px 2px;cursor:pointer;
+  font:700 12px 'Poppins',sans-serif;letter-spacing:.8px;text-transform:uppercase;color:var(--pill-text);
+}
+#quickFilters .quick-check:first-child{border-bottom:1px solid #eceff1}
+#quickFilters .quick-check input{accent-color:var(--accent);width:15px;height:15px;cursor:pointer}
+/* sort */
+#sortWrap select{
+  width:100%;background:var(--pill);color:var(--pill-text);
+  border:none;border-radius:8px;padding:10px 12px;cursor:pointer;
+  font:700 12.5px 'Poppins',sans-serif;letter-spacing:1.2px;text-transform:uppercase;
+  margin-bottom:10px;outline:none;
+}
+/* sliders */
+.slider-group{margin:22px 4px 6px;text-align:center}
+.slider-group .sl-title{
+  font:700 13px 'Poppins',sans-serif;letter-spacing:1.6px;text-transform:uppercase;
+  color:#eceff1;margin-bottom:10px;
+}
+.range-wrap{position:relative;height:22px}
+.range-wrap .rail{
+  position:absolute;top:9px;left:0;right:0;height:3px;border-radius:2px;background:var(--track);
+}
+.range-wrap .fill{
+  position:absolute;top:9px;height:3px;border-radius:2px;background:var(--track-fill);
+}
+.range-wrap input[type=range]{
+  position:absolute;top:0;left:0;width:100%;height:22px;
+  -webkit-appearance:none;appearance:none;background:transparent;pointer-events:none;margin:0;
+}
+.range-wrap input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;appearance:none;pointer-events:auto;
+  width:14px;height:14px;border-radius:50%;background:#fff;
+  border:none;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.5);
+}
+.range-wrap input[type=range]::-moz-range-thumb{
+  pointer-events:auto;width:14px;height:14px;border-radius:50%;
+  background:#fff;border:none;cursor:pointer;
+}
+.sl-vals{display:flex;justify-content:space-between;margin-top:2px}
+.sl-vals input{
+  background:transparent;border:none;border-bottom:1px solid #eceff1;
+  color:#eceff1;font:700 13px 'Poppins',sans-serif;text-align:center;
+  width:56px;padding:1px 2px;outline:none;color-scheme:dark;cursor:text;
+}
+.sl-vals input:focus{border-bottom-color:#fff;background:rgba(255,255,255,.08)}
+.sl-vals input::-webkit-outer-spin-button,
+.sl-vals input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.sl-vals input[type=number]{-moz-appearance:textfield;appearance:textfield}
+#resetAll{
+  margin-top:22px;width:100%;padding:9px;border:1px solid #4a565e;border-radius:8px;
+  background:transparent;color:#b0bec5;cursor:pointer;
+  font:700 11px 'Poppins',sans-serif;letter-spacing:1.5px;text-transform:uppercase;
+}
+#resetAll:hover{border-color:#eceff1;color:#fff}
+/* collapse control (desktop only) */
+#sbCollapse{
+  width:100%;margin-bottom:10px;padding:8px;border:1px solid #4a565e;border-radius:8px;
+  background:transparent;color:#b0bec5;cursor:pointer;
+  font:700 11px 'Poppins',sans-serif;letter-spacing:1.5px;text-transform:uppercase;
+}
+#sbCollapse:hover{border-color:#eceff1;color:#fff}
+#sbExpand{
+  display:none;width:34px;min-width:34px;height:100%;
+  background:var(--bg-soft);border:none;cursor:pointer;color:#b0bec5;font-size:17px;
+  align-items:center;justify-content:center;
+}
+#sbExpand:hover{background:#28313a;color:#fff}
+@media(min-width:761px){
+  body.sbCollapsed #sidebar{display:none}
+  body.sbCollapsed #sbExpand{display:flex}
+  body.sbCollapsed #grid{grid-template-columns:repeat(12,1fr)}
+}
+@media(max-width:760px){
+  #sbCollapse,#sbExpand{display:none !important}
+}
+/* ---------- MAIN ---------- */
+#main{flex:1;min-width:0;height:100%;display:flex;flex-direction:column;padding:14px 10px 14px 4px;position:relative}
+.pagerBar{
+  display:flex;align-items:center;
+  background:var(--bar);border-radius:6px;height:52px;
+  user-select:none;
+}
+#pagerTop{margin-bottom:12px}
+#pagerBottom{margin-top:12px}
+.pgRail{
+  position:absolute;top:70px;bottom:70px;width:30px;z-index:40;
+  display:flex;flex-direction:column;justify-content:space-around;align-items:center;
+  background:transparent;border:none;cursor:pointer;color:#fff;
+  opacity:.32;transition:opacity .15s,background .15s;border-radius:6px;
+}
+.pgRail:hover{opacity:.95;background:rgba(255,255,255,.12)}
+.pgRail span{font-size:24px;line-height:1}
+#railPrev{left:0}
+#railNext{right:0}
+@media(max-width:760px){ .pgRail{width:24px} .pgRail span{font-size:20px} }
+.pagerBar .pg-arrow{
+  width:44px;height:100%;display:flex;align-items:center;justify-content:center;
+  background:transparent;border:none;color:#fff;font-size:26px;cursor:pointer;border-radius:6px;
+}
+.pagerBar .pg-arrow:hover:not(:disabled){background:rgba(255,255,255,.18)}
+.pagerBar .pg-arrow:disabled{opacity:.35;cursor:default}
+.pagerBar .pg-label{
+  flex:1;text-align:center;
+  font:700 clamp(19px,4.2vw,34px) 'Poppins',sans-serif;letter-spacing:1.4px;color:var(--bar-text);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+#grid{
+  flex:1;min-height:0;overflow-y:auto;
+  display:grid;
+  grid-template-columns:repeat(10,1fr);
+  gap:12px;align-content:start;
+  scrollbar-width:none;
+}
+#grid::-webkit-scrollbar{display:none}
+.card{
+  position:relative;display:block;border-radius:6px;overflow:hidden;
+  background:var(--bg-soft);
+  height:0;padding-bottom:150%;   /* 2:3 poster ratio */
+  transition:transform .15s, box-shadow .15s;text-decoration:none;
+  /* Skip rendering work for cards scrolled out of view. The box height comes
+     from padding-bottom, not content, so the layout stays put regardless. */
+  content-visibility:auto;
+  /* Without an intrinsic size the browser guesses 0 for every skipped card and
+     re-measures it on scroll. The ratio box already fixes the height, so giving
+     it up front removes that re-measure. */
+  contain-intrinsic-size:auto 150px auto 225px;
+}
+.card:hover{transform:scale(1.045);box-shadow:0 6px 18px rgba(0,0,0,.6);z-index:5}
+.card img{
+  position:absolute;top:0;left:0;width:100%;height:100%;
+  object-fit:cover;display:block;
+}
+.card .ph{
+  position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  padding:10px;text-align:center;color:#b0bec5;
+  font:700 13px 'Poppins',sans-serif;letter-spacing:.5px;
+}
+.card .price-tag{
+  position:absolute;bottom:6px;right:6px;z-index:4;
+  background:rgba(15,20,24,.85);color:#eceff1;border-radius:6px;
+  padding:3px 7px;font:700 11.5px 'Poppins',sans-serif;letter-spacing:.4px;
+  pointer-events:none;
+}
+/* Blue = beats every price ever recorded for this title (new all-time low).
+   Green = matches the lowest price ever recorded, but isn't a new record. */
+.card .price-tag.new-low{background:rgba(21,101,192,.95)}
+.card .price-tag.tied-low{background:rgba(46,125,50,.95)}
+.card .where-tag{
+  position:absolute;top:6px;left:6px;z-index:2;
+  background:rgba(198,40,40,.92);color:#fff;border-radius:6px;
+  padding:2px 6px;font:700 10px 'Poppins',sans-serif;letter-spacing:.6px;text-transform:uppercase;
+  pointer-events:none;max-width:calc(100% - 12px);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.card .type-tag{
+  position:absolute;top:6px;right:6px;z-index:2;
+  background:rgba(21,101,192,.92);color:#fff;border-radius:6px;
+  padding:2px 6px;font:700 10px 'Poppins',sans-serif;letter-spacing:.6px;
+  pointer-events:none;
+}
+/* ---------- RATINGS ON HOVER ----------
+   Rotten Tomatoes + IMDb fade up over the bottom of the poster. The strip
+   pads its own bottom to clear the price tag (which stays on top at z-index 4)
+   so the two never collide; .no-price drops that padding when there's no tag. */
+.card .ratings{
+  position:absolute;left:0;right:0;bottom:0;z-index:3;
+  display:flex;flex-direction:column;gap:4px;align-items:center;justify-content:flex-end;
+  padding:14px 4px 30px;
+  background:linear-gradient(to top,rgba(8,11,13,.94) 40%,rgba(8,11,13,.7) 70%,rgba(8,11,13,0));
+  opacity:0;transform:translateY(5px);pointer-events:none;
+  transition:opacity .15s ease,transform .15s ease;
+}
+.card.no-price .ratings{padding-bottom:6px}
+.card .rt-tag,.card .imdb-tag{
+  border-radius:5px;padding:2px 6px;white-space:nowrap;
+  font:700 10px 'Poppins',sans-serif;letter-spacing:.4px;
+}
+.card .rt-tag.fresh{background:#c62828;color:#fff}
+.card .rt-tag.rotten{background:#4e6b32;color:#fff}
+.card .imdb-tag{background:#f5c518;color:#171c20}
+@media(hover:hover){
+  .card:hover .ratings{opacity:1;transform:none}
+}
+/* Touch devices have no hover -- press and hold a poster to reveal the scores. */
+@media(hover:none){
+  .card:active .ratings{opacity:1;transform:none}
+}
+@media(prefers-reduced-motion:reduce){ .card .ratings{transition:none;transform:none} }
+#toast{
+  position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:120;
+  background:#263238;color:#eceff1;border-radius:8px;padding:10px 18px;
+  font:700 13px 'Poppins',sans-serif;letter-spacing:.5px;
+  box-shadow:0 4px 14px rgba(0,0,0,.5);opacity:0;pointer-events:none;
+  transition:opacity .25s;
+}
+#toast.show{opacity:1}
+#toast.err{background:#b71c1c}
+/* The loading readout (#status), the top progress bar (#topbar) and the
+   placeholder tiles (.skel) live in the CRITICAL CSS block at the top of
+   <head> so they can paint in the first frame. Don't re-declare them here --
+   these rules would win and the indicator would move back to the corner. */
+@media(prefers-reduced-motion:reduce){ .card{transition:none} }
+#mobileFilterBtn{
+  display:none;margin:12px 12px 0;padding:12px;border:none;border-radius:8px;
+  background:var(--pill);color:var(--pill-text);cursor:pointer;
+  font:700 13px 'Poppins',sans-serif;letter-spacing:1.2px;text-transform:uppercase;
+}
+body.filtersOpen #mobileFilterBtn{background:var(--accent);color:#fff}
+@media(max-width:900px){
+  #grid{grid-template-columns:repeat(4,1fr);gap:7px}
+}
+@media(max-width:760px){
+  #app{flex-direction:column;align-items:stretch}
+  #mobileFilterBtn{display:block;flex:none}
+  #sidebar{display:none;width:100%;min-width:0;height:auto;max-height:55%;flex:none}
+  body.filtersOpen #sidebar{display:block}
+  #main{width:100%;flex:1;min-height:0;padding:12px 8px 12px}
+  #grid{grid-template-columns:repeat(4,1fr);gap:7px}
+}
+</style>
+<!-- Favicon: the avatar, at the sizes browsers actually ask for. Served from
+     /assets/ so they are cached immutably alongside the nav mark. -->
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png">
+<link rel="icon" type="image/png" sizes="96x96" href="/assets/favicon-96.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/assets/favicon-180.png"></head>
+<body>
+<!-- ==== SHARED NAV =========================================================
+     Google Sites drew this bar; on Netlify the pages own it. Inlined rather
+     than pulled from a stylesheet so it paints in the first frame with no
+     extra round trip -- it is under 1KB and never changes independently.
+     ==================================================================== -->
+<style>
+:root{--dd-nav-h:52px}
+.dd-nav{position:fixed;top:0;left:0;right:0;height:var(--dd-nav-h);z-index:150;
+  display:flex;align-items:center;gap:4px;padding:0 18px;background:#000;
+  border-bottom:1px solid #23292e;
+  font-family:'Poppins','Segoe UI',system-ui,sans-serif;font-weight:700}
+.dd-brand{display:flex;align-items:center;gap:9px;margin-right:22px;flex:0 0 auto;
+  color:#fff;text-decoration:none;font-size:16px;letter-spacing:.6px;white-space:nowrap}
+/* Transparent PNG, so it needs no plate behind it -- it sits straight on the
+   bar. object-fit:contain keeps the whole avatar rather than cropping the
+   popcorn out of the bottom-left corner. */
+.dd-brand-img{width:32px;height:32px;flex:0 0 auto;object-fit:contain}
+.dd-links{display:flex;align-items:center;gap:2px;overflow-x:auto;
+  scrollbar-width:none;-ms-overflow-style:none}
+.dd-links::-webkit-scrollbar{display:none}
+.dd-links a{color:#eceff1;text-decoration:none;font-size:15px;letter-spacing:.3px;
+  padding:8px 13px;border-radius:6px;white-space:nowrap;
+  transition:color .12s ease,background .12s ease}
+.dd-links a:hover{color:#fff;background:#1b2126}
+.dd-links a[aria-current=page]{color:#ef5350}
+.dd-links a[aria-current=page]:hover{background:transparent}
+/* Everything the pages already draw starts below the bar. */
+body{padding-top:var(--dd-nav-h);box-sizing:border-box}
+/* The loading toast is fixed near the top and would sit under the bar. */
+#status{top:calc(var(--dd-nav-h) + 20px)!important}
+@media(max-width:760px){
+  :root{--dd-nav-h:46px}
+  .dd-nav{padding:0 10px}
+  .dd-brand{margin-right:12px;font-size:14px}
+  .dd-brand-img{width:27px;height:27px}
+  .dd-links a{font-size:13.5px;padding:7px 9px}
+}
+</style><nav class="dd-nav">
+  <a class="dd-brand" href="/">
+    <img class="dd-brand-img" src="/assets/brand-64.png"
+         srcset="/assets/brand-64.png 1x, /assets/brand-128.png 2x"
+         width="30" height="30" alt="" decoding="async">
+    Donny's Digital
+  </a>
+  <div class="dd-links">
+    <a href="/">Movies</a>
+    <a href="/wishlist">Wishlist</a>
+    <a href="/data">Data</a>
+    <a href="/sales" aria-current="page">Sales</a>
+    <a href="/ma-compare">MA Compare</a>
+    <a href="/d2d">D2D</a>
+  </div>
+</nav>
+<!-- Paints in the very first frame, before any tab has answered. -->
+<div id="topbar" class="indet"><div id="topfill"></div></div>
+<div id="app">
+  <button id="mobileFilterBtn">&#9776; Filters &amp; search</button>
+  <aside id="sidebar">
+    <button id="sbCollapse">&#10094; Hide filters</button>
+    <input id="searchBox" type="search" placeholder="Title search" autocomplete="off">
+    <div id="sortWrap">
+      <select id="sortSel" title="Sort sales">
+        <option value="sortTitle|asc">Sort: Title A &rarr; Z</option>
+        <option value="sortTitle|desc">Sort: Title Z &rarr; A</option>
+        <option value="price|asc" selected>Sort: Sale price (low)</option>
+        <option value="price|desc">Sort: Sale price (high)</option>
+        <option value="tomato|desc">Sort: Rotten Tomatoes (high)</option>
+        <option value="imdb|desc">Sort: IMDb (high)</option>
+        <option value="year|desc">Sort: Year (newest)</option>
+        <option value="year|asc">Sort: Year (oldest)</option>
+      </select>
+    </div>
+    <div id="quickFilters">
+      <label class="quick-check"><input type="checkbox" id="qfTodayMovies" value="Today"><span>TODAY'S MOVIES</span></label>
+      <label class="quick-check"><input type="checkbox" id="qfTodayTV" value="Today TV"><span>Today's Television</span></label>
+    </div>
+    <div id="facets"></div>
+    <div id="sliders"></div>
+    <button id="resetAll">Reset all filters</button>
+  </aside>
+  <button id="sbExpand" title="Show filters">&#9776;</button>
+  <main id="main">
+    <div class="pagerBar" id="pagerTop">
+      <button class="pg-arrow" id="prevPg" title="Previous page">&#10094;</button>
+      <div class="pg-label" id="pgLabel">&ndash;</div>
+      <button class="pg-arrow" id="nextPg" title="Next page">&#10095;</button>
+    </div>
+    <div id="grid"></div>
+    <script>
+    /* Placeholder tiles, written during HTML parse so the grid never reads as a
+       dead rectangle while 44 tabs are in flight. The first renderPage()
+       replaces them wholesale. */
+    (function(){var g=document.getElementById('grid'),h='',i=0;for(;i<120;i++)h+='<div class="skel"></div>';g.innerHTML=h;})();
+    </script>
+    <button class="pgRail" id="railPrev" title="Previous page" style="display:none">
+      <span>&#10094;</span><span>&#10094;</span><span>&#10094;</span>
+    </button>
+    <button class="pgRail" id="railNext" title="Next page" style="display:none">
+      <span>&#10095;</span><span>&#10095;</span><span>&#10095;</span>
+    </button>
+    <div class="pagerBar" id="pagerBottom">
+      <button class="pg-arrow" id="prevPg2" title="Previous page">&#10094;</button>
+      <div class="pg-label" id="pgLabel2">&ndash;</div>
+      <button class="pg-arrow" id="nextPg2" title="Next page">&#10095;</button>
+    </div>
+  </main>
+</div>
+<div id="status"><div class="spin"></div><div id="statusTxt">Loading sales&hellip;</div></div>
+<div id="toast"></div>
+<script>
+/* ================= CONFIGURATION ================= */
+const SHEET_ID = '1Sb1-8n4CL1of7YR7kUzP9uh3VQtUMr1du2Y_hQgqw7U';
+// ---- Server-side row filter -------------------------------------------------
+// Every tab carries its formulas dragged down thousands of rows past the last
+// real title, so a plain request hands back ~118,000 rows to deliver ~1,400
+// with a title in them. gviz speaks a SQL-ish dialect, so the blanks can be
+// dropped by Google before anything crosses the wire. Each tab below declares
+// which COLUMN LETTER holds its Title, and that letter is what the query
+// tests. Nothing is added to the spreadsheet itself.
+//   daily movies / Fanflix -> Title is column F
+//   daily TV / Mix & Match -> Title is column G
+// Load the page with ?nofilter to turn this off and compare.
+const SHEET_QUERY_FILTER = !/[?&]nofilter\b/.test(location.search);
+// ---- Poster sizing ----------------------------------------------------------
+// Vudu poster URLs end in a pixel width: .../poster2/<id>-168. The old code
+// asked the image proxies to render those at w=400, which upscales a 168px
+// source: more bytes, more proxy CPU, not one pixel of extra detail. Now the
+// source width and the requested width are the same number, set once here.
+// 168 is what the sheet's own Image URL column uses, so it's known-good. Try
+// 340 if you want sharper posters on a hi-dpi screen.
+const POSTER_W = 168;
+const IMG_BASE   = 'https://images2.vudu.com/poster2/';
+const LINK_BASE  = 'https://athome.fandango.com/content/movies/details/title/';
+// ---- Covers per page --------------------------------------------------------
+// The grid is 10 columns with the sidebar open and 12 with it hidden, so these
+// are exactly 10 full rows either way -- no half-empty last row.
+// Posters past the first ~20 are loading="lazy", so raising these does not
+// delay the first covers appearing; it only means more images to pull if you
+// scroll the whole page.
+const PAGE_SIZES = { mobile:48, wide:120, normal:100 };
+// ---- Caching ----------------------------------------------------------------
+// Merged results are kept so a revisit paints instantly instead of refetching
+// 44 tabs. Fresh data still loads in the background every time; the cache only
+// removes the wait before first paint.
+//
+// This now uses localStorage rather than sessionStorage. sessionStorage is
+// wiped when the tab closes, so every genuine visit was a cold 44-tab load and
+// the cache only ever helped a reload. localStorage survives, which turns the
+// common case -- coming back to the page later -- into an instant paint.
+const CACHE_KEY = 'donnys-sales:v3';
+const CACHE_TTL = 6 * 60 * 60 * 1000;   // 6h; stale data is replaced in the background anyway
+// ---- First paint ------------------------------------------------------------
+// When on, the two Today tabs load first and paint by themselves before the
+// other 42 arrive. In practice Today holds only a handful of titles and the
+// default sort is cheapest-first across EVERYTHING, so that early grid gets
+// almost entirely reordered a second later -- it reads as a flash rather than
+// as progress. Off by default: the grid stays empty behind a live tab counter
+// and paints once, complete. Turn it back on if Today's tab grows enough to
+// carry a first screen on its own.
+const EARLY_PAINT = false;
+// How many tabs to have in flight at once. docs.google.com is HTTP/2, so these
+// multiplex over one connection rather than queueing. Measured against the live
+// sheet, all 44 tabs: pool 8 -> 5.4s, pool 20 -> 2.7s, pool 40 -> 2.5s. The
+// curve is flat past ~20 because Google, not the connection, is the limit --
+// 32 removes the last wave boundary without pushing into that ceiling.
+const POOL = 32;
+// Painting from cache and immediately re-fetching all 44 tabs puts the refresh
+// in direct competition with the covers the user is actually looking at. When
+// there is a cache on screen the refresh waits for the page to go idle first.
+// Nothing is skipped -- it is the same refresh, just no longer racing the
+// posters for bandwidth.
+const REFRESH_DELAY_MS = 400;
+// Tab groups. Each entry carries a name, a "where" label, a type, the tag
+// shown on the card, the column letter holding its Title, and (where known)
+// the numeric #gid= from the sheet URL. Fetching by gid is unambiguous;
+// fetching by NAME through gviz can silently fall back to the first tab --
+// which is exactly why "Today TV" once returned the "Today" tab's data.
+// `priority` marks the two tabs the default view is built from: they load
+// first and paint on their own, then everything else merges in behind them.
+const TABS = [];
+// gid for EVERY tab, read off the live workbook. This is not a micro-optimisation:
+// three tabs are named with a trailing space ("Today TV ", "T TV ", "W TV "), and
+// when gviz cannot resolve a name it does not fail -- it silently answers with the
+// FIRST tab in the workbook. So `sheet=T TV` was returning the *Today movies* tab,
+// the schema guard in parseTabRows correctly threw the rows away, and 142 rows of
+// Tuesday TV never reached the page. Fetching by gid is exact, so those rows are
+// back, and the "try the name, then name+space, then collapsed spaces" retry chain
+// (up to 3 requests for a tab that resolves wrong) is gone.
+[['Today','Today','1086343653'],['M','Mon','1876860810'],['T','Tue','967611835'],
+ ['W','Wed','1842298070'],['Th','Thu','615215644'],['F','Fri','180674901'],
+ ['Sat','Sat','1457107899'],['Sun','Sun','864620682']]
+  .forEach(([t,d,gid])=>TABS.push({name:t, gid, where:'Daily Sales', type:'Movies', tag:d,
+                                   titleCol:'F', priority:t==='Today'}));
+[['Today TV','Today','1848983867'],['M TV','Mon','1477357018'],['T TV','Tue','1511704700'],
+ ['W TV','Wed','1889687096'],['Th TV','Thu','647897415'],['F TV','Fri','792440283'],
+ ['Sat TV','Sat','195984870'],['Sun TV','Sun','1543744872']]
+  .forEach(([t,d,gid])=>TABS.push({name:t, gid, where:'Daily Sales', type:'TV Shows', tag:d+' TV',
+                                   titleCol:'G', priority:t==='Today TV'}));
+// Mix & Match -- row 1 is a banner (sale name/dates), real headers are row 2.
+const MM_GIDS = ['332837353','472649581','1166853727','1267092600','416316003',
+                 '1055247309','1542145001','1396038894','662596291','1142530535'];
+MM_GIDS.forEach((gid,i)=>TABS.push({name:'M&M'+(i+1), gid, where:'Mix & Match', type:'Movies',
+                                    tag:'Mix & Match '+(i+1),
+                                    bundle:'mm', headerRows:2, titleCol:'G'}));
+// Fanflix -- same banner-row situation, its own (slightly different) schema.
+const FLIX_GIDS = ['1203289215','69297060','1849827414','1542252526','218590821',
+                   '807293732','1507436042','1257201074','2004923465','221173491',
+                   '922691955','1260795062','1079899146','636654364','286303006',
+                   '1443208328','1045428658','1538467875','275982898','1265886931'];
+FLIX_GIDS.forEach((gid,i)=>TABS.push({name:'Flix'+(i+1), gid, where:'Fanflix', type:'Movies',
+                                      tag:'Fanflix '+(i+1),
+                                      bundle:'flix', headerRows:2, titleCol:'F'}));
+let PER_PAGE = PAGE_SIZES.normal;
+const mobileMq = window.matchMedia('(max-width:760px)');
+function syncPerPage(){
+  const firstShown = page * PER_PAGE;
+  PER_PAGE = mobileMq.matches ? PAGE_SIZES.mobile
+           : document.body.classList.contains('sbCollapsed') ? PAGE_SIZES.wide
+           : PAGE_SIZES.normal;
+  page = Math.floor(firstShown / PER_PAGE);
+}
+(mobileMq.addEventListener ? mobileMq.addEventListener('change', ()=>{ syncPerPage(); if(items.length) renderPage(); })
+                           : mobileMq.addListener(()=>{ syncPerPage(); if(items.length) renderPage(); }));
+// column header (row 1 of each tab) -> internal key
+// The daily-movie tabs and the TV tabs use DIFFERENT header names for the
+// same concepts, so both sets of names are listed here as aliases.
+const COLMAP = {
+  'Owned':'owned','Owned Quality':'ownedQ','Quality':'ownedQ',
+  'D2D':'d2d','MD2D':'d2d','MA':'ma',
+  'Title':'title','Year':'yearRaw','Provider':'provider',
+  'Current Price':'priceRaw','Sale Quality':'saleQ','Best Quality':'bestQ',
+  'Lowest Price':'lowestRaw','Studio':'studio',
+  'Rotten Tomatoes':'tomatoRaw','IMDb':'imdbRaw',
+  'URL':'url','Image URL':'imgUrl','Content ID':'contentId','Vudu Content ID':'vuduId'
+};
+const FACETS = [
+  {label:'Where to Buy',  key:'where', csv:true},
+  {label:'Type',          key:'type'},
+  {label:'Sale Price',    key:'priceTag', numeric:true},
+  {label:'Owned',         key:'owned'},
+  {label:'Owned Quality', key:'ownedQ'},
+  {label:'D2D',           key:'d2d'},
+  {label:'MA',            key:'ma'},
+  {label:'Sale Quality',  key:'saleQ'},
+  {label:'Studio',        key:'studio'},
+];
+const SLIDERS = [
+  {label:'Rotten Tomatoes', key:'tomato', min:0, max:100, step:1},
+  {label:'IMDb',            key:'imdb',   min:0, max:10,  step:0.1},
+];
+const $=s=>document.querySelector(s);
+let items=[], filtered=[], page=0, slidersTouched=false;
+const selected={}, rangeState={}, facetValues={}, quickTags=new Set();
+/* ---------- POSTER PROXYING ----------
+   Vudu poster URLs are blocked outright on some networks, so an image proxy is
+   kept as a fallback. Both of the proxies that used to be tried FIRST are now
+   dead, and they were being tried on every poster of every fresh visit:
+
+     wsrv.nl            -> 404 ("The requested URL returned error: 403").
+                           images2.vudu.com refuses wsrv's fetcher outright.
+     cdn.statically.io  -> 403. Statically disabled its /img/ endpoint entirely
+                           ("Due to abuse and high traffic...").
+
+   So every cover paid two failed round-trips (~1.2s of pure waste, measured)
+   before reaching the one that works. The chain is now ordered by what actually
+   answers: Vudu's own CDN first (no proxy hop at all), then Photon (i0/i1.wp.com)
+   for networks that block vudu.com.
+
+   The winner is also remembered in localStorage rather than sessionStorage --
+   sessionStorage dies with the tab, so discovery was being repeated on every
+   genuine visit. And a locked proxy that later starts failing now unlocks
+   itself, so a future outage costs one round of discovery, not every poster. */
+const stripScheme = u => u.replace(/^https?:\/\//,'');
+const VUDU_PROXIES = [
+  u => u,                                                            // direct: fastest when reachable
+  u => 'https://i0.wp.com/' + stripScheme(u) + '?w=' + POSTER_W,      // Photon
+  u => 'https://i1.wp.com/' + stripScheme(u) + '?w=' + POSTER_W,      // Photon, second shard
+];
+const isVudu = u => /vudu\.com/i.test(u);
+// Rewrite any Vudu poster URL to the width we actually display, whether it
+// came from the sheet's Image URL column or was built from a Content ID.
+const sizePoster = u => u ? u.replace(/(\/poster2\/\d+)-\d+/, '$1-'+POSTER_W) : '';
+const PROXY_KEY = 'donnys-sales:proxy2';   // new key: the old one holds a now-invalid index
+let proxyIdx = 0, proxyLocked = false;
+function proxyStore(){
+  try{ if(window.localStorage) return window.localStorage; }catch(e){}
+  try{ if(window.sessionStorage) return window.sessionStorage; }catch(e){}
+  return null;
+}
+try{
+  const saved = proxyStore() && proxyStore().getItem(PROXY_KEY);
+  if(saved!==null && saved!==undefined){ proxyIdx = Math.min(+saved, VUDU_PROXIES.length-1); proxyLocked = true; }
+}catch(e){}
+function proxyChain(orig){
+  return isVudu(orig)
+    ? VUDU_PROXIES.map(fn=>fn(orig))
+    : [orig, 'https://i0.wp.com/' + stripScheme(orig) + '?w=' + POSTER_W];
+}
+function lockProxy(i){
+  if(proxyLocked && proxyIdx===i) return;
+  proxyIdx = i; proxyLocked = true;
+  try{ const s=proxyStore(); if(s) s.setItem(PROXY_KEY, String(i)); }catch(e){}
+}
+// A remembered proxy that has started failing must not keep being handed to
+// every new poster. The first cover to fall past it reopens discovery.
+function unlockProxy(){
+  if(!proxyLocked) return;
+  proxyLocked = false;
+  try{ const s=proxyStore(); if(s) s.removeItem(PROXY_KEY); }catch(e){}
+}
+function makePoster(m){
+  const img=document.createElement('img');
+  const orig=m.img;
+  img.loading='lazy'; img.decoding='async';
+  img.width=POSTER_W; img.height=Math.round(POSTER_W*1.5);
+  img.alt=m.title;
+  const start = isVudu(orig) ? proxyIdx : 0;
+  img.dataset.try = String(start);
+  img.src = proxyChain(orig)[start];
+  img.addEventListener('load', ()=>{ if(isVudu(orig)) lockProxy(+img.dataset.try); }, {once:true});
+  img.addEventListener('error', ()=>{
+    // The proxy we had remembered just failed. Stop handing it to new posters.
+    if(isVudu(orig) && +img.dataset.try === proxyIdx) unlockProxy();
+    const chain = proxyChain(orig);
+    const next = (+img.dataset.try) + 1;
+    if(next < chain.length){ img.dataset.try = String(next); img.src = chain[next]; return; }
+    const parent = img.parentNode;
+    img.remove();
+    if(parent){
+      const ph=document.createElement('div');
+      ph.className='ph'; ph.textContent=m.title;
+      parent.insertBefore(ph, parent.firstChild);
+    }
+  });
+  return img;
+}
+// 'A'->0, 'L'->11, 'S'->18, etc.
+function colIdx(letter){
+  let n=0; for(const ch of letter.toUpperCase()) n=n*26+(ch.charCodeAt(0)-64);
+  return n-1;
+}
+const ID_COL_TV    = colIdx('L');
+const ID_COL_MOVIE = colIdx('S');
+function toast(msg,isErr=false){
+  const t=$('#toast'); t.textContent=msg;
+  t.className=isErr?'err show':'show';
+  setTimeout(()=>t.classList.remove('show'), isErr?5000:3000);
+}
+function setStatus(txt, spinning=true, isErr=false){
+  const s=$('#status');
+  if(txt===null){ s.classList.add('hidden'); return; }
+  s.classList.remove('hidden');
+  s.classList.toggle('err', isErr);
+  s.querySelector('.spin').style.display = spinning ? '' : 'none';
+  $('#statusTxt').textContent = txt;
+}
+/* ---------- TOP PROGRESS BAR ----------
+   The bar is already on screen (static markup + critical CSS), so this only
+   drives it. With 44 tabs the percentage is genuinely accurate rather than a
+   guess, which is what makes the wait legible instead of a stall. */
+const bar=$('#topbar'), barFill=$('#topfill');
+let barPct=0;
+function setBar(p){
+  if(p==null){ bar.classList.add('indet'); return; }
+  p=Math.max(0,Math.min(1,p));
+  if(p<barPct) return;                 // never let it run backwards
+  barPct=p;
+  bar.classList.remove('indet');
+  barFill.style.width=(p*100).toFixed(1)+'%';
+}
+function barDone(){
+  bar.classList.remove('indet');
+  barFill.style.width='100%';
+  bar.classList.add('done');
+}
+/* ---------- LOAD DATA FROM GOOGLE SHEET ---------- */
+function gvizUrl(tab, sel){
+  const base=`https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?headers=${tab.headerRows||1}`;
+  const target = /^\d+$/.test(sel) ? `&gid=${sel}` : `&sheet=${encodeURIComponent(sel)}`;
+  const col=tab.titleCol;
+  const q = (SHEET_QUERY_FILTER && col && !tab._noFilter)
+    ? '&tq=' + encodeURIComponent(`select * where ${col} is not null and ${col} <> ''`)
+    : '';
+  // A five-minute bucket instead of Date.now(): still defeats a stale cache,
+  // but a reload inside the window can reuse the response rather than being
+  // guaranteed a cold fetch, which is what the old per-millisecond stamp did.
+  const bucket = Math.floor(Date.now()/300000);
+  return `${base}${target}${q}&_=${bucket}`;
+}
+async function fetchGviz(url){
+  const res=await fetch(url+'&tqx=out:json');
+  if(!res.ok) throw new Error('HTTP '+res.status);
+  const txt=await res.text();
+  const json=JSON.parse(txt.substring(txt.indexOf('(')+1, txt.lastIndexOf(')')));
+  if(json && json.status==='error')
+    throw new Error((json.errors&&json.errors[0]&&json.errors[0].detailed_message)||'sheet error');
+  return json;
+}
+function jsonpGviz(url){
+  return new Promise((resolve,reject)=>{
+    const cb='__gviz_cb_'+Math.random().toString(36).slice(2);
+    const timer=setTimeout(()=>{ cleanup(); reject(new Error('timed out')); },20000);
+    function cleanup(){ clearTimeout(timer); delete window[cb]; script.remove(); }
+    window[cb]=json=>{
+      cleanup();
+      if(json && json.status==='error'){
+        reject(new Error((json.errors&&json.errors[0]&&json.errors[0].detailed_message)||'sheet returned an error'));
+      } else resolve(json);
+    };
+    const script=document.createElement('script');
+    script.src=url+'&tqx=out:json;responseHandler:'+cb;
+    script.onerror=()=>{ cleanup(); reject(new Error('script blocked or sheet not public')); };
+    document.head.appendChild(script);
+  });
+}
+/* ---------- TRANSPORT ----------
+   This used to start at null, meaning "race fetch() and JSONP, keep whichever
+   answers first". The intent was one race on one tab -- but the pool starts
+   every worker at the same instant, so all of them entered the race before any
+   of them had set TRANSPORT. Measured against the live sheet: 44 tabs cost 66
+   network requests at a pool of 20, and 78 at a pool of 32. The race was
+   scaling with the pool, not running once.
+
+   gviz answers with `Access-Control-Allow-Origin` echoing the caller (verified
+   against the live sheet), so a plain fetch() works from any real origin. That
+   makes 'fetch' the correct starting point and costs ONE request per tab.
+
+   JSONP is still the fallback, and still the thing that saves a page opened
+   straight off disk (a file:// page has a null origin, which Google rejects).
+   After three consecutive fetch failures the remaining tabs stop paying for a
+   doomed fetch each and go to JSONP directly. */
+let TRANSPORT = 'fetch';
+let fetchFails = 0;
+function raceGviz(url){
+  if(TRANSPORT==='fetch'){
+    return fetchGviz(url).then(v=>{ fetchFails=0; return v; })
+                         .catch(()=>{ if(++fetchFails>=3) TRANSPORT='jsonp'; return jsonpGviz(url); });
+  }
+  if(TRANSPORT==='jsonp') return jsonpGviz(url).catch(()=>fetchGviz(url));
+  return new Promise((resolve,reject)=>{
+    let done=false, left=2; const errs=[];
+    const ok=mode=>v=>{ if(!done){ done=true; TRANSPORT=mode; resolve(v); } };
+    const fail=e=>{ errs.push(e&&e.message||String(e)); if(--left===0 && !done) reject(new Error(errs.join(' | '))); };
+    fetchGviz(url).then(ok('fetch'),fail);
+    jsonpGviz(url).then(ok('jsonp'),fail);
+  });
+}
+// Every tab now carries a gid, so this is one request in the normal case. The
+// name-based fallbacks are still here for a tab whose gid is changed out from
+// under us (deleting and recreating a tab issues a new gid), but they are a
+// genuine last resort rather than the primary path -- and they are only reached
+// after the gid request has actually FAILED, never when it merely answers with
+// the wrong tab, which is what used to lose "T TV" and "W TV".
+async function loadTab(tab){
+  const attempts = tab.gid ? [tab.gid] : [];
+  attempts.push(tab.name, tab.name+' ', tab.name.replace(/\s+/g,' '));
+  const tried=new Set();
+  for(const v of attempts){
+    if(tried.has(v)) continue; tried.add(v);
+    try{ return await raceGviz(gvizUrl(tab, v)); }
+    catch(e){
+      // A rejected query means this tab's Title column letter is wrong for its
+      // layout. Retry it unfiltered rather than losing the tab entirely.
+      if(!tab._noFilter && SHEET_QUERY_FILTER && tab.titleCol){
+        tab._noFilter=true;
+        try{ return await raceGviz(gvizUrl(tab, v)); }catch(e2){}
+      }
+    }
+  }
+  return null; // tab missing/renamed/empty -- skip it
+}
+const money=v=>{
+  if(v==null||v==='') return null;
+  const n=parseFloat(String(v).replace(/[^0-9.]/g,''));
+  return isNaN(n)?null:n;
+};
+const clean=v=>String(v??'').trim();
+// "Owned" / "D2D" / "MA" cells sometimes come through as a literal "FALSE"
+// (an unticked Sheets checkbox) or a filler dash instead of being blank.
+// All three mean the same thing.
+function ownState(raw){
+  const v=clean(raw);
+  if(!v || v==='—' || /^false/i.test(v)) return 'UNOWNED';
+  return v;
+}
+// Owned Quality collapses to three buckets: anything owned in SD can be
+// upgraded to HD/4K and anything owned in HD can be upgraded to 4K.
+function ownedQState(raw){
+  const v=clean(raw);
+  if(!v || v==='—' || /^false/i.test(v)) return 'UNOWNED';
+  if(/^sd$/i.test(v)) return 'SD UPGRADEABLE';
+  if(/^hd/i.test(v)) return 'HD UPGRADEABLE';
+  if(v==='Upgrade') return 'SD UPGRADEABLE';
+  if(v==='UPGRADE') return 'HD UPGRADEABLE';
+  return v;
+}
+// "UHD" and "4K UHD" are the same tier under two spellings.
+function saleQState(raw){
+  const v=clean(raw);
+  if(!v) return '—';
+  return /^uhd$/i.test(v) ? '4K UHD' : v;
+}
+// Rotten Tomatoes arrives three ways depending on the tab: 88, "88%", or 0.88.
+function tomatoVal(raw){
+  let n = typeof raw==='number' ? raw : parseFloat(String(raw??'').replace('%',''));
+  if(isNaN(n)) return null;
+  if(n>0 && n<=1) n=Math.round(n*100);
+  return n;
+}
+// Bundle tabs pack price+quality into one cell, e.g. "$24.99 UHD".
+function parsePriceQuality(raw){
+  if(raw==null||raw==='') return {price:null, quality:''};
+  const s=String(raw);
+  const pm=s.match(/([0-9]+(?:\.[0-9]+)?)/);
+  const price=pm?parseFloat(pm[1]):null;
+  const qm=s.match(/\b(UHD|4K|HDX|HD|SD)\b/i);
+  let quality='';
+  if(qm){
+    const q=qm[1].toUpperCase();
+    quality=(q==='UHD'||q==='4K')?'4K UHD':(q==='HDX'||q==='HD')?'HD':'SD';
+  }
+  return {price, quality};
+}
+// "Lowest Price" reads like "$6.99 on 11/22/2022" -- only the leading dollar
+// amount is wanted. money() would have swallowed the date digits into the
+// decimals ("9.9908062026"), which quietly skewed the new-low/tied-low colour.
+function parseLowestPrice(raw){
+  if(raw==null||raw==='') return null;
+  const m=String(raw).match(/([0-9]+(?:\.[0-9]+)?)/);
+  return m?parseFloat(m[1]):null;
+}
+function parseTabRows(json, tab){
+  const cols=json.table.cols.map(c=>(c.label||'').trim());
+  // Guard against gviz's name lookup silently returning the WRONG tab: when it
+  // can't resolve a name it falls back to the first tab (a MOVIE tab), so a TV
+  // request can come back full of movie rows. The schemas differ, so mismatched
+  // columns mean the response is discarded rather than trusted.
+  const has=name=>cols.includes(name);
+  const looksLikeMovie = has('Provider') || has('Sale Quality') || has('Image URL');
+  const looksLikeTV    = has('Quality') && !has('Owned Quality') && !has('Provider');
+  if(tab.type==='TV Shows' && looksLikeMovie && !looksLikeTV) return [];
+  if(tab.type==='Movies'  && looksLikeTV    && !looksLikeMovie) return [];
+  const idx={}; cols.forEach((c,i)=>{ if(COLMAP[c]) idx[COLMAP[c]]=i; });
+  const idColIndex = tab.type==='TV Shows' ? ID_COL_TV : ID_COL_MOVIE;
+  const out=[];
+  (json.table.rows||[]).forEach(r=>{
+    const cell=k=>{ const i=idx[k]; if(i==null) return null;
+      const c=r.c && r.c[i]; return c==null?null:(c.v==null?null:c.v); };
+    const title=clean(cell('title'));
+    if(!title) return;
+    const tomN=tomatoVal(cell('tomatoRaw'));
+    let imdbN=cell('imdbRaw');
+    imdbN=typeof imdbN==='number'?imdbN:parseFloat(String(imdbN??''));
+    let yearN=cell('yearRaw');
+    yearN=typeof yearN==='number'?yearN:parseInt(String(yearN??''),10);
+    // Prefer the named Content ID columns; the fixed-position lookup is a
+    // last-resort fallback for layouts where the header is missing.
+    const namedId=clean(cell('contentId'));
+    const vuduId=clean(cell('vuduId'));
+    const posCell = r.c && r.c[idColIndex];
+    const posId = clean(posCell && posCell.v!=null ? posCell.v : '');
+    const contentId=namedId || vuduId || posId;
+    // Movie tabs have a "Sale Quality" column. TV tabs bake the quality into
+    // the price cell instead, e.g. "$2.99 HD".
+    let saleQ = saleQState(cell('saleQ'));
+    if(!cell('saleQ')){
+      const { quality } = parsePriceQuality(cell('priceRaw'));
+      if(quality) saleQ = quality;
+    }
+    out.push({
+      title,
+      sortTitle:title.replace(/^(the|a|an)\s+/i,'').toLowerCase(),
+      year:isNaN(yearN)?null:yearN,
+      provider:clean(cell('provider'))||'—',
+      owned:ownState(cell('owned')),
+      ownedQ:ownedQState(cell('ownedQ')),
+      d2d:ownState(cell('d2d')),
+      ma:ownState(cell('ma')),
+      saleQ,
+      bestQ:clean(cell('bestQ'))||'—',
+      studio:clean(cell('studio'))||'—',
+      price:money(cell('priceRaw')),
+      lowest:parseLowestPrice(cell('lowestRaw')),
+      tomato:tomN,
+      imdb:isNaN(imdbN)?null:imdbN,
+      url:clean(cell('url'))||(contentId?LINK_BASE+contentId:''),
+      img:sizePoster(clean(cell('imgUrl'))||(contentId?IMG_BASE+contentId+'-'+POSTER_W:'')),
+      contentId, vuduId,
+      where:[tab.where],
+      type:tab.type,
+      tags:[tab.tag],
+    });
+  });
+  return out;
+}
+// Fixed column positions (0-based, A=0), verified against the live layout.
+// Both tab families start with a blank column A holding the poster/hyperlink
+// formula, so Owned is at index 1 and Quality at index 2 -- the previous map
+// started at 0, which read the blank column as "Owned" and the Owned column
+// as "Owned Quality". Everything from MD2D onward was already correct.
+const BUNDLE_COLS = {
+  //        A:''   B:Owned  C:Quality  D:MD2D  E:UHD  F:MA  G:Title  H:Year  I:Price  J:Lowest  K:Studio  L:RT  M:IMDb  N:Content ID
+  mm:   { owned:1, ownedQ:2, d2d:3, ma:5, title:6, year:7, priceQual:8, lowestRaw:9, studio:10, tomato:11, imdb:12, contentId:13 },
+  //        A:''   B:Owned  C:Quality  D:MD2D  E:MA  F:Title  G:Year  H:Quality  I:Vudu Quality  J:Providers  K:Studio  L:RT  M:IMDb  N:Content ID
+  flix: { owned:1, ownedQ:2, d2d:3, ma:4, title:5, year:6, priceQual:7, saleQ:8, provider:9, studio:10, tomato:11, imdb:12, contentId:13 },
+};
+function parseBundleRows(json, tab){
+  const map=BUNDLE_COLS[tab.bundle];
+  const rowCell=(r,i)=>{ if(i==null) return null; const c=r.c && r.c[i]; return c==null?null:(c.v==null?null:c.v); };
+  // "Content ID" is unambiguous as a header on these tabs (unlike "Quality",
+  // which is reused twice), so look it up by name and fall back to position.
+  const cols=(json.table.cols||[]).map(c=>(c.label||'').trim());
+  const namedContentIdIdx=cols.findIndex(c=>c==='Content ID');
+  const namedVuduIdIdx=cols.findIndex(c=>c==='Vudu Content ID');
+  const namedUrlIdx=cols.findIndex(c=>c==='URL');
+  const namedImgIdx=cols.findIndex(c=>c==='Image URL');
+  const out=[];
+  (json.table.rows||[]).forEach(r=>{
+    const title=clean(rowCell(r,map.title));
+    if(!title) return;
+    const tomN=tomatoVal(rowCell(r,map.tomato));
+    let imdbN=rowCell(r,map.imdb);
+    imdbN=typeof imdbN==='number'?imdbN:parseFloat(String(imdbN??''));
+    let yearN=rowCell(r,map.year);
+    yearN=typeof yearN==='number'?yearN:parseInt(String(yearN??''),10);
+    const {price,quality}=parsePriceQuality(rowCell(r,map.priceQual));
+    const lowest=map.lowestRaw!=null?parseLowestPrice(rowCell(r,map.lowestRaw)):null;
+    const contentId=clean(namedContentIdIdx>=0?rowCell(r,namedContentIdIdx):null)
+      || clean(namedVuduIdIdx>=0?rowCell(r,namedVuduIdIdx):null)
+      || clean(rowCell(r,map.contentId));
+    out.push({
+      title,
+      sortTitle:title.replace(/^(the|a|an)\s+/i,'').toLowerCase(),
+      year:isNaN(yearN)?null:yearN,
+      provider:(map.provider!=null?clean(rowCell(r,map.provider)):'')||'—',
+      owned:ownState(rowCell(r,map.owned)),
+      ownedQ:ownedQState(rowCell(r,map.ownedQ)),
+      d2d:ownState(rowCell(r,map.d2d)),
+      ma:ownState(rowCell(r,map.ma)),
+      saleQ:quality || (map.saleQ!=null?saleQState(rowCell(r,map.saleQ)):'—') || '—',
+      bestQ:'—',
+      studio:clean(rowCell(r,map.studio))||'—',
+      price, lowest,
+      tomato:tomN,
+      imdb:isNaN(imdbN)?null:imdbN,
+      url:clean(namedUrlIdx>=0?rowCell(r,namedUrlIdx):null)||(contentId?LINK_BASE+contentId:''),
+      img:sizePoster(clean(namedImgIdx>=0?rowCell(r,namedImgIdx):null)||(contentId?IMG_BASE+contentId+'-'+POSTER_W:'')),
+      contentId, vuduId:contentId,
+      where:[tab.where],
+      type:tab.type,
+      tags:[tab.tag],
+    });
+  });
+  return out;
+}
+// Same title can appear on several tabs (today's sale AND a Fanflix bundle).
+// Merge into one card per title+type, keeping every source label and the
+// lowest sale price seen.
+function mergeItems(all){
+  const byKey=new Map();
+  all.forEach(it=>{
+    const key=(it.contentId||it.vuduId||it.title+'|'+(it.year||''))+'::'+it.type;
+    const prev=byKey.get(key);
+    if(!prev){ byKey.set(key,{...it, where:[...it.where], tags:[...it.tags]}); return; }
+    it.where.forEach(w=>{ if(!prev.where.includes(w)) prev.where.push(w); });
+    it.tags.forEach(t=>{ if(!prev.tags.includes(t)) prev.tags.push(t); });
+    if(it.price!=null && (prev.price==null || it.price<prev.price)){
+      prev.price=it.price; prev.saleQ=it.saleQ;
+    }
+    if(prev.img==='' && it.img) prev.img=it.img;
+    if(prev.url==='' && it.url) prev.url=it.url;
+    ['tomato','imdb','year','lowest'].forEach(k=>{ if(prev[k]==null && it[k]!=null) prev[k]=it[k]; });
+    ['d2d','ma','ownedQ','bestQ','studio'].forEach(k=>{
+      const blank=v=>v==null||v==='UNOWNED'||v==='—';
+      if(blank(prev[k]) && !blank(it[k])) prev[k]=it[k];
+    });
+  });
+  let merged=[...byKey.values()];
+  // If the SAME Content ID shows up as both a Movie and a TV Show, the TV
+  // entry is a phantom from a mis-resolved tab. Real shows and real movies
+  // never share an ID.
+  const movieIds=new Set(
+    merged.filter(m=>m.type==='Movies' && (m.contentId||m.vuduId))
+          .map(m=>m.contentId||m.vuduId)
+  );
+  merged=merged.filter(m=>{
+    if(m.type!=='TV Shows') return true;
+    const id=m.contentId||m.vuduId;
+    return !(id && movieIds.has(id));
+  });
+  merged.forEach(m=>{
+    m.search=[m.title,m.studio,m.provider,m.year].join(' ').toLowerCase();
+    m.priceTag=m.price!=null?'$'+m.price.toFixed(2):null;
+    m.key=(m.contentId||m.vuduId||m.title+'|'+(m.year||''))+'::'+m.type;
+  });
+  applyOwnedQualityOverrides(merged);
+  return merged;
+}
+// Manual corrections for titles whose Owned Quality bucket needs forcing by
+// hand. Add [title-lowercase, category] pairs; category must be 'UNOWNED',
+// 'SD UPGRADEABLE', or 'HD UPGRADEABLE'.
+const OWNEDQ_OVERRIDES=[];
+function applyOwnedQualityOverrides(list){
+  if(!OWNEDQ_OVERRIDES.length) return;
+  list.forEach(m=>{
+    const t=m.title.trim().toLowerCase();
+    const hit=OWNEDQ_OVERRIDES.find(([title])=>title===t);
+    if(hit) m.ownedQ=hit[1];
+  });
+}
+async function loadTabs(tabs, onProgress){
+  const results=[]; const queue=tabs.slice();
+  async function worker(){
+    while(queue.length){
+      const tab=queue.shift();
+      const json=await loadTab(tab);
+      if(json){
+        const rows = tab.bundle ? parseBundleRows(json,tab) : parseTabRows(json,tab);
+        results.push(...rows);
+      }
+      onProgress && onProgress();
+    }
+  }
+  await Promise.all(Array.from({length:Math.min(POOL,tabs.length)},worker));
+  return results;
+}
+/* ---------- SNAPSHOT SEED ----------
+   This page reads 46 tabs, one request each, and each pays Google's TTFB --
+   measured between 0.5s and 11.3s per tab. With nothing in localStorage there
+   was no way to show anything until enough of those had come back.
+
+   The build bundles all 46 gviz responses into one file on Netlify, so a first
+   visit can paint from a single request instead of forty-six. The responses are
+   stored verbatim and fed straight back through this page's OWN
+   parseTabRows/parseBundleRows below, so there is no second copy of the per-tab
+   schemas anywhere.
+
+   This is only ever a first paint. Sales change daily, so the live load runs
+   immediately afterwards exactly as it does after a cache hit, and replaces
+   this. A stale bundle costs nothing; it just means the grid shows yesterday's
+   sales for the second or two before today's arrive. */
+async function seedFromSnapshot(){
+  try{
+    const man=await fetch('/data-manifest.json',{credentials:'omit'}).then(r=>{
+      if(!r.ok) throw new Error('manifest HTTP '+r.status); return r.json();
+    });
+    if(!man.files || !man.files.sales) return null;
+    const bundle=await fetch('/snapshots/'+man.files.sales,{credentials:'omit'}).then(r=>{
+      if(!r.ok) throw new Error('bundle HTTP '+r.status); return r.json();
+    });
+    const raw=[];
+    for(const tab of TABS){
+      const json=bundle[tab.gid];
+      if(!json) continue;                      // tab not in the bundle -- load it live
+      try{
+        const rows = tab.bundle ? parseBundleRows(json,tab) : parseTabRows(json,tab);
+        if(rows && rows.length) raw.push(...rows);
+      }catch(e){ /* one bad tab must not sink the seed */ }
+    }
+    if(!raw.length) return null;
+    return mergeItems(raw);
+  }catch(e){
+    console.warn('[sales] snapshot seed unavailable:', e && e.message);
+    return null;
+  }
+}
+/* ---------- CACHE ----------
+   localStorage first (survives the tab closing), sessionStorage as a fallback
+   for embeds where localStorage is blocked. Writing happens in an idle slot so
+   stringifying ~1,400 items never delays the paint that just happened. */
+function cacheStores(){
+  const out=[];
+  try{ if(window.localStorage) out.push(window.localStorage); }catch(e){}
+  try{ if(window.sessionStorage) out.push(window.sessionStorage); }catch(e){}
+  return out;
+}
+function readCache(){
+  for(const store of cacheStores()){
+    try{
+      const raw=store.getItem(CACHE_KEY);
+      if(!raw) continue;
+      const c=JSON.parse(raw);
+      if(!c || !Array.isArray(c.d) || !c.d.length) continue;
+      if(Date.now()-c.t > CACHE_TTL) continue;
+      return c.d;
+    }catch(e){ /* try the next store */ }
+  }
+  return null;
+}
+function writeCache(list){
+  const idle = window.requestIdleCallback || (f=>setTimeout(f,1));
+  idle(()=>{
+    let payload;
+    try{ payload=JSON.stringify({t:Date.now(), d:list}); }catch(e){ return; }
+    for(const store of cacheStores()){
+      try{ store.setItem(CACHE_KEY, payload); return; }
+      catch(e){ /* quota -- fall through to the next store */ }
+    }
+  });
+}
+/* ---------- FACET UI ---------- */
+function buildFacetValues(){
+  FACETS.forEach(f=>{
+    const counts=new Map();
+    items.forEach(m=>{
+      let vals=f.csv?m[f.key]:[m[f.key]].filter(Boolean);
+      if(f.key==='ownedQ') vals=vals.map(v=>/^unowned$/i.test(v)?'UNOWNED':v);
+      vals.forEach(v=>counts.set(v,(counts.get(v)||0)+1));
+    });
+    let entries=[...counts.entries()];
+    // D2D/MA are "not applicable" for almost every row, so their UNOWNED
+    // bucket is dropped from the filter list as clutter.
+    if(f.key==='d2d'||f.key==='ma') entries=entries.filter(([v])=>v!=='UNOWNED');
+    facetValues[f.key]=entries.sort((a,b)=>
+      f.numeric ? parseFloat(a[0].replace(/[^0-9.]/g,''))-parseFloat(b[0].replace(/[^0-9.]/g,''))
+                : a[0].localeCompare(b[0]));
+    if(!selected[f.key]) selected[f.key]=new Set();
+  });
+}
+function buildFacets(){
+  const host=$('#facets');
+  const openKey=(document.querySelector('.facet.open')||{}).dataset?.key;
+  host.textContent='';
+  FACETS.forEach(f=>{
+    const el=document.createElement('div');
+    el.className='facet'; el.dataset.key=f.key;
+    const many=facetValues[f.key].length>12;
+    const btn=document.createElement('button');
+    btn.className='facet-btn';
+    const lbl=document.createElement('span'); lbl.textContent=f.label;
+    const badge=document.createElement('span'); badge.className='count-badge'; badge.style.display='none'; badge.textContent='0';
+    const icon=document.createElement('span'); icon.className='icon'; icon.textContent=many?'+':'▾';
+    btn.append(lbl,badge,icon);
+    const panel=document.createElement('div'); panel.className='facet-panel';
+    let search=null;
+    if(facetValues[f.key].length>10){
+      search=document.createElement('input');
+      search.className='opt-search'; search.placeholder='Search…';
+      panel.appendChild(search);
+    }
+    const list=document.createElement('div'); list.className='opt-list';
+    const clear=document.createElement('button'); clear.className='facet-clear'; clear.textContent='Clear';
+    panel.append(list,clear);
+    el.append(btn,panel);
+    host.appendChild(el);
+    const render=(q='')=>{
+      const ql=q.toLowerCase();
+      const itemsF=facetValues[f.key].filter(([v])=>!ql||v.toLowerCase().includes(ql));
+      const shown=itemsF.slice(0,250);
+      list.textContent='';
+      const frag=document.createDocumentFragment();
+      shown.forEach(([v,n])=>{
+        const label=document.createElement('label');
+        const cb=document.createElement('input');
+        cb.type='checkbox'; cb.value=v; cb.checked=selected[f.key].has(v);
+        const name=document.createElement('span'); name.textContent=v;
+        const cnt=document.createElement('span'); cnt.className='n'; cnt.textContent=n;
+        label.append(cb,name,cnt);
+        frag.appendChild(label);
+      });
+      if(itemsF.length>250){
+        const more=document.createElement('div');
+        more.className='opt-more';
+        more.textContent=(itemsF.length-250)+' more — type to narrow down';
+        frag.appendChild(more);
+      }
+      list.appendChild(frag);
+    };
+    btn.addEventListener('click',()=>{
+      const was=el.classList.contains('open');
+      document.querySelectorAll('.facet.open').forEach(x=>x.classList.remove('open'));
+      if(!was){ el.classList.add('open'); render(search?search.value:''); if(search) search.focus(); }
+    });
+    if(search) search.addEventListener('input',()=>render(search.value));
+    list.addEventListener('change',e=>{
+      if(e.target.type!=='checkbox') return;
+      const v=e.target.value;
+      e.target.checked?selected[f.key].add(v):selected[f.key].delete(v);
+      updateBadge(el,f.key); applyFilters();
+    });
+    clear.addEventListener('click',()=>{
+      selected[f.key].clear(); render(search?search.value:''); updateBadge(el,f.key); applyFilters();
+    });
+    updateBadge(el,f.key);
+    if(openKey===f.key){ el.classList.add('open'); render(); }
+  });
+}
+function updateBadge(el,key){
+  const b=el.querySelector('.count-badge'), n=selected[key].size;
+  b.style.display=n?'inline-block':'none'; b.textContent=n;
+}
+document.addEventListener('click',e=>{
+  if(!e.target.closest('.facet')) document.querySelectorAll('.facet.open').forEach(x=>x.classList.remove('open'));
+});
+/* ---------- SLIDERS ---------- */
+function buildSliders(){
+  // Once the ranges have been touched, leave them alone -- a late-arriving
+  // batch of tabs must not silently reset a filter mid-use.
+  if(slidersTouched) return;
+  const host=$('#sliders'); host.textContent='';
+  SLIDERS.forEach(s=>{
+    const vals=items.map(m=>m[s.key]).filter(v=>v!=null);
+    if(vals.length){
+      s.min=Math.floor(Math.min(s.min,...vals));
+      s.max=Math.ceil(Math.max(s.max,...vals));
+    }
+    rangeState[s.key]={lo:s.min,hi:s.max};
+    const el=document.createElement('div');
+    el.className='slider-group';
+    el.innerHTML=
+      '<div class="sl-title"></div>'+
+      '<div class="range-wrap"><div class="rail"></div><div class="fill"></div>'+
+        '<input type="range" class="lo"><input type="range" class="hi"></div>'+
+      '<div class="sl-vals"><input class="v-lo" type="number" title="Type a value">'+
+        '<input class="v-hi" type="number" title="Type a value"></div>';
+    el.querySelector('.sl-title').textContent=s.label;
+    host.appendChild(el);
+    const lo=el.querySelector('.lo'), hi=el.querySelector('.hi'),
+          fill=el.querySelector('.fill'), vlo=el.querySelector('.v-lo'), vhi=el.querySelector('.v-hi');
+    [lo,hi,vlo,vhi].forEach(inp=>{ inp.min=s.min; inp.max=s.max; inp.step=s.step; });
+    lo.value=s.min; hi.value=s.max;
+    const paint=()=>{
+      const a=+lo.value,b=+hi.value;
+      let mn=Math.min(a,b),mx=Math.max(a,b);
+      if(mn < s.min + s.step/2) mn = s.min;
+      if(mx > s.max - s.step/2) mx = s.max;
+      rangeState[s.key]={lo:mn,hi:mx};
+      const pct=v=>(v-s.min)/(s.max-s.min)*100;
+      fill.style.left=pct(mn)+'%'; fill.style.width=(pct(mx)-pct(mn))+'%';
+      vlo.value=mn; vhi.value=mx;
+    };
+    paint();
+    let t;
+    const onInput=()=>{ slidersTouched=true; paint(); clearTimeout(t); t=setTimeout(applyFilters,150); };
+    lo.addEventListener('input',onInput); hi.addEventListener('input',onInput);
+    const manual=(inputEl,rangeEl)=>{
+      let v=parseFloat(inputEl.value);
+      if(isNaN(v)){ paint(); return; }
+      v=Math.max(s.min,Math.min(s.max,v));
+      rangeEl.value=v; slidersTouched=true;
+      paint(); applyFilters();
+    };
+    vlo.addEventListener('change',()=>manual(vlo,lo));
+    vhi.addEventListener('change',()=>manual(vhi,hi));
+    vlo.addEventListener('keydown',e=>{ if(e.key==='Enter') vlo.blur(); });
+    vhi.addEventListener('keydown',e=>{ if(e.key==='Enter') vhi.blur(); });
+    s._reset=()=>{ lo.value=s.min; hi.value=s.max; slidersTouched=false; paint(); };
+  });
+}
+/* ---------- FILTER + SORT + RENDER ---------- */
+function applyFilters(keepPage){
+  const q=$('#searchBox').value.trim().toLowerCase();
+  filtered=items.filter(m=>{
+    if(q && !m.search.includes(q)) return false;
+    if(quickTags.size && !m.tags.some(t=>quickTags.has(t))) return false;
+    for(const f of FACETS){
+      const sel=selected[f.key]; if(!sel.size) continue;
+      const vals=f.csv?m[f.key]:[m[f.key]];
+      if(!vals.some(v=>sel.has(v))) return false;
+    }
+    for(const s of SLIDERS){
+      const r=rangeState[s.key];
+      if(!r) continue;
+      if(r.lo>s.min || r.hi<s.max){
+        const v=m[s.key];
+        if(v==null || v<r.lo || v>r.hi) return false;
+      }
+    }
+    return true;
+  });
+  sortItems();
+  if(!keepPage) page=0;
+  renderPage();
+}
+function sortItems(){
+  const [key,dir]=$('#sortSel').value.split('|');
+  const mul=dir==='asc'?1:-1;
+  filtered.sort((a,b)=>{
+    if(key==='sortTitle'){
+      const x=a.sortTitle,y=b.sortTitle;
+      return mul*(x<y?-1:x>y?1:0);
+    }
+    const x=a[key], y=b[key];
+    if(x==null&&y==null) return 0;
+    if(x==null) return 1;
+    if(y==null) return -1;
+    return mul*(x-y);
+  });
+}
+/* Cards are built once and kept, keyed by title identity. When a later batch
+   of tabs lowers a price or adds a "where" label, the existing card is UPDATED
+   in place rather than rebuilt -- and re-ordering the grid just moves the
+   existing nodes, so a poster that has already loaded never reloads. This is
+   what makes the mid-load merge invisible instead of a full grid flash. */
+const cardCache = new Map();
+const CARD_CACHE_MAX = 800;
+function buildCard(m){
+  const a=document.createElement('a');
+  a.className='card'; a.target='_blank'; a.rel='noopener';
+  if(m.img){ a.appendChild(makePoster(m)); }
+  else{
+    const ph=document.createElement('div'); ph.className='ph'; ph.textContent=m.title;
+    a.appendChild(ph);
+  }
+  const where=document.createElement('span'); where.className='where-tag';
+  a.appendChild(where);
+  if(m.type==='TV Shows'){
+    const tv=document.createElement('span'); tv.className='type-tag'; tv.textContent='TV';
+    a.appendChild(tv);
+  }
+  const ratings=document.createElement('div'); ratings.className='ratings';
+  const rt=document.createElement('span');
+  const imdb=document.createElement('span'); imdb.className='imdb-tag';
+  ratings.appendChild(rt); ratings.appendChild(imdb);
+  a.appendChild(ratings);
+  const price=document.createElement('span'); price.className='price-tag';
+  a.appendChild(price);
+  a._where=where; a._price=price;
+  a._ratings=ratings; a._rt=rt; a._imdb=imdb;
+  syncCard(a,m);
+  return a;
+}
+function syncCard(a,m){
+  a.href=m.url||'#';
+  a.title=`${m.title}${m.year?' ('+m.year+')':''} — ${m.tags.join(', ')}`;
+  a._where.textContent=m.where.join(' · ');
+  // Hover ratings. Each badge hides on its own when its score is missing, and
+  // the whole strip stays out of the way when neither score came through.
+  const rtN = (m.tomato==null || isNaN(m.tomato)) ? null : Math.round(m.tomato);
+  const imN = (m.imdb==null || isNaN(m.imdb)) ? null : m.imdb;
+  if(rtN!=null){
+    a._rt.textContent='RT '+rtN+'%';
+    a._rt.className='rt-tag '+(rtN>=60?'fresh':'rotten');
+    a._rt.style.display='';
+  }else{ a._rt.style.display='none'; }
+  if(imN!=null){
+    a._imdb.textContent='IMDb '+imN.toFixed(1);
+    a._imdb.style.display='';
+  }else{ a._imdb.style.display='none'; }
+  a._ratings.style.display=(rtN!=null||imN!=null)?'':'none';
+  a.classList.toggle('no-price', m.price==null);
+  if(m.price!=null){
+    // Blue when today's price beats every price ever recorded for this title;
+    // green when it merely matches that historical low.
+    let cls='price-tag';
+    if(m.lowest!=null){
+      if(m.price < m.lowest - 0.005) cls+=' new-low';
+      else if(Math.abs(m.price-m.lowest) < 0.005) cls+=' tied-low';
+    }
+    a._price.className=cls;
+    a._price.textContent='$'+m.price.toFixed(2)+(m.saleQ&&m.saleQ!=='—'?' '+m.saleQ:'');
+    a._price.style.display='';
+  }else{
+    a._price.style.display='none';
+  }
+}
+function getCard(m){
+  let el=cardCache.get(m.key);
+  if(el){ syncCard(el,m); return el; }
+  el=buildCard(m);
+  cardCache.set(m.key,el);
+  if(cardCache.size>CARD_CACHE_MAX){
+    const oldest=cardCache.keys().next().value;
+    cardCache.delete(oldest);
+  }
+  return el;
+}
+function renderPage(){
+  const total=filtered.length;
+  const pages=Math.max(1,Math.ceil(total/PER_PAGE));
+  page=Math.min(page,pages-1);
+  const start=page*PER_PAGE, end=Math.min(start+PER_PAGE,total);
+  const label= total? `${start+1} - ${end} / ${total}` : '0 results';
+  $('#pgLabel').textContent=label; $('#pgLabel2').textContent=label;
+  const atFirst=page===0, atLast=page>=pages-1;
+  $('#prevPg').disabled=atFirst;  $('#nextPg').disabled=atLast;
+  $('#prevPg2').disabled=atFirst; $('#nextPg2').disabled=atLast;
+  $('#railPrev').style.display=atFirst?'none':'flex';
+  $('#railNext').style.display=atLast?'none':'flex';
+  const frag=document.createDocumentFragment();
+  const used=new Set();
+  filtered.slice(start,end).forEach(m=>{
+    let el=getCard(m);
+    if(used.has(el)) return;   // same node can't sit in two places at once
+    used.add(el);
+    frag.appendChild(el);
+  });
+  $('#grid').replaceChildren(frag);
+}
+function toTop(){
+  $('#grid').scrollTop=0;
+  $('#pagerTop').scrollIntoView({behavior:'smooth', block:'start'});
+}
+function goPrev(){ if(page>0){ page--; renderPage(); toTop(); } }
+function goNext(){ page++; renderPage(); toTop(); }
+$('#prevPg').addEventListener('click',goPrev);   $('#nextPg').addEventListener('click',goNext);
+$('#prevPg2').addEventListener('click',goPrev);  $('#nextPg2').addEventListener('click',goNext);
+$('#railPrev').addEventListener('click',goPrev); $('#railNext').addEventListener('click',goNext);
+let searchTimer;
+$('#searchBox').addEventListener('input',()=>{ clearTimeout(searchTimer); searchTimer=setTimeout(applyFilters,200); });
+$('#sortSel').addEventListener('change',()=>{ sortItems(); page=0; renderPage(); });
+document.querySelectorAll('#quickFilters input[type=checkbox]').forEach(cb=>{
+  cb.addEventListener('change',()=>{
+    cb.checked?quickTags.add(cb.value):quickTags.delete(cb.value);
+    applyFilters();
+  });
+});
+$('#resetAll').addEventListener('click',()=>{
+  $('#searchBox').value='';
+  quickTags.clear();
+  document.querySelectorAll('#quickFilters input[type=checkbox]').forEach(cb=>cb.checked=false);
+  FACETS.forEach(f=>selected[f.key].clear());
+  document.querySelectorAll('.facet').forEach(el=>updateBadge(el,el.dataset.key));
+  slidersTouched=false;
+  SLIDERS.forEach(s=>s._reset&&s._reset());
+  applyFilters();
+});
+$('#mobileFilterBtn').addEventListener('click',()=>document.body.classList.toggle('filtersOpen'));
+$('#sbCollapse').addEventListener('click',()=>{ document.body.classList.add('sbCollapsed'); syncPerPage(); renderPage(); });
+$('#sbExpand').addEventListener('click',()=>{ document.body.classList.remove('sbCollapsed'); syncPerPage(); renderPage(); });
+/* ---------- BOOT ----------
+   Paint opportunities, earliest first:
+     1. the session cache, if this tab has loaded the page recently. This one
+        is the complete previous result, so it doesn't reshuffle when the
+        refresh lands -- it just fills in whatever changed.
+     2. the two Today tabs on their own -- only when EARLY_PAINT is on.
+     3. the full set of 44.
+   Each repaints through the card cache, so posters already on screen stay put
+   and only genuinely new covers hit the network. */
+(async function(){
+  const t0=performance.now();
+  syncPerPage();
+  setStatus('Connecting…'); setBar(null);
+  const rebuild=()=>{
+    const keep=page;
+    buildFacetValues(); buildFacets(); buildSliders();
+    page=keep;
+    applyFilters(true);
+  };
+  let cached=readCache();
+  /* No local cache (first visit, cleared storage, private window) -- seed the
+     first paint from the Netlify bundle instead of sitting blank through 46
+     sequential sheet requests. The live refresh below still runs either way. */
+  let seeded=false;
+  if(!cached){
+    const seed=await seedFromSnapshot();
+    if(seed && seed.length){ cached=seed; seeded=true; }
+  }
+  if(cached){
+    items=cached;
+    rebuild();   // instant paint -- from the last visit, or from the snapshot
+    setStatus(seeded ? 'Loading the latest sales…' : 'Checking for new sales…');
+    setBar(0.25);
+    // Hand the network to the covers that are now on screen before starting 44
+    // sheet requests behind them. Waiting for load + an idle slot (with a hard
+    // cap so a page that never goes idle still refreshes) costs a fraction of a
+    // second of staleness and removes the contention entirely.
+    await new Promise(res=>{
+      let fired=false;
+      const go=()=>{ if(fired) return; fired=true; res(); };
+      const arm=()=>{
+        const idle = window.requestIdleCallback || (f=>setTimeout(f,REFRESH_DELAY_MS));
+        idle(go, {timeout:1500});
+        setTimeout(go, 2000);        // hard cap -- never let this stall the refresh
+      };
+      if(document.readyState==='complete') arm();
+      else window.addEventListener('load', arm, {once:true});
+    });
+  }
+  let rawRows=[];
+  const priorityTabs = TABS.filter(t=>t.priority);
+  const restTabs     = TABS.filter(t=>!t.priority);
+  let done=0;
+  const progress=()=>{
+    done++;
+    // Tabs are 85% of the bar; merging, facets and the first render are the
+    // rest, so it doesn't sit at 100% while the page is still working.
+    setBar(0.85 * done / TABS.length);
+    if(!cached) setStatus(`Loading sales… ${done} of ${TABS.length} tabs`);
+  };
+  // Staged only when EARLY_PAINT is on AND there's no cache to paint from.
+  // Otherwise every tab goes out in one pass and the grid paints once.
+  const staged = EARLY_PAINT && !cached;
+  try{
+    if(staged){
+      rawRows = await loadTabs(priorityTabs, progress);
+      if(rawRows.length){
+        items=mergeItems(rawRows);
+        rebuild();
+        setStatus(`Today's sales are up — loading the rest…`);
+      }
+    }
+    const restRows = await loadTabs(staged ? restTabs : TABS, progress);
+    rawRows = staged ? rawRows.concat(restRows) : restRows;
+    if(!rawRows.length){
+      throw new Error('No rows found — is the sheet shared as "Anyone with the link"?');
+    }
+    setStatus('Merging '+rawRows.length.toLocaleString()+' rows…');
+    setBar(0.9);
+    items=mergeItems(rawRows);
+    rebuild();
+    setBar(1);
+    writeCache(items);
+    barDone();
+    setStatus(null);
+    console.info(`[sales] ${items.length} titles from ${TABS.length} tabs in ${Math.round(performance.now()-t0)}ms`
+                 + ` (transport: ${TRANSPORT}, filter: ${SHEET_QUERY_FILTER?'on':'off'}, proxy: ${proxyIdx})`);
+  }catch(err){
+    barDone();
+    if(items.length){
+      setStatus('Showing cached sales — refresh failed', false, true);
+      toast('Could not refresh: '+err.message, true);
+    }else{
+      setStatus('Could not load the sales sheet: '+err.message, false, true);
+    }
+  }
+})();
+</script>
+</body>
+</html>
+
