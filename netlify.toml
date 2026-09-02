@@ -60,27 +60,6 @@
     Referrer-Policy = "strict-origin-when-cross-origin"
 
 # ---------------------------------------------------------------------------
-# POSTER PROXY.
-# Work networks (and some ISPs) block anything with the Vudu address in it.
-# That blocks not just the direct poster URLs but every image proxy the pages
-# fall back to, because all of them carry the original URL in their path or
-# query: cdn.statically.io/img/images2.vudu.com/..., i0.wp.com/images2.vudu.com/...,
-# wsrv.nl/?url=...images2.vudu.com... . A filter matching that string blocks the
-# lot, which is why the Movies and D2D grids came up blank at work.
-#
-# Routed through this domain, the browser only ever requests /p/<id>-l. Netlify
-# fetches from Vudu server-side, where no client-side filter applies, and its
-# CDN caches the result -- so Vudu is hit once per poster globally, not once
-# per visitor.
-#
-# Deliberately narrow: it can only ever reach images2.vudu.com/poster2/, so it
-# is not an open proxy that anyone could point at an arbitrary host.
-[[redirects]]
-  from = "/p/*"
-  to = "https://images2.vudu.com/poster2/:splat"
-  status = 200
-
-# ---------------------------------------------------------------------------
 # Clean URLs: /wishlist instead of /wishlist.html
 [[redirects]]
   from = "/movies"

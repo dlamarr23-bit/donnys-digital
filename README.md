@@ -116,6 +116,35 @@ Both seeds are parsed by the pages' own parsers (`parseTabRows` /
 `parseBundleRows` for Sales, `parseCsvData` / `parseGviz` for D2D), so there is
 no second copy of those schemas to drift out of sync.
 
+## Posters
+
+Every page routes `<img>` through Netlify's Image CDN (`/.netlify/images`), set
+up by a small script at the top of each `<head>`.
+
+The reason is not primarily speed. Networks that filter on hostname -- a work
+network, some ISPs -- block `images2.vudu.com`, and the fallback proxies the
+pages walk through (`cdn.statically.io`, `i0.wp.com`, `wsrv.nl`) are separate
+hostnames that get blocked just as easily. That is why the Movies and D2D grids
+came up blank at work while MA Compare, which uses `moviesanywhere.com`, was
+fine. Routed through the Image CDN the browser only ever connects to this site,
+so a host-based filter has nothing to match. Confirmed working on the network
+that was blocking Vudu.
+
+The resizing is a bonus: a poster arrives as ~10KB of webp rather than ~40KB of
+source jpeg.
+
+Note that the proxied URL still carries the original address in its query
+string, so this defeats a filter matching on *hostname*, not one matching the
+URL text. A same-origin `/p/*` redirect was tried first for the stricter case
+and removed once the Image CDN was confirmed working -- worth remembering if a
+different network ever behaves differently.
+
+The `[images] remote_images` allowlist in `netlify.toml` governs which hosts the
+Image CDN will fetch. A host that is not on it is refused, so add it there
+before pointing anything new at it.
+
+The per-page proxy chains are untouched and still act as the error fallback.
+
 ## Layout
 
 ```

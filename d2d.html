@@ -1,16 +1,29 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-   <!-- ===================================================================
-     Paste this block into index.html, inside <head>, BEFORE the line
-     that loads your app bundle (the <script src="/assets/index-....js">).
+<!-- ===================================================================
+     POSTER ROUTING -- runs before anything else in the page.
 
-     It rewrites the src of every <img> on every page -- now and as the
-     app renders more -- to load through your own domain via Netlify's
-     Image CDN. Your work browser never contacts images2.vudu.com, so
-     the filter has nothing to block.
+     Rewrites the src of every <img>, now and as the grid renders more, to
+     load through this domain via Netlify's Image CDN instead of straight
+     from the image host.
 
-     Requires the [images] remote_images block in netlify.toml.
+     Two reasons, in order of how much they matter:
+
+     1. Networks that filter on hostname (a work network, some ISPs) block
+        images2.vudu.com outright, and the fallback proxies the pages walk
+        through -- cdn.statically.io, i0.wp.com, wsrv.nl -- are separate
+        hostnames that can be blocked just as easily. Routed through here
+        the browser only ever connects to this site, so there is nothing
+        for a host-based filter to match. (Confirmed working on a network
+        that was blocking Vudu.)
+
+     2. The Image CDN resizes and re-encodes: a poster arrives as ~10KB of
+        webp instead of ~40KB of source jpeg.
+
+     Requires the [images] remote_images allowlist in netlify.toml -- a URL
+     whose host is not on that list is refused by the Image CDN, so add the
+     host there before pointing anything new at it.
      =================================================================== -->
 <script>
 (function () {
@@ -658,14 +671,6 @@ const VUDU_PROXIES = [
   u => 'https://i0.wp.com/' + stripScheme(u) + '?w=400',
   u => 'https://wsrv.nl/?w=400&url=' + encodeURIComponent(u),
   u => 'https://images1-focus-opensocial.googleusercontent.com/gadgets/proxy?container=focus&resize_w=400&url=' + encodeURIComponent(u),
-  /* Last resort, and the only one that survives a network filtering the Vudu
-     address: same-origin, proxied through to Vudu by netlify.toml. Every
-     proxy above carries "images2.vudu.com" in its path or query, so one
-     filter matching that string takes out the whole chain. Kept last so the
-     resizing proxies still serve everyone who can reach them -- and the
-     winner is remembered for the session, so only the first cover pays for
-     walking down to here. */
-   u => u.replace(/^https?:\/\/images2\.vudu\.com\/poster2\//i, '/p/'),
 ];
 const isVudu = u => /vudu\.com/i.test(u);
 const firstSrc = u => isVudu(u) ? VUDU_PROXIES[0](u) : u;

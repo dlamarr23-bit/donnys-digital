@@ -1,6 +1,80 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<!-- ===================================================================
+     POSTER ROUTING -- runs before anything else in the page.
+
+     Rewrites the src of every <img>, now and as the grid renders more, to
+     load through this domain via Netlify's Image CDN instead of straight
+     from the image host.
+
+     Two reasons, in order of how much they matter:
+
+     1. Networks that filter on hostname (a work network, some ISPs) block
+        images2.vudu.com outright, and the fallback proxies the pages walk
+        through -- cdn.statically.io, i0.wp.com, wsrv.nl -- are separate
+        hostnames that can be blocked just as easily. Routed through here
+        the browser only ever connects to this site, so there is nothing
+        for a host-based filter to match. (Confirmed working on a network
+        that was blocking Vudu.)
+
+     2. The Image CDN resizes and re-encodes: a poster arrives as ~10KB of
+        webp instead of ~40KB of source jpeg.
+
+     Requires the [images] remote_images allowlist in netlify.toml -- a URL
+     whose host is not on that list is refused by the Image CDN, so add the
+     host there before pointing anything new at it.
+     =================================================================== -->
+<script>
+(function () {
+  var PROXY  = "/.netlify/images";
+  var WIDTH  = 300;      // poster cards render ~150px wide; 300 covers retina
+  var FORMAT = "webp";   // smaller than the source jpg
+
+  function proxied(u) {
+    if (!u) return u;
+    u = String(u).trim();
+    if (!/^(https?:)?\/\//i.test(u)) return u;              // relative -> leave alone
+    if (u.indexOf("/.netlify/images") !== -1) return u;     // already proxied
+    if (u.indexOf("//" + location.host) !== -1) return u;   // same-site -> leave alone
+    if (u.slice(0, 2) === "//") u = "https:" + u;
+    else if (u.slice(0, 5).toLowerCase() === "http:") u = "https:" + u.slice(5);
+    return PROXY + "?url=" + encodeURIComponent(u) + "&w=" + WIDTH + "&fm=" + FORMAT;
+  }
+
+  function fix(el) {
+    if (!el || el.tagName !== "IMG") return;
+    var src = el.getAttribute("src");
+    var next = proxied(src);
+    if (next && next !== src) el.setAttribute("src", next);
+  }
+
+  function scan(root) {
+    if (!root || root.nodeType !== 1) return;
+    fix(root);
+    if (root.querySelectorAll) {
+      var imgs = root.querySelectorAll("img");
+      for (var i = 0; i < imgs.length; i++) fix(imgs[i]);
+    }
+  }
+
+  new MutationObserver(function (mutations) {
+    for (var i = 0; i < mutations.length; i++) {
+      var m = mutations[i];
+      if (m.type === "attributes") fix(m.target);
+      else for (var j = 0; j < m.addedNodes.length; j++) scan(m.addedNodes[j]);
+    }
+  }).observe(document.documentElement, {
+    childList: true, subtree: true, attributes: true, attributeFilter: ["src"]
+  });
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", function () { scan(document.body); });
+  } else {
+    scan(document.body);
+  }
+})();
+</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Donny's Wishlist</title>
@@ -565,14 +639,6 @@ const VUDU_PROXIES = [
   u => 'https://i0.wp.com/' + stripScheme(u) + '?w=400',
   u => 'https://wsrv.nl/?w=400&url=' + encodeURIComponent(u),
   u => 'https://images1-focus-opensocial.googleusercontent.com/gadgets/proxy?container=focus&resize_w=400&url=' + encodeURIComponent(u),
-  /* Last resort, and the only one that survives a network filtering the Vudu
-     address: same-origin, proxied through to Vudu by netlify.toml. Every
-     proxy above carries "images2.vudu.com" in its path or query, so one
-     filter matching that string takes out the whole chain. Kept last so the
-     resizing proxies still serve everyone who can reach them -- and the
-     winner is remembered for the session, so only the first cover pays for
-     walking down to here. */
-   u => u.replace(/^https?:\/\/images2\.vudu\.com\/poster2\//i, '/p/'),
 ];
 const isVudu = u => /vudu\.com/i.test(u);
 // The URL to try first for a given poster.
