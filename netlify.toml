@@ -106,3 +106,21 @@
   from = "/d2d"
   to = "/d2d.html"
   status = 200
+  
+  [images]
+  remote_images = [
+    'https?://([a-z0-9-]+\.)*vudu\.com/.*',
+    'https?://([a-z0-9-]+\.)*fandango\.com/.*',
+    'https?://([a-z0-9-]+\.)*fandangonow\.com/.*',
+    'https?://([a-z0-9-]+\.)*moviesanywhere\.com/.*',
+    'https?://([a-z0-9-]+\.)*staticflickr\.com/.*',
+    'https?://([a-z0-9-]+\.)*ssl-images-amazon\.com/.*',
+    'https?://([a-z0-9-]+\.)*media-amazon\.com/.*',
+    'https?://([a-z0-9-]+\.)*barcodespider\.com/.*',
+    'https?://image\.tmdb\.org/.*',
+    'https?://([a-z0-9-]+\.)*wikimedia\.org/.*',
+    'https?://([a-z0-9-]+\.)*mzstatic\.com/.*',
+    'https?://([a-z0-9-]+\.)*googleusercontent\.com/.*',
+    'https?://([a-z0-9-]+\.)*akamaized\.net/.*',
+    'https?://([a-z0-9-]+\.)*cloudfront\.net/.*',
+  ]

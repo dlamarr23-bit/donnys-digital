@@ -1,6 +1,67 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+     <!-- ===================================================================
+     Paste this block into index.html, inside <head>, BEFORE the line
+     that loads your app bundle (the <script src="/assets/index-....js">).
+
+     It rewrites the src of every <img> on every page -- now and as the
+     app renders more -- to load through your own domain via Netlify's
+     Image CDN. Your work browser never contacts images2.vudu.com, so
+     the filter has nothing to block.
+
+     Requires the [images] remote_images block in netlify.toml.
+     =================================================================== -->
+<script>
+(function () {
+  var PROXY  = "/.netlify/images";
+  var WIDTH  = 300;      // poster cards render ~150px wide; 300 covers retina
+  var FORMAT = "webp";   // smaller than the source jpg
+
+  function proxied(u) {
+    if (!u) return u;
+    u = String(u).trim();
+    if (!/^(https?:)?\/\//i.test(u)) return u;              // relative -> leave alone
+    if (u.indexOf("/.netlify/images") !== -1) return u;     // already proxied
+    if (u.indexOf("//" + location.host) !== -1) return u;   // same-site -> leave alone
+    if (u.slice(0, 2) === "//") u = "https:" + u;
+    else if (u.slice(0, 5).toLowerCase() === "http:") u = "https:" + u.slice(5);
+    return PROXY + "?url=" + encodeURIComponent(u) + "&w=" + WIDTH + "&fm=" + FORMAT;
+  }
+
+  function fix(el) {
+    if (!el || el.tagName !== "IMG") return;
+    var src = el.getAttribute("src");
+    var next = proxied(src);
+    if (next && next !== src) el.setAttribute("src", next);
+  }
+
+  function scan(root) {
+    if (!root || root.nodeType !== 1) return;
+    fix(root);
+    if (root.querySelectorAll) {
+      var imgs = root.querySelectorAll("img");
+      for (var i = 0; i < imgs.length; i++) fix(imgs[i]);
+    }
+  }
+
+  new MutationObserver(function (mutations) {
+    for (var i = 0; i < mutations.length; i++) {
+      var m = mutations[i];
+      if (m.type === "attributes") fix(m.target);
+      else for (var j = 0; j < m.addedNodes.length; j++) scan(m.addedNodes[j]);
+    }
+  }).observe(document.documentElement, {
+    childList: true, subtree: true, attributes: true, attributeFilter: ["src"]
+  });
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", function () { scan(document.body); });
+  } else {
+    scan(document.body);
+  }
+})();
+</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <!-- Tells the browser the page is dark BEFORE any CSS is parsed, so the very
