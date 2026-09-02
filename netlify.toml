@@ -84,7 +84,9 @@
 [[redirects]]
   from = "/d2d"
   to = "/d2d.html"
-  status = 200[images]
+  status = 200
+  
+  [images]
   remote_images = [
     'https?://([a-z0-9-]+\.)*vudu\.com/.*',
     'https?://([a-z0-9-]+\.)*fandango\.com/.*',
