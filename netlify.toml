@@ -1,87 +1,61 @@
-# Donny's Digital -- Netlify configuration
-#
-# The whole point of this move is the [[headers]] blocks below. Google's
-# published-CSV endpoint answers with "Cache-Control: private, max-age=300",
-# which bars every CDN from caching it and re-downloads 11.7MB on any visit
-# more than five minutes apart. Nothing about that is configurable at the
-# Google end -- it is why the site was slow, and it is what this replaces.
+<!-- ===================================================================
+     Paste this block into index.html, inside <head>, BEFORE the line
+     that loads your app bundle (the <script src="/assets/index-....js">).
 
-[build]
-  publish = "."
-  command = "node scripts/build-data.mjs"
+     It rewrites the src of every <img> on every page -- now and as the
+     app renders more -- to load through your own domain via Netlify's
+     Image CDN. Your work browser never contacts images2.vudu.com, so
+     the filter has nothing to block.
 
-# Rebuilding on a schedule is optional -- the pages catch up against the live
-# sheet in the background on every visit, so a stale snapshot is a slower
-# first paint, never wrong data. Set up a scheduled build in the Netlify UI
-# (Site configuration > Build & deploy > Build hooks) if you want the snapshot
-# itself kept current.
+     Requires the [images] remote_images block in netlify.toml.
+     =================================================================== -->
+<script>
+(function () {
+  var PROXY  = "/.netlify/images";
+  var WIDTH  = 300;      // poster cards render ~150px wide; 300 covers retina
+  var FORMAT = "webp";   // smaller than the source jpg
 
-# ---------------------------------------------------------------------------
-# Data snapshots. Filenames carry a content hash, so a given URL can never
-# change meaning and may be cached forever. A rebuild produces new filenames,
-# which the manifest points at -- the old ones simply stop being requested.
-[[headers]]
-  for = "/snapshots/*"
-  [headers.values]
-    Cache-Control = "public, max-age=31536000, immutable"
+  function proxied(u) {
+    if (!u) return u;
+    u = String(u).trim();
+    if (!/^(https?:)?\/\//i.test(u)) return u;              // relative -> leave alone
+    if (u.indexOf("/.netlify/images") !== -1) return u;     // already proxied
+    if (u.indexOf("//" + location.host) !== -1) return u;   // same-site -> leave alone
+    if (u.slice(0, 2) === "//") u = "https:" + u;
+    else if (u.slice(0, 5).toLowerCase() === "http:") u = "https:" + u.slice(5);
+    return PROXY + "?url=" + encodeURIComponent(u) + "&w=" + WIDTH + "&fm=" + FORMAT;
+  }
 
-# Brand mark and favicons. Checked in rather than generated, and their content
-# only changes if the artwork does -- so they get a long cache with a
-# revalidate rather than the immutable treatment reserved for hashed names.
-[[headers]]
-  for = "/assets/*"
-  [headers.values]
-    Cache-Control = "public, max-age=604800, stale-while-revalidate=86400"
+  function fix(el) {
+    if (!el || el.tagName !== "IMG") return;
+    var src = el.getAttribute("src");
+    var next = proxied(src);
+    if (next && next !== src) el.setAttribute("src", next);
+  }
 
-# CSV mirrors of the sheets the other pages parse. Stable filenames, so these
-# are revalidated rather than cached forever: a repeat visit costs one 304 and
-# no body, and a rebuild is picked up straight away. Still far better than
-# Google's "private, max-age=300" on a regenerated-per-request endpoint.
-[[headers]]
-  for = "/mirror/*"
-  [headers.values]
-    Cache-Control = "public, max-age=0, must-revalidate"
-    Content-Type = "text/csv; charset=utf-8"
+  function scan(root) {
+    if (!root || root.nodeType !== 1) return;
+    fix(root);
+    if (root.querySelectorAll) {
+      var imgs = root.querySelectorAll("img");
+      for (var i = 0; i < imgs.length; i++) fix(imgs[i]);
+    }
+  }
 
-# The pointer to the current snapshots. Small, and must be re-checked every
-# time or a rebuild would never be noticed.
-[[headers]]
-  for = "/data-manifest.json"
-  [headers.values]
-    Cache-Control = "public, max-age=0, must-revalidate"
+  new MutationObserver(function (mutations) {
+    for (var i = 0; i < mutations.length; i++) {
+      var m = mutations[i];
+      if (m.type === "attributes") fix(m.target);
+      else for (var j = 0; j < m.addedNodes.length; j++) scan(m.addedNodes[j]);
+    }
+  }).observe(document.documentElement, {
+    childList: true, subtree: true, attributes: true, attributeFilter: ["src"]
+  });
 
-# Pages themselves: always revalidate (they are ~100KB and change when I edit
-# them), but a 304 costs one round trip and no body.
-[[headers]]
-  for = "/*.html"
-  [headers.values]
-    Cache-Control = "public, max-age=0, must-revalidate"
-    X-Content-Type-Options = "nosniff"
-    Referrer-Policy = "strict-origin-when-cross-origin"
-
-# ---------------------------------------------------------------------------
-# Clean URLs: /wishlist instead of /wishlist.html
-[[redirects]]
-  from = "/movies"
-  to = "/index.html"
-  status = 200
-[[redirects]]
-  from = "/wishlist"
-  to = "/wishlist.html"
-  status = 200
-[[redirects]]
-  from = "/data"
-  to = "/data.html"
-  status = 200
-[[redirects]]
-  from = "/sales"
-  to = "/sales.html"
-  status = 200
-[[redirects]]
-  from = "/ma-compare"
-  to = "/ma-compare.html"
-  status = 200
-[[redirects]]
-  from = "/d2d"
-  to = "/d2d.html"
-  status = 200
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", function () { scan(document.body); });
+  } else {
+    scan(document.body);
+  }
+})();
+</script>
