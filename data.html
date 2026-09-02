@@ -75,7 +75,12 @@ html,body{margin:0;padding:0;background:#171C20}
   /* Published CSV of the Movies tab -- same link the collection page uses.
      File > Share > Publish to web > "Movies" > CSV if it ever needs redoing.
      Set to '' to force the gviz path below. */
-  var CSV_URL = '/mirror/movies.csv';
+  /* THE LIVE SHEET. This briefly pointed at /mirror/movies.csv, which is
+     written at deploy time, so these stats reflected the sheet as of the last
+     deploy rather than now. Correctness wins here: this page has no local
+     cache to fall back on, so reading the mirror meant there was no route to
+     current data at all. The trade is the full ~9s export again on load. */
+  var CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTNcy_TXkl7kRJvIvf4U_q9pZUCdrJ9RsQ8Vgnr5NoX8K679jUhWC6iWZvbCYR2bOaRG2ypgFB13PEB/pub?gid=0&single=true&output=csv';
 /* Was the published Google CSV below. That endpoint answers
    "Cache-Control: private, max-age=300" and is regenerated per request, so no
    CDN could hold it and every visit paid for the whole file again. The mirror

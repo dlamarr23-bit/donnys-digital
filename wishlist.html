@@ -491,7 +491,13 @@ const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw_nZsplHbJL2lL
 // quietly comes back with zero matching rows instead of failing loudly.
 // A published-CSV link bakes in the exact tab via its gid, so it always
 // reads the right data.
-const PUBLISHED_CSV_URL = '/mirror/wishlist.csv';
+/* THE LIVE SHEET. This briefly pointed at /mirror/wishlist.csv, which is
+   written at deploy time -- so the page showed whatever the sheet said at the
+   last deploy rather than what it says now. At 48KB / ~1.8s this one is cheap
+   enough to just read live every time; the mirror stays below as a fallback
+   for when Google is unreachable. */
+const PUBLISHED_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRoppbitXf4M7TtjyYx2pnmqX0YV4MaWWclDBBYVBsymbdUrKCcJsKZLRYuUmLC7LiHmVp_fqqfq032/pub?gid=424360819&single=true&output=csv';
+const MIRROR_CSV_URL = '/mirror/wishlist.csv';
 /* Was the published Google CSV below. That endpoint answers
    "Cache-Control: private, max-age=300" and is regenerated per request, so no
    CDN could hold it and every visit paid for the whole file again. The mirror
@@ -618,6 +624,14 @@ async function loadData(){
       const txt=await (await fetch(PUBLISHED_CSV_URL)).text();
       return requireRows(parseGviz(parseCsvData(txt)), 'check the CSV\'s header row against COLMAP at the top of this embed code');
     }catch(e){ errors.push('csv: '+e.message); }
+  }
+  // 1b) the deploy-time mirror. Stale by definition, but it bakes in the same
+  //     gid as the live CSV, so it reads the right tab -- unlike gviz below.
+  if(MIRROR_CSV_URL){
+    try{
+      const txt=await (await fetch(MIRROR_CSV_URL)).text();
+      return requireRows(parseGviz(parseCsvData(txt)), 'mirror had no usable rows');
+    }catch(e){ errors.push('mirror: '+e.message); }
   }
   // 2) direct fetch
   try{ return requireRows(parseGviz(await fetchGviz()), 'gviz may be reading the wrong tab (SHEET_NAME is blank, so it defaults to the sheet\'s first tab) — set SHEET_NAME to your wishlist tab\'s name'); }

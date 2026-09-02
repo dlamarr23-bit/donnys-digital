@@ -660,8 +660,10 @@ async function fetchCsv(){
 }
 async function fetchGviz(url){
   let txt=null;
-  // Reuse the request the <head> kicked off, if it's still available.
-  const early=window.__SHEET && window.__SHEET.early;
+  /* Reuse the request the <head> kicked off -- but ONLY when it was a gviz
+     request. With a mirror configured it holds CSV text, and JSON.parse would
+     choke on it and burn a fallback rung for nothing. */
+  const early=(window.__SHEET && !window.__SHEET.csvUrl) ? window.__SHEET.early : null;
   if(early){
     window.__SHEET.early=null;           // one-shot; refreshes re-fetch
     try{ txt=await early; }catch(e){ txt=null; }
@@ -693,19 +695,27 @@ function jsonpGviz(url){
     document.head.appendChild(script);
   });
 }
+/* THE LIVE SHEET, always -- never the mirror.
+   The mirror under /mirror/ is written at deploy time, so reading it here made
+   the page show whatever the sheet said at the last deploy. With deploys being
+   manual that could be hours or days stale, which is exactly what it looked
+   like. The mirror is still used, but only to put something on screen fast
+   (see the seed in the init below); what the page settles on always comes from
+   the sheet itself. */
 async function loadSheet(){
-  if(window.__SHEET.csvUrl){
-    try{ return await fetchCsv(); }
-    catch(e0){ /* fall through to gviz below -- the fetchGviz/jsonpGviz calls
-                  below still have their own early-response reuse via
-                  window.__SHEET.early, which fetchCsv() would have already
-                  consumed and released above if the CSV attempt got that far. */ }
-  }
   try{ return await fetchGviz(gvizUrl()); }
   catch(e1){
-    // JSONP on the filtered query, then on the plain tab as a last resort.
+    // JSONP on the filtered query, then on the plain tab.
     try{ return await jsonpGviz(gvizUrl()); }
-    catch(e2){ return await jsonpGviz(window.__SHEET.url); }
+    catch(e2){
+      try{ return await jsonpGviz(window.__SHEET.url); }
+      catch(e3){
+        /* Every live route failed (offline, sheet unshared, network filter).
+           The mirror is stale by definition, but stale beats an empty page. */
+        if(window.__SHEET.csvUrl) return await fetchCsv();
+        throw e3;
+      }
+    }
   }
 }
 const clean=v=>String(v??'').trim();
@@ -1099,6 +1109,22 @@ function writeCache(list){
 (async function(){
   syncPerPage();
   let cached=readCache();
+  /* No local cache -- first visit, cleared storage, private window. Paint from
+     the deploy-time mirror so the grid is not empty while the live sheet
+     loads (1.3MB, ~9.5s when measured). cached is deliberately left null:
+     this is a placeholder, so the live data below must replace it wholesale
+     rather than being diffed against it. */
+  if(!cached || !cached.length){
+    try{
+      const seed=parseRows(await fetchCsv());
+      if(seed.length){
+        items=seed;
+        buildFacetValues(); buildFacets(); buildSliders();
+        applyFilters();
+        setStatus('Loading the latest sheet dataâ€¦'); setBar(0.3);
+      }
+    }catch(e){ console.warn('[ma] mirror seed unavailable:', e && e.message); }
+  }
   if(cached && cached.length){
     items=cached;
     buildFacetValues(); buildFacets(); buildSliders();

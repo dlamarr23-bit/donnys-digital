@@ -42,9 +42,14 @@ Actors another 15%); collapsing `Img`/`Link` to a bare id (18% of the CSV, and
 94% of rows collapse to an id plus a one-digit flag); and dictionary-encoding
 the columns that repeat across 19k rows.
 
-**CSV mirrors** (the other pages). Reshaping every loader was not worth it, so
-their sheets are mirrored byte-for-byte to `/mirror/*.csv` — same bytes, same
-parser, but from a CDN with Brotli and a real revalidate.
+**CSV mirrors** (the other pages). Their sheets are mirrored byte-for-byte to
+`/mirror/*.csv` — same bytes, same parser, but from a CDN with Brotli.
+
+Mirrors are written at DEPLOY TIME, so no page may treat one as its source of
+truth. Every page reads the live sheet and uses its mirror only to put
+something on screen first, or as a fallback when the live sheet is
+unreachable. MA Compare, Wishlist and Data initially had this backwards and
+showed deploy-time data until the next deploy.
 
 ## The data stays live
 
