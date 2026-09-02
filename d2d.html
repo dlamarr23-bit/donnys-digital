@@ -597,6 +597,14 @@ const VUDU_PROXIES = [
   u => 'https://i0.wp.com/' + stripScheme(u) + '?w=400',
   u => 'https://wsrv.nl/?w=400&url=' + encodeURIComponent(u),
   u => 'https://images1-focus-opensocial.googleusercontent.com/gadgets/proxy?container=focus&resize_w=400&url=' + encodeURIComponent(u),
+  /* Last resort, and the only one that survives a network filtering the Vudu
+     address: same-origin, proxied through to Vudu by netlify.toml. Every
+     proxy above carries "images2.vudu.com" in its path or query, so one
+     filter matching that string takes out the whole chain. Kept last so the
+     resizing proxies still serve everyone who can reach them -- and the
+     winner is remembered for the session, so only the first cover pays for
+     walking down to here. */
+   u => u.replace(/^https?:\/\/images2\.vudu\.com\/poster2\//i, '/p/'),
 ];
 const isVudu = u => /vudu\.com/i.test(u);
 const firstSrc = u => isVudu(u) ? VUDU_PROXIES[0](u) : u;
