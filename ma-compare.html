@@ -445,6 +445,10 @@ body{
   padding:2px 6px;font:700 10px 'Poppins',sans-serif;letter-spacing:.6px;
   pointer-events:none;
 }
+     .card .where-tag.r-vudu       { background:#3478C1; }
+.card .where-tag.r-itunes     { background:#272727; }
+.card .where-tag.r-amazon     { background:#FF6200; }
+.card .where-tag.r-googleplay { background:linear-gradient(135deg,#EA4335 0%,#FBBC04 35%,#34A853 68%,#4285F4 100%); }
 #toast{
   position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:120;
   background:#263238;color:#eceff1;border-radius:8px;padding:10px 18px;
@@ -1124,7 +1128,7 @@ function renderPage(){
         width="250" height="375" src="${esc(m.img)}"
         onerror="this.remove();this.parentNode.insertAdjacentHTML('afterbegin','<div class=ph>${esc(m.title).replace(/'/g,'&#39;')}</div>')">`
         :`<div class="ph">${esc(m.title)}</div>`}
-      ${m.retailer?`<span class="where-tag">${esc(m.retailer)}</span>`:''}
+      ${m.retailer?`<span class="where-tag r-${m.retailer.toLowerCase().replace(/ /g,'')}">${esc(m.retailer)}</span>`:''}
       ${m.price!=null?`<span class="price-tag">$${m.price.toFixed(2)}${m.priceQuality?' '+m.priceQuality:''}</span>`:''}
     </a>`;
   }).join('');
