@@ -102,4 +102,7 @@
     'https?://([a-z0-9-]+\.)*googleusercontent\.com/.*',
     'https?://([a-z0-9-]+\.)*akamaized\.net/.*',
     'https?://([a-z0-9-]+\.)*cloudfront\.net/.*',
+    # Photon -- the poster fallback in wishlist/data/d2d. Without this the
+    # Image CDN refuses the URL outright (400, "not an allowed pattern").
+    'https?://([a-z0-9-]+\.)*wp\.com/.*',
   ]

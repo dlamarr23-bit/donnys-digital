@@ -88,10 +88,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Donny's Wishlist</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://cdn.statically.io">
-<link rel="preconnect" href="https://i0.wp.com">
-<link rel="preconnect" href="https://images1-focus-opensocial.googleusercontent.com">
-<link rel="preconnect" href="https://wsrv.nl">
+<link rel="dns-prefetch" href="https://i0.wp.com">
+<link rel="dns-prefetch" href="https://i1.wp.com">
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@700&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -637,17 +635,31 @@ const $=s=>document.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const splitCsv=s=>String(s??'').split(',').map(x=>x.trim()).filter(Boolean);
 // ---- POSTER PROXYING ----
-// Posters are built from https://images2.vudu.com/... which is blocked on some
-// work networks AND refused by several image proxies, so for Vudu URLs we try a
-// list of proxies in order and the first that succeeds for a given poster wins.
-// (This matches the movies page.) Reorder the list to put your known-good proxy
-// first for the snappiest loads. Non-Vudu posters load directly, then wsrv.nl.
+// Posters come from images2.vudu.com, which some networks block outright, so
+// for Vudu URLs we walk a list of routes and the first that answers wins.
+// Non-Vudu posters load directly, then fall back to Photon.
 const stripScheme = u => u.replace(/^https?:\/\//,'');
+// Every entry here is handed to the Image CDN by the POSTER ROUTING shim at the
+// top of the page, so a route only works if its HOST is in the remote_images
+// allowlist in netlify.toml AND the upstream actually answers. The old chain
+// failed both tests on every single entry:
+//
+//   cdn.statically.io  -> 400, host not allowlisted (and 403 direct: Statically
+//                         disabled its /img/ endpoint)
+//   i0.wp.com          -> 400, host not allowlisted
+//   wsrv.nl            -> 400, host not allowlisted (and 404 direct: vudu
+//                         refuses wsrv's fetcher)
+//   .../gadgets/proxy  -> allowlisted via googleusercontent.com, but 404 upstream
+//
+// So no cover could ever load: all four routes were tried and all four failed,
+// leaving the text placeholder. The one URL the Image CDN will fetch is the
+// direct Vudu one, which is what index.html discovers via its direct probe and
+// why the movies page kept working. Direct goes first; Photon's shards stay as
+// a real fallback (wp.com added to remote_images alongside this change).
 const VUDU_PROXIES = [
-  u => 'https://cdn.statically.io/img/' + stripScheme(u) + '?w=400',
-  u => 'https://i0.wp.com/' + stripScheme(u) + '?w=400',
-  u => 'https://wsrv.nl/?w=400&url=' + encodeURIComponent(u),
-  u => 'https://images1-focus-opensocial.googleusercontent.com/gadgets/proxy?container=focus&resize_w=400&url=' + encodeURIComponent(u),
+  u => u,                                                        // direct: the allowlisted route
+  u => 'https://i0.wp.com/' + stripScheme(u) + '?w=400',         // Photon
+  u => 'https://i1.wp.com/' + stripScheme(u) + '?w=400',         // Photon, 2nd shard
 ];
 const isVudu = u => /vudu\.com/i.test(u);
 // The URL to try first for a given poster.
@@ -658,7 +670,7 @@ function posterError(img){
   const step = (+(img.getAttribute('data-try') || '0')) + 1;
   const chain = isVudu(orig)
     ? VUDU_PROXIES.map(fn=>fn(orig))
-    : [orig, 'https://wsrv.nl/?w=400&url=' + encodeURIComponent(orig)];
+    : [orig, 'https://i0.wp.com/' + stripScheme(orig) + '?w=400'];
   if(step < chain.length){ img.setAttribute('data-try', step); img.src = chain[step]; return; }
   const p = img.parentNode, t = (img.alt || '').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
   img.remove();
@@ -1025,7 +1037,7 @@ function renderPage(){
        data-row="${m.sheetRow}" title="${esc(m.title)}${m.year?' ('+m.year+')':''}"
        style="background:${esc(m.color)||'var(--bg-soft)'}">
       ${m.img?`<img loading="lazy" decoding="async" src="${esc(firstSrc(m.img))}" data-src="${esc(m.img)}"
-        onerror="posterError(this)">`
+        alt="${esc(m.title)}" onerror="posterError(this)">`
         :`<div class="ph">${esc(m.title)}</div>`}
       <span class="edit-tag" title="Edit details">&#9998;</span>
       ${m.buy!=null?`<span class="price-tag">$${m.buy}${m.buyQuality?' '+m.buyQuality:''}</span>`:''}
