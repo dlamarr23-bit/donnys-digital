@@ -981,21 +981,23 @@ display:none;
 #infoBar.open{display:block;margin-bottom:12px;animation:barIn .22s ease}
 @keyframes barIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
 @media(prefers-reduced-motion:reduce){ #infoBar.open{animation:none} }
-/* Capped and scrollable so a long cast list can never push the posters off
-   the bottom of the screen. */
+/* Hard cap. The bar is a caption for the wall, not a replacement for it: on a
+   900px-tall window it has to leave two or three rows of posters showing, or
+   clicking a face to "see their titles" hands you a single row of them and
+   the wall reads as stuck. Anything that doesn't fit scrolls inside the bar. */
 #infoInner{
-display:flex;gap:18px;padding:16px 18px;
-max-height:min(56vh,500px);overflow-y:auto;
+display:flex;gap:16px;padding:14px 16px;
+max-height:min(46vh,340px);overflow-y:auto;
 scrollbar-width:thin;scrollbar-color:#4a565e transparent;
 }
 #infoInner::-webkit-scrollbar{width:6px}
 #infoInner::-webkit-scrollbar-thumb{background:#4a565e;border-radius:3px}
-#infoPoster{width:96px;min-width:96px;height:144px;border-radius:6px;object-fit:cover;
+#infoPoster{width:80px;min-width:80px;height:120px;border-radius:6px;object-fit:cover;
 background:#263238;display:block}
 #infoMain{flex:1;min-width:0}
 #infoHead{display:flex;align-items:flex-start;gap:14px}
-#infoTitle{font:700 25px 'Poppins',sans-serif;letter-spacing:.6px;line-height:1.15;flex:1;min-width:0}
-#infoMeta{display:flex;flex-wrap:wrap;gap:6px;margin:9px 0 11px}
+#infoTitle{font:700 22px 'Poppins',sans-serif;letter-spacing:.6px;line-height:1.15;flex:1;min-width:0}
+#infoMeta{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 9px}
 #infoMeta span{background:#2b343b;color:#b0bec5;border-radius:11px;padding:3px 10px;
 font:700 11px 'Poppins',sans-serif;letter-spacing:.6px}
 #infoDesc{font:400 14px 'Poppins',sans-serif;line-height:1.6;color:#cfd8dc;max-width:115ch;white-space:pre-wrap}
@@ -1003,23 +1005,34 @@ font:700 11px 'Poppins',sans-serif;letter-spacing:.6px}
 padding:2px 7px;border-radius:6px;flex:0 0 auto}
 #closeInfo:hover{color:#fff;background:#2b343b}
 /* People tiles, deliberately the same object as the Data page's leaderboard
-   tiles: circular headshot, name, title count, click to focus. */
-.people-block{margin-top:15px}
-.people-block h4{font:700 11px 'Poppins',sans-serif;letter-spacing:1.8px;text-transform:uppercase;
-color:#90a4ae;margin-bottom:9px}
-.people{display:flex;flex-wrap:wrap;gap:10px}
-.brow{display:flex;flex-direction:column;align-items:center;gap:6px;width:98px;
-background:#242c32;border-radius:10px;padding:10px 6px 9px;cursor:pointer;
+   tiles: circular headshot, name, title count, click to focus.
+
+   Director and Cast sit SIDE BY SIDE rather than stacked, and each strip
+   scrolls sideways instead of wrapping. A wide screen has horizontal room to
+   spare and no vertical room at all -- stacked, two rows of tiles cost ~240px
+   of poster wall to show a director and six actors. */
+#infoPeople{display:flex;gap:20px;align-items:flex-start;margin-top:12px}
+.people-block{min-width:0}
+#dirBlock{flex:0 0 auto;max-width:45%}
+#castBlock{flex:1 1 auto}
+.people-block h4{font:700 10.5px 'Poppins',sans-serif;letter-spacing:1.8px;text-transform:uppercase;
+color:#90a4ae;margin-bottom:7px}
+.people{display:flex;flex-wrap:nowrap;gap:8px;overflow-x:auto;padding-bottom:4px;
+scrollbar-width:thin;scrollbar-color:#4a565e transparent}
+.people::-webkit-scrollbar{height:6px}
+.people::-webkit-scrollbar-thumb{background:#4a565e;border-radius:3px}
+.brow{display:flex;flex-direction:column;align-items:center;gap:5px;width:84px;flex:0 0 auto;
+background:#242c32;border-radius:10px;padding:8px 5px 7px;cursor:pointer;
 transition:background .15s,transform .12s;text-align:center}
 .brow:hover{background:#2a333a;transform:translateY(-2px)}
 .brow.active{outline:2px solid var(--accent)}
-.brow .face{width:62px;height:62px;min-width:62px;border-radius:50%;overflow:hidden;background:#37474f;
+.brow .face{width:46px;height:46px;min-width:46px;border-radius:50%;overflow:hidden;background:#37474f;
 display:flex;align-items:center;justify-content:center;color:#eceff1;
-font:700 17px 'Poppins',sans-serif;letter-spacing:1px}
+font:700 14px 'Poppins',sans-serif;letter-spacing:1px}
 .brow .face img{width:100%;height:100%;object-fit:cover}
-.brow .who{width:100%;font:700 11.5px 'Poppins',sans-serif;line-height:1.2;overflow:hidden;
+.brow .who{width:100%;font:700 11px 'Poppins',sans-serif;line-height:1.2;overflow:hidden;
 display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
-.brow .n{font:700 11px 'Poppins',sans-serif;color:#90a4ae;letter-spacing:.5px}
+.brow .n{font:700 10px 'Poppins',sans-serif;color:#90a4ae;letter-spacing:.5px}
 /* Whichever person the bar has focused, shown above the wall so it is still
    obvious what the grid is narrowed to once the bar has been closed. */
 #chipRow{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
@@ -1029,6 +1042,13 @@ border-radius:16px;padding:5px 12px;font:700 12px 'Poppins',sans-serif;letter-sp
 #chipRow .chip button{background:none;border:none;color:#fff;cursor:pointer;font-size:13px;line-height:1}
 /* The card whose bar is open. */
 .card.infoOpen{outline:2px solid var(--accent);outline-offset:-2px}
+/* The wall normally hides its scrollbar -- fine when it is most of the screen
+   and obviously a wall. With the bar open it can be down to two rows, and a
+   scroll track is then the only thing saying there is more below. Sibling
+   selector: #infoBar and #grid are both children of #main. */
+#infoBar.open ~ #grid{scrollbar-width:thin;scrollbar-color:#4a565e transparent}
+#infoBar.open ~ #grid::-webkit-scrollbar{display:block;width:6px}
+#infoBar.open ~ #grid::-webkit-scrollbar-thumb{background:#4a565e;border-radius:3px}
 #toast{
 position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:120;
 background:#263238;color:#eceff1;border-radius:8px;padding:10px 18px;
@@ -1142,10 +1162,12 @@ body.filtersOpen #sidebar{display:block}
    next to, and the face tiles need to be small enough that a cast of eight
    is still two rows rather than eight. */
 #infoPoster{display:none}
-#infoTitle{font-size:19px}
-#infoInner{padding:13px 13px;gap:0;max-height:60vh}
-.brow{width:78px}
-.brow .face{width:52px;height:52px;min-width:52px}
+#infoTitle{font-size:18px}
+#infoInner{padding:12px;gap:0;max-height:44vh}
+/* No horizontal room to put them beside each other, so they go back to
+   stacked -- but each strip still scrolls sideways rather than wrapping. */
+#infoPeople{flex-direction:column;gap:10px}
+#dirBlock{max-width:100%}
 }
 </style>
 <!-- Favicon: the avatar, at the sizes browsers actually ask for. Served from
@@ -1254,8 +1276,10 @@ body{padding-top:var(--dd-nav-h);box-sizing:border-box}
 </div>
 <div id="infoMeta"></div>
 <p id="infoDesc"></p>
+<div id="infoPeople">
 <div class="people-block" id="dirBlock"><h4>Director</h4><div class="people" id="dirPeople"></div></div>
 <div class="people-block" id="castBlock"><h4>Cast</h4><div class="people" id="castPeople"></div></div>
+</div>
 </div>
 </div>
 </div>
@@ -2476,6 +2500,20 @@ if(infoRow===sheetRow) $('#infoDesc').textContent = m.desc || 'No description av
 }
 }
 $('#closeInfo').addEventListener('click',closeInfo);
+
+/* The bar sits directly over the wall and is a big target, so most wheel
+   gestures aimed at the posters land on it instead. #main can't scroll and
+   the body is overflow:hidden, so without this those gestures simply did
+   nothing and the wall read as frozen. Scroll the bar only while the bar
+   itself has somewhere left to go; otherwise hand the wheel to the grid. */
+$('#infoBar').addEventListener('wheel',e=>{
+const inner=$('#infoInner');
+const room = e.deltaY<0 ? inner.scrollTop>0
+                        : inner.scrollTop+inner.clientHeight < inner.scrollHeight-1;
+if(room) return;                       // the bar still has content that way
+$('#grid').scrollTop+=e.deltaY;
+e.preventDefault();
+},{passive:false});
 
 /* Clicking a face narrows the wall to that person. It drives the ordinary
    Director/Actors facets rather than a filter of its own, so the sidebar
