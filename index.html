@@ -703,11 +703,15 @@ window.__directOk=new Promise(function(res){
 });
 })();
 </script>
-<!-- Fonts load without blocking rendering (media=print trick) -->
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@700&display=swap"
+<!-- Fonts load without blocking rendering (media=print trick).
+     400 joined 700 for the info bar's summary paragraph: everything else on
+     the page is a label or a number and reads fine bold, but a four-line
+     synopsis set in 700 does not. -->
+
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;700&display=swap"
 rel="stylesheet" media="print" onload="this.media='all'">
 <noscript>
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;700&display=swap" rel="stylesheet">
 </noscript>
 <style>
 :root{
@@ -958,18 +962,73 @@ align-items:center;justify-content:center;font-size:12px;line-height:1;cursor:po
 box-shadow:0 1px 4px rgba(0,0,0,.5);opacity:.85;
 }
 .card .info-tag:hover{background:rgba(0,0,0,.85);opacity:1}
-#descPop{
-position:fixed;background:#fff;color:#37474f;border-radius:10px;
-width:min(320px, calc(100vw - 24px));max-height:min(70vh, 420px);overflow-y:auto;
-box-shadow:0 10px 30px rgba(0,0,0,.5);padding:16px 18px;display:none;z-index:110;
+/* ---------- INFO BAR ----------
+   The ⓘ icon used to open a small white popover floating next to whichever
+   poster you clicked. It now opens this instead: a full-width bar that lands
+   between the pager and the wall and pushes the wall down, so nothing is
+   covered up and there is room for the cast. Being a flex child of #main
+   rather than position:fixed is the whole trick -- the grid below it already
+   flexes, so it re-flows on its own and needs no height maths. */
+#infoBar{
+flex:0 0 auto;
+background:var(--bg-soft);
+border:1px solid #2c353c;
+border-left:4px solid var(--accent);
+border-radius:8px;
+overflow:hidden;
+display:none;
 }
-#descPop.open{display:block}
-#descPop h3{font:700 15px 'Poppins',sans-serif;letter-spacing:.3px;margin-bottom:8px;padding-right:22px}
-#descPop p{font:700 13px 'Poppins',sans-serif;line-height:1.55;color:#455a64;white-space:pre-wrap}
-#descPop .close{
-position:absolute;top:10px;right:12px;background:none;border:none;
-font-size:16px;cursor:pointer;color:#78909c;line-height:1;
+#infoBar.open{display:block;margin-bottom:12px;animation:barIn .22s ease}
+@keyframes barIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+@media(prefers-reduced-motion:reduce){ #infoBar.open{animation:none} }
+/* Capped and scrollable so a long cast list can never push the posters off
+   the bottom of the screen. */
+#infoInner{
+display:flex;gap:18px;padding:16px 18px;
+max-height:min(56vh,500px);overflow-y:auto;
+scrollbar-width:thin;scrollbar-color:#4a565e transparent;
 }
+#infoInner::-webkit-scrollbar{width:6px}
+#infoInner::-webkit-scrollbar-thumb{background:#4a565e;border-radius:3px}
+#infoPoster{width:96px;min-width:96px;height:144px;border-radius:6px;object-fit:cover;
+background:#263238;display:block}
+#infoMain{flex:1;min-width:0}
+#infoHead{display:flex;align-items:flex-start;gap:14px}
+#infoTitle{font:700 25px 'Poppins',sans-serif;letter-spacing:.6px;line-height:1.15;flex:1;min-width:0}
+#infoMeta{display:flex;flex-wrap:wrap;gap:6px;margin:9px 0 11px}
+#infoMeta span{background:#2b343b;color:#b0bec5;border-radius:11px;padding:3px 10px;
+font:700 11px 'Poppins',sans-serif;letter-spacing:.6px}
+#infoDesc{font:400 14px 'Poppins',sans-serif;line-height:1.6;color:#cfd8dc;max-width:115ch;white-space:pre-wrap}
+#closeInfo{background:none;border:none;color:#90a4ae;font-size:22px;line-height:1;cursor:pointer;
+padding:2px 7px;border-radius:6px;flex:0 0 auto}
+#closeInfo:hover{color:#fff;background:#2b343b}
+/* People tiles, deliberately the same object as the Data page's leaderboard
+   tiles: circular headshot, name, title count, click to focus. */
+.people-block{margin-top:15px}
+.people-block h4{font:700 11px 'Poppins',sans-serif;letter-spacing:1.8px;text-transform:uppercase;
+color:#90a4ae;margin-bottom:9px}
+.people{display:flex;flex-wrap:wrap;gap:10px}
+.brow{display:flex;flex-direction:column;align-items:center;gap:6px;width:98px;
+background:#242c32;border-radius:10px;padding:10px 6px 9px;cursor:pointer;
+transition:background .15s,transform .12s;text-align:center}
+.brow:hover{background:#2a333a;transform:translateY(-2px)}
+.brow.active{outline:2px solid var(--accent)}
+.brow .face{width:62px;height:62px;min-width:62px;border-radius:50%;overflow:hidden;background:#37474f;
+display:flex;align-items:center;justify-content:center;color:#eceff1;
+font:700 17px 'Poppins',sans-serif;letter-spacing:1px}
+.brow .face img{width:100%;height:100%;object-fit:cover}
+.brow .who{width:100%;font:700 11.5px 'Poppins',sans-serif;line-height:1.2;overflow:hidden;
+display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.brow .n{font:700 11px 'Poppins',sans-serif;color:#90a4ae;letter-spacing:.5px}
+/* Whichever person the bar has focused, shown above the wall so it is still
+   obvious what the grid is narrowed to once the bar has been closed. */
+#chipRow{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
+#chipRow:empty{display:none}
+#chipRow .chip{display:flex;align-items:center;gap:8px;background:var(--accent);color:#fff;
+border-radius:16px;padding:5px 12px;font:700 12px 'Poppins',sans-serif;letter-spacing:.5px}
+#chipRow .chip button{background:none;border:none;color:#fff;cursor:pointer;font-size:13px;line-height:1}
+/* The card whose bar is open. */
+.card.infoOpen{outline:2px solid var(--accent);outline-offset:-2px}
 #toast{
 position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:120;
 background:#263238;color:#eceff1;border-radius:8px;padding:10px 18px;
@@ -1079,6 +1138,14 @@ body.filtersOpen #mobileFilterBtn{background:var(--accent);color:#fff}
 body.filtersOpen #sidebar{display:block}
 #main{width:100%;flex:1;min-height:0;padding:12px 8px 12px}
 #grid{grid-template-columns:repeat(4,1fr);gap:7px}
+/* On a phone the poster thumbnail is just competing with the text it sits
+   next to, and the face tiles need to be small enough that a cast of eight
+   is still two rows rather than eight. */
+#infoPoster{display:none}
+#infoTitle{font-size:19px}
+#infoInner{padding:13px 13px;gap:0;max-height:60vh}
+.brow{width:78px}
+.brow .face{width:52px;height:52px;min-width:52px}
 }
 </style>
 <!-- Favicon: the avatar, at the sizes browsers actually ask for. Served from
@@ -1175,6 +1242,24 @@ body{padding-top:var(--dd-nav-h);box-sizing:border-box}
 <div class="pg-label" id="pgLabel">&ndash;</div>
 <button class="pg-arrow" id="nextPg" title="Next page">&#10095;</button>
 </div>
+<!-- Opened by the ⓘ on any poster; see openInfo() below. Empty and display:none
+     until then, so it costs nothing on a page that never opens it. -->
+<div id="infoBar" aria-live="polite">
+<div id="infoInner">
+<img id="infoPoster" alt="" decoding="async">
+<div id="infoMain">
+<div id="infoHead">
+<h2 id="infoTitle"></h2>
+<button id="closeInfo" title="Close (Esc)">&#10005;</button>
+</div>
+<div id="infoMeta"></div>
+<p id="infoDesc"></p>
+<div class="people-block" id="dirBlock"><h4>Director</h4><div class="people" id="dirPeople"></div></div>
+<div class="people-block" id="castBlock"><h4>Cast</h4><div class="people" id="castPeople"></div></div>
+</div>
+</div>
+</div>
+<div id="chipRow"></div>
 <div id="grid"></div>
 <script>
 /* Placeholder tiles, written during HTML parse so the grid never looks like a
@@ -1185,11 +1270,6 @@ body{padding-top:var(--dd-nav-h);box-sizing:border-box}
 </div>
 <div id="status"><div class="spin"></div><div id="statusTxt">Loading collection&hellip;</div></div>
 <div id="toast"></div>
-<div id="descPop">
-<button class="close" id="closeDescPop" title="Close">&#10005;</button>
-<h3 id="descPopTitle"></h3>
-<p id="descPopBody"></p>
-</div>
 <div id="tokenWrap">
 <div id="tokenBox">
 <h3>Edit token</h3>
@@ -1871,10 +1951,11 @@ list.addEventListener('change',e=>{
 if(e.target.type!=='checkbox') return;
 const v=e.target.value;
 e.target.checked?selected[f.key].add(v):selected[f.key].delete(v);
-updateBadge(el,f.key); applyFilters();
+updateBadge(el,f.key); syncInfoBarTiles(); renderChips(); applyFilters();
 });
 el.querySelector('.facet-clear').addEventListener('click',()=>{
-selected[f.key].clear(); render(search?search.value:''); updateBadge(el,f.key); applyFilters();
+selected[f.key].clear(); render(search?search.value:''); updateBadge(el,f.key);
+syncInfoBarTiles(); renderChips(); applyFilters();
 });
 updateBadge(el,f.key);
 });
@@ -2077,7 +2158,10 @@ const slice=filtered.slice(start,end);
 // Without it, renaming a title in the Sheet refreshed the DATA but the soft
 // render then decided the cards were identical and left the old name on
 // screen until something else forced a repaint.
-let k=page+'|';
+// infoRow is in the key because the open card carries an extra class: without
+// it, opening the bar on a card that is already on screen would be a no-op
+// render and the outline would never appear.
+let k=page+'|'+infoRow+'|';
 for(const m of slice) k+=m.sheetRow+'\u0001'+m.title+'\u0001'+m.img+'\u0001'+m.link+'\u0001'+m.color+'\u0001'
 +(m.viewStatus&&m.viewStatus.length?m.viewStatus.join(','):'')+'\u0002';
 if(opts && opts.ifChanged && k===renderedKey) return;  // identical -> leave the loading images alone
@@ -2085,7 +2169,7 @@ renderedKey=k;
 // First ~2 rows load eagerly so the fold fills instantly; the rest lazy-load
 // as you scroll. decoding=async keeps poster decode off the main thread.
 grid.innerHTML=slice.map((m,i)=>`
-<a class="card" href="${esc(m.link)||'#'}" target="_blank" rel="noopener"
+<a class="card${m.sheetRow===infoRow?' infoOpen':''}" href="${esc(m.link)||'#'}" target="_blank" rel="noopener"
 data-row="${m.sheetRow}" title="${esc(tooltip(m))}"
 style="background:${esc(m.color)||'var(--bg-soft)'}">
 ${m.img?`<img loading="${i<20?'eager':'lazy'}" ${i<10?'fetchpriority="high"':''} decoding="async"
@@ -2093,7 +2177,7 @@ width="250" height="375" alt="${esc(m.title)}"
 src="${esc(m.img)}" data-pidx="${firstIdx(m.img)}">`
 :`<div class="ph">${esc(m.title)}</div>`}
 <span class="edit-tag" title="Edit details">&#9998;</span>
-<span class="info-tag" title="Description">&#8505;</span>
+<span class="info-tag" title="Details">&#8505;</span>
 ${(m.viewStatus||[]).includes('Watched')
 ?`<button class="watch-tag to-need" title="Move back to Need to Watch">&#8634;</button>`
 :`<button class="watch-tag to-watched" title="Mark as Watched">&#10003;</button>`}
@@ -2128,11 +2212,18 @@ $('#resetAll').addEventListener('click',()=>{
 $('#searchBox').value='';
 FACETS.forEach(f=>selected[f.key].clear());
 document.querySelectorAll('.facet').forEach(el=>updateBadge(el,el.dataset.key));
+document.querySelectorAll('.facet .opt-list input[type=checkbox]').forEach(cb=>{cb.checked=false;});
 SLIDERS.forEach(s=>s._reset&&s._reset());
+syncInfoBarTiles(); renderChips();
 applyFilters();
 });
 /* ---------- EDIT MODE ---------- */
-let sessionToken = sessionStorage.getItem('dd_token') || '';
+/* Wrapped like every other sessionStorage call in this file. Unguarded, a
+   browser with site data blocked throws here at parse-run time and takes the
+   whole rest of the script with it -- including the grid -- over a token that
+   only the owner ever uses. */
+let sessionToken='';
+try{ sessionToken = sessionStorage.getItem('dd_token') || ''; }catch(e){}
 function jsonpSave(payload){
 return new Promise((resolve,reject)=>{
 const cb='__save_cb_'+Math.random().toString(36).slice(2);
@@ -2169,7 +2260,7 @@ setTimeout(()=>$('#tokenInput').focus(),60);
 function finishToken(ok){
 const v = ok ? $('#tokenInput').value.trim() : '';
 $('#tokenWrap').classList.remove('open');
-if(v){ sessionToken=v; sessionStorage.setItem('dd_token',v); }
+if(v){ sessionToken=v; try{ sessionStorage.setItem('dd_token',v); }catch(e){} }
 const r=tokenResolve; tokenResolve=null; if(r) r(v);
 }
 $('#tokenOk').addEventListener('click',()=>finishToken(true));
@@ -2180,7 +2271,7 @@ async function getToken(){
 if(sessionToken) return sessionToken;
 return await askToken();
 }
-function dropToken(){ sessionToken=''; sessionStorage.removeItem('dd_token'); }
+function dropToken(){ sessionToken=''; try{ sessionStorage.removeItem('dd_token'); }catch(e){} }
 $('#editToggle').addEventListener('click',async()=>{
 if(!editMode){
 if(!APPS_SCRIPT_URL){
@@ -2200,7 +2291,9 @@ $('#grid').addEventListener('click',e=>{
 if(e.target.closest('.info-tag')){
 e.preventDefault();
 const card=e.target.closest('.card'); if(!card) return;
-showDescription(+card.dataset.row, e.clientX, e.clientY);
+const row=+card.dataset.row;
+// Clicking the same ⓘ again closes it, so the icon is its own toggle.
+if(row===infoRow) closeInfo(); else openInfo(row);
 return;
 }
 if(!editMode) return;
@@ -2288,38 +2381,230 @@ function closeEditor(){ $('#modalWrap').classList.remove('open'); currentEdit=nu
 $('#closeModal').addEventListener('click',closeEditor);
 $('#cancelBtn').addEventListener('click',closeEditor);
 $('#modalWrap').addEventListener('click',e=>{ if(e.target.id==='modalWrap') closeEditor(); });
-/* ---------- description popover ----------
-   A very small read-only popup, independent of the (much bigger) edit modal
-   above -- opens right where the info icon was clicked. Descriptions are
-   loaded lazily (see loadDescriptions), so a click before they've landed
-   shows a brief loading message and fills in once they arrive. */
-function closeDescPop(){ $('#descPop').classList.remove('open'); }
-async function showDescription(sheetRow, x, y){
+/* ---------- INFO BAR ----------
+   Replaces the old description popover. The ⓘ on a poster opens a full-width
+   bar between the pager and the wall carrying the title (COLUMN C, Sort
+   Title -- column B is the padded sort key, "00028 Days Later"), the
+   description, and the director and cast as clickable headshot tiles. It is
+   NOT a modal: nothing behind it is blocked, and it closes on its ✕, on Esc,
+   or on a second click of the same ⓘ. Clicking outside deliberately does not
+   close it -- you are meant to be able to work the filters and the pager with
+   the bar still open.
+
+   Descriptions load lazily (see loadDescriptions), so a click that lands
+   before they arrive shows a loading line and is filled in below. */
+let infoRow=null;
+
+function closeInfo(){
+if(infoRow===null) return;
+infoRow=null;
+$('#infoBar').classList.remove('open');
+document.querySelectorAll('.card.infoOpen').forEach(c=>c.classList.remove('infoOpen'));
+}
+
+/* Director/Actors are split into arrays by enrich(), which runs after the
+   first paint. A click that lands before that gets the raw cell split on the
+   spot rather than an empty cast list. */
+function peopleOf(m,key){
+const a=m[key];
+if(a) return a;
+return splitCsv(key==='director'?m.directorRaw:m.actorsRaw);
+}
+
+/* "3 titles" under a face = how many rows in the whole collection that person
+   is on, which is exactly what buildFacetValues() has already counted. Read
+   from there when it's built, walking the collection only in the window
+   before it is. facetValues[key] is replaced wholesale on every rebuild, so
+   holding the array itself is a sufficient cache key. */
+const personCounts={};
+function titleCount(name,key){
+const fv=facetValues[key];
+if(fv && fv.length){
+if(!personCounts[key] || personCounts[key].src!==fv) personCounts[key]={src:fv, map:new Map(fv)};
+return personCounts[key].map.get(name)||0;
+}
+let n=0;
+for(const m of movies) if(peopleOf(m,key).includes(name)) n++;
+return n;
+}
+
+function personTile(name,key){
+const url=knownHead(name);
+const face=url?`<img src="${esc(url)}" decoding="async" loading="lazy" alt="">`:esc(initials(name));
+const n=titleCount(name,key);
+return `<div class="brow${selected[key].has(name)?' active':''}" data-name="${esc(name)}" data-pkey="${key}"
+title="Show ${esc(name)}&#39;s titles">
+<div class="face" data-face="${esc(name)}">${face}</div>
+<div class="who">${esc(name)}</div>
+<div class="n">${n.toLocaleString()} title${n===1?'':'s'}</div></div>`;
+}
+
+async function openInfo(sheetRow){
 const m=rowIndex.get(sheetRow); if(!m) return;
-const pop=$('#descPop');
-$('#descPopTitle').textContent = m.title + (m.year ? ` (${m.year})` : '');
-$('#descPopBody').textContent = descriptionsLoaded ? (m.desc||'No description available.') : 'Loading description…';
-pop.style.visibility='hidden';
-pop.classList.add('open');
-positionFloating(pop, x, y);
-pop.style.visibility='';
+infoRow=sheetRow;
+$('#infoTitle').textContent = m.sortTitle || m.title;
+const poster=$('#infoPoster');
+// The poster-routing script at the top of the page rewrites this src through
+// the Netlify Image CDN on its own, same as every cover in the grid.
+if(m.img){ poster.src=m.img; poster.style.display=''; }
+else { poster.removeAttribute('src'); poster.style.display='none'; }
+// Same numbers, and the same formatting, as the poster's hover tooltip.
+const bits=[];
+if(m.year) bits.push(m.year);
+if(m.mpaa) bits.push(m.mpaa);
+if(m.runtime!=null) bits.push(fmtRuntime(m.runtime));
+if(m.quality) bits.push(m.quality);
+if(m.imdb!=null) bits.push('IMDb '+Number(m.imdb).toFixed(1));
+if(m.tomato!=null) bits.push('🍅 '+m.tomato+'%');
+if(m.viewStatusRaw) bits.push(m.viewStatusRaw);
+$('#infoMeta').innerHTML=bits.map(b=>`<span>${esc(b)}</span>`).join('');
+$('#infoDesc').textContent = descriptionsLoaded ? (m.desc||'No description available.') : 'Loading description…';
+const dirs=peopleOf(m,'director'), cast=peopleOf(m,'actors');
+$('#dirBlock').style.display=dirs.length?'':'none';
+$('#castBlock').style.display=cast.length?'':'none';
+$('#dirPeople').innerHTML=dirs.map(n=>personTile(n,'director')).join('');
+$('#castPeople').innerHTML=cast.map(n=>personTile(n,'actors')).join('');
+$('#infoBar').classList.add('open');
+$('#infoInner').scrollTop=0;
+document.querySelectorAll('.card').forEach(c=>c.classList.toggle('infoOpen', +c.dataset.row===sheetRow));
+resolveHeads([...dirs,...cast]);
 if(!descriptionsLoaded){
 await loadDescriptions();
-// The popover may have moved on to a different movie, or been closed,
-// by the time the (slower, lazy) description fetch resolves.
-if(pop.classList.contains('open') && $('#descPopTitle').textContent === m.title + (m.year ? ` (${m.year})` : '')){
-$('#descPopBody').textContent = m.desc || 'No description available.';
-positionFloating(pop, x, y); // text just changed height -- keep it fully on-screen
+// The bar may have moved on to another title, or been closed, by the time
+// the (slower, lazy) description fetch resolves.
+if(infoRow===sheetRow) $('#infoDesc').textContent = m.desc || 'No description available.';
 }
 }
-}
-$('#closeDescPop').addEventListener('click',closeDescPop);
-document.addEventListener('click',e=>{
-if($('#descPop').classList.contains('open') && !e.target.closest('#descPop') && !e.target.closest('.info-tag')) closeDescPop();
+$('#closeInfo').addEventListener('click',closeInfo);
+
+/* Clicking a face narrows the wall to that person. It drives the ordinary
+   Director/Actors facets rather than a filter of its own, so the sidebar
+   checkbox, the count badge and "Reset all filters" all keep working and
+   there is only ever one filtering path in the page. */
+$('#infoBar').addEventListener('click',e=>{
+const b=e.target.closest('.brow'); if(!b) return;
+const key=b.dataset.pkey, name=b.dataset.name, set=selected[key];
+if(set.has(name)) set.delete(name);
+else { set.clear(); set.add(name); }   // one person at a time
+syncFacetUI(key);
+syncInfoBarTiles();
+renderChips();
+applyFilters();
+$('#grid').scrollTop=0;
 });
+
+/* Which faces are outlined follows `selected`, wherever the change came from
+   -- a face, a sidebar checkbox, a chip's ✕ or Reset all filters. */
+function syncInfoBarTiles(){
+document.querySelectorAll('#infoBar .brow').forEach(el=>{
+el.classList.toggle('active', selected[el.dataset.pkey].has(el.dataset.name));
+});
+}
+
+/* buildFacets() renders the whole sidebar and would close whatever panel is
+   open, so a person click updates only the one facet it touched. */
+function syncFacetUI(key){
+const el=document.querySelector('.facet[data-key="'+key+'"]');
+if(!el) return;
+updateBadge(el,key);
+el.querySelectorAll('.opt-list input[type=checkbox]').forEach(cb=>{
+cb.checked=selected[key].has(cb.value);
+});
+}
+
+/* The people filter is the one filter you can set without touching the
+   sidebar, so it gets a chip above the wall -- otherwise closing the bar
+   would leave the grid narrowed with nothing on screen saying why. */
+function renderChips(){
+const row=$('#chipRow');
+row.innerHTML='';
+const add=(label,key,name)=>{
+const chip=document.createElement('div');
+chip.className='chip';
+chip.innerHTML=`<span>${esc(label)}</span>`;
+const x=document.createElement('button');
+x.type='button'; x.title='Clear'; x.textContent='✕';
+x.addEventListener('click',()=>{
+selected[key].delete(name);
+syncFacetUI(key); syncInfoBarTiles(); renderChips(); applyFilters();
+});
+chip.appendChild(x);
+row.appendChild(chip);
+};
+selected.director.forEach(v=>add('Dir: '+v,'director',v));
+selected.actors.forEach(v=>add(v,'actors',v));
+}
+
 document.addEventListener('keydown',e=>{
-if(e.key==='Escape'){ closeDescPop(); if($('#modalWrap').classList.contains('open')) closeEditor(); }
+if(e.key==='Escape'){ closeInfo(); if($('#modalWrap').classList.contains('open')) closeEditor(); }
 });
+
+/* ---------- HEADSHOTS ----------
+   Lifted from the Data page, including its localStorage key: a visitor who
+   has been to /data already has most of these faces cached, and faces
+   resolved here warm that page in return. Names are looked up by exact
+   article title, 50 per request, which is one call for a whole cast. */
+const WIKI_API='https://en.wikipedia.org/w/api.php';
+const HEAD_BATCH=50;
+const headCache=new Map();
+let headStore={};
+try{ headStore=JSON.parse(localStorage.getItem('dd_heads2')||'{}'); }catch(e){}
+let headSaveTimer=null;
+function saveHeadStore(){
+clearTimeout(headSaveTimer);
+headSaveTimer=setTimeout(()=>{ try{ localStorage.setItem('dd_heads2',JSON.stringify(headStore)); }catch(e){} },800);
+}
+function initials(name){ return name.split(/\s+/).slice(0,2).map(w=>w[0]||'').join('').toUpperCase(); }
+function knownHead(name){
+const c=headCache.get(name); if(c) return c;
+if(headStore[name]){ headCache.set(name,headStore[name]); return headStore[name]; }
+return null;
+}
+function wikiBatch(titles){
+const url=WIKI_API+'?action=query&format=json&origin=*&redirects=1'
++'&prop=pageimages&piprop=thumbnail&pithumbsize=320&pilimit='+HEAD_BATCH
++'&titles='+encodeURIComponent(titles.join('|'));
+return fetch(url).then(r=>{ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); }).then(j=>{
+const q=j.query||{}, alias=new Map(), out=new Map();
+// Map what we asked for back through normalisation and redirects to the
+// title the API actually answered under.
+(q.normalized||[]).forEach(n=>alias.set(n.to,n.from));
+(q.redirects||[]).forEach(rd=>alias.set(rd.to, alias.get(rd.from)||rd.from));
+const pages=q.pages||{};
+for(const k in pages){
+const p=pages[k]; if(!p||!p.title) continue;
+const asked=alias.get(p.title)||p.title;
+if(p.thumbnail&&p.thumbnail.source) out.set(asked,p.thumbnail.source);
+}
+return out;
+});
+}
+async function resolveHeads(names){
+// null in the cache means "asked for, no article" -- still a hit, so it is
+// never asked for twice.
+const want=[...new Set(names)].filter(n=>n && !knownHead(n) && !headCache.has(n));
+if(!want.length) return;
+want.forEach(n=>headCache.set(n,null));
+for(let i=0;i<want.length;i+=HEAD_BATCH){
+const chunk=want.slice(i,i+HEAD_BATCH);
+let got=new Map();
+try{ got=await wikiBatch(chunk); }catch(e){ /* those names keep their initials */ }
+chunk.forEach(n=>{ const u=got.get(n); if(u) applyHead(n,u); });
+}
+}
+function applyHead(name,url){
+headCache.set(name,url); headStore[name]=url; saveHeadStore();
+document.querySelectorAll('.face').forEach(f=>{
+if(f.dataset.face===name && !f.querySelector('img')){
+// Decoded off-document first, so a face that 404s just keeps its initials
+// instead of leaving a broken-image box in the bar.
+const img=new Image();
+img.decoding='async'; img.alt='';
+img.onload=()=>{ if(f.isConnected && !f.querySelector('img')){ f.textContent=''; f.appendChild(img); } };
+img.src=url;
+}
+});
+}
 $('#saveBtn').addEventListener('click',async()=>{
 if(!currentEdit||!APPS_SCRIPT_URL) return;
 const token=await getToken();
@@ -2349,7 +2634,12 @@ else m[key]=v;
 enrichRow(m);
 if(enriched) buildFacetValues();
 msg.textContent='Saved ✓'; msg.className='msg ok';
-setTimeout(()=>{ closeEditor(); applyFilters(true); },600);
+setTimeout(()=>{
+closeEditor(); applyFilters(true);
+// If the info bar happens to be showing the row that was just edited, redraw
+// it from the updated record rather than leaving the old text on screen.
+if(infoRow===m.sheetRow) openInfo(m.sheetRow);
+},600);
 }catch(err){
 msg.textContent='Could not save: '+err.message; msg.className='msg err';
 }finally{
