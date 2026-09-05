@@ -1208,7 +1208,7 @@ function writeCache(list){
         items=seed;
         buildFacetValues(); buildFacets(); buildSliders();
         applyFilters();
-        setStatus('Loading the latest sheet dataâ€¦'); setBar(0.3);
+        setStatus('Loading the latest sheet data...'); setBar(0.3);
       }
     }catch(e){ console.warn('[ma] mirror seed unavailable:', e && e.message); }
   }
