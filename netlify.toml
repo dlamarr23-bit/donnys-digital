@@ -102,6 +102,10 @@
     'https?://([a-z0-9-]+\.)*googleusercontent\.com/.*',
     'https?://([a-z0-9-]+\.)*akamaized\.net/.*',
     'https?://([a-z0-9-]+\.)*cloudfront\.net/.*',
+    # Cloudflare Pages -- the custom posters made in-house and hosted on
+    # donny-images.pages.dev. Without this the Image CDN returns 400
+    # ("not an allowed pattern") and every custom cover falls back to text.
+    'https?://([a-z0-9-]+\.)*pages\.dev/.*',
     # Photon -- the poster fallback in wishlist/data/d2d. Without this the
     # Image CDN refuses the URL outright (400, "not an allowed pattern").
     'https?://([a-z0-9-]+\.)*wp\.com/.*',
