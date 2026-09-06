@@ -338,24 +338,7 @@ var SHEET_NAME='Movies';
    NOTE: a published CSV can lag live edits by a few minutes. Edits made from
    this page are applied in memory straight away, so you still see them at
    once; they just take a moment to show up for a hard reload. */
-/* Column-selected export: every column EXCEPT E (Actors) and F (Description).
-   Those two are 45% of the payload -- 1.63MB of actors and 3.33MB of
-   descriptions out of 11.1MB -- and neither is needed to draw a single card.
-   They are fetched separately once the grid is up; see loadDescriptions() and
-   loadActors(). Measured: 11.69MB -> 9.05MB with descriptions dropped, TTFB
-   1.87s -> 1.44s.
-
-   Both lazy loaders merge BY POSITION, so this request must return the same
-   rows in the same order as the full export. Verified: 18,997 records from
-   each, titles identical in order. A WHERE clause here would break that.
-
-   The old published-CSV export (all 24 columns) was:
-     https://docs.google.com/spreadsheets/d/e/2PACX-1vTNcy_TXkl7kRJvIvf4U_q9pZUCdrJ9RsQ8Vgnr5NoX8K679jUhWC6iWZvbCYR2bOaRG2ypgFB13PEB/pub?gid=0&single=true&output=csv
-   Restore it here to go back to a single fat request. */
-var GRID_COLS='select A,B,C,D,G,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,W,X';
-var CSV_URL='https://docs.google.com/spreadsheets/d/'+SHEET_ID
-  +'/gviz/tq?headers=1&sheet='+encodeURIComponent(SHEET_NAME)
-  +'&tq='+encodeURIComponent(GRID_COLS)+'&tqx=out:csv';
+var CSV_URL='https://docs.google.com/spreadsheets/d/e/2PACX-1vTNcy_TXkl7kRJvIvf4U_q9pZUCdrJ9RsQ8Vgnr5NoX8K679jUhWC6iWZvbCYR2bOaRG2ypgFB13PEB/pub?gid=0&single=true&output=csv';
 window.__CSV_URL=CSV_URL;
 /* How many rows to decode before handing the page enough to paint page 1.
    Needs to comfortably exceed the largest page size (72) so the first screen
@@ -403,10 +386,6 @@ window.__PROBE_HEAD=PROBE_HEAD;
 window.__GVIZ_BASE=BASE;
 window.__GVIZ_DISPLAY=BASE;
 window.__GVIZ_DESC=BASE+'&tq='+encodeURIComponent('select F');
-/* Actors, dropped from the grid payload above for the same reason as
-   descriptions. Same tab, same row order, no WHERE -- so the Nth row back is
-   the Nth row of the grid request and the merge is by position. */
-window.__GVIZ_ACTORS=BASE+'&tq='+encodeURIComponent('select E');
 
 /* ---- progress hub ---------------------------------------------------------
    The indicator subscribes from the main script, which runs later, so the last
@@ -1378,7 +1357,7 @@ const LINK_NEW = '/content/movies/details/title/';
 // it feeds the text search and the edit modal. Fetched separately once the
 // grid is already up. Set to 'never' to skip it entirely (search then covers
 // title/director/actors/genre only); 'eager' puts it back in the first request.
-const DESCRIPTIONS = 'lazy'; // 'lazy' | 'eager' | 'never'
+const DESCRIPTIONS = 'eager'; // 'lazy' | 'eager' | 'never'
 // 'eager' = Description comes down with everything else, exactly as it always
 // has. With the streaming CSV source this costs nothing on the critical path:
 // the first page of covers is rendered from the first ~600 rows, so the other
@@ -1453,7 +1432,6 @@ const EDIT_FIELDS = [
 ];
 let movies=[], filtered=[], page=0, editMode=false, currentEdit=null;
 let enriched=false, descriptionsLoaded=(DESCRIPTIONS==='never');
-let actorsLoaded=false;
 let rowIndex=new Map(); // sheetRow -> movie
 const selected={}; // facetKey -> Set of values
 const facetValues={}; // facetKey -> [ [value,count], ... ] sorted
@@ -1860,15 +1838,15 @@ return usable(await idbGet(db, which==='head' ? IDB_HEAD : IDB_KEY));
 function slim(list){
 return list.map(m=>{ const o={}; for(const k in m) if(!DERIVED.has(k)) o[k]=m[k]; return o; });
 }
-async function cacheSet(list, sig, hasDesc, hasActors){
+async function cacheSet(list, sig, hasDesc){
 try{
 const full=slim(list), t=Date.now();
 const db=await openIdb();
 await new Promise((res,rej)=>{
 const tx=db.transaction(IDB_STORE,'readwrite');
 const st=tx.objectStore(IDB_STORE);
-st.put({t, sig, hasDesc, hasActors, d:full}, IDB_KEY);
-st.put({t, sig, hasDesc, hasActors, d:full.slice(0,HEAD_N)}, IDB_HEAD);
+st.put({t, sig, hasDesc, d:full}, IDB_KEY);
+st.put({t, sig, hasDesc, d:full.slice(0,HEAD_N)}, IDB_HEAD);
 tx.oncomplete=res; tx.onerror=()=>rej(tx.error);
 });
 /* Mirror of the cache timestamp, in localStorage because the early loader in
@@ -2746,63 +2724,6 @@ if(enriched) rebuildSearchIndex();
 console.warn('[collection] descriptions unavailable:', e && e.message);
 }
 }
-/* ---------- ACTORS (lazy second request) ----------
-Actors are 1.63MB of the export and are used by three things, none of which is
-the grid itself: the Actors facet, the cast tiles in the info bar, and the
-search index. So the column is left out of the grid payload and pulled here,
-after the posters are already on screen.
-
-Same tab, same row order, no WHERE clause -- so the Nth returned row is the
-Nth row of the grid request, exactly as loadDescriptions() assumes. Merged by
-position against sheetRow.
-
-Unlike descriptions, actors feed a FACET, so the sidebar has to be rebuilt
-once they land or the Actors filter would stay empty. */
-async function loadActors(){
-if(actorsLoaded) return;
-/* Prefer the snapshot's facets tier: a small, immutable CDN file, against
-   __GVIZ_ACTORS below which is another multi-megabyte query on the live
-   sheet. Keyed by sheet position (sheetRow-2), not array index, because
-   parseRows() drops blank rows so the two sequences are not aligned. */
-if(window.__snapFacets){
-try{
-const fac=await window.__snapFacets;
-for(const m of movies){
-const f=fac[m.sheetRow-2];
-if(f && f['Actors']!=null){
-m.actorsRaw=f['Actors']||'';
-if(enriched) m.actors=splitCsv(m.actorsRaw);
-}
-}
-actorsLoaded=true;
-if(enriched){ rebuildSearchIndex(); buildSidebar(); }
-return;
-}catch(e){
-console.warn('[collection] snapshot facets unavailable, trying live sheet:', e && e.message);
-}
-}
-try{
-const url=window.__GVIZ_ACTORS;
-const d=await Promise.any([window.__gvizDirect(url), window.__gvizJsonp(url)]);
-const rows=d.json.table.rows||[];
-rows.forEach((r,ri)=>{
-const m=rowIndex.get(ri+2);
-if(!m) return;
-const c=r.c && r.c[0];
-m.actorsRaw = c && c.v!=null ? String(c.v) : '';
-if(enriched) m.actors = splitCsv(m.actorsRaw);
-});
-actorsLoaded=true;
-if(enriched){
-rebuildSearchIndex();
-buildSidebar();   // the Actors facet is empty until this runs
-}
-}catch(e){
-// The grid, the posters and every other filter are unaffected; only the
-// Actors facet and the cast tiles stay empty.
-console.warn('[collection] actors unavailable:', e && e.message);
-}
-}
 /* ---------- INIT ----------
 Staged, so that something useful is on screen at every point:
   0 ms    static shell + top progress bar + placeholder tiles (needs no JS)
@@ -2851,7 +2772,6 @@ if(rec){
 movies=rec.d;
 cachedSig=rec.sig;
 descriptionsLoaded = !!rec.hasDesc || DESCRIPTIONS==='never';
-actorsLoaded = !!rec.hasActors;
 partialData=false;
 paint(true);   // soft: the head record already put these very covers on screen
 setStatus('Checking for changes…'); setBar(0.55);
@@ -2897,9 +2817,6 @@ for(const m of movies){
 const f=fac[m.sheetRow-2];
 if(f){ m.directorRaw=f['Director']||''; m.actorsRaw=f['Actors']||''; }
 }
-// The facets tier IS the Actors column, so nothing further is needed;
-// without this, loadActors() would fire a redundant multi-MB gviz query.
-actorsLoaded=true;
 }catch(e){
 // Facets missing just means those two panels start empty; the live
 // catch-up below fills them in when the sheet download lands.
@@ -2951,10 +2868,9 @@ if(revalidated){
 // the air, and make sure nothing can start it after this point.
 window.__cancelCsv();
 if(!descriptionsLoaded) await loadDescriptions();
-if(!actorsLoaded) await loadActors();
 // Re-stamp the cache so a collection that is simply not changing doesn't
 // expire out from under the 24h TTL and force a cold download anyway.
-idle(()=>cacheSet(movies, cachedSig, descriptionsLoaded, actorsLoaded));
+idle(()=>cacheSet(movies, cachedSig, descriptionsLoaded));
 barDone(); setStatus(null);
 console.info(`[collection] ${movies.length} titles in ${Math.round(performance.now()-t0)}ms`
   + ` (source: cache + revalidation probe, full download skipped,`
@@ -2982,10 +2898,7 @@ const d=await window.__allRows;
 setStatus('Indexing '+d.rows.length.toLocaleString()+' rows…');
 const fresh=await parseAllSliced(d.cols, d.rows, (i,n)=>setBar(0.72+0.08*(i/n)));
 if(!fresh.length) throw new Error('no rows returned');
-// CSV_URL is column-selected and carries neither Description nor Actors;
-// only the whole-sheet gviz fallback (src 'gviz') still has them.
-const hasDesc = d.src==='gviz' || DESCRIPTIONS==='eager';
-const hasActors = d.src==='gviz';
+const hasDesc = d.src==='csv' || DESCRIPTIONS==='eager';
 partialData=false;
 // signature() walks every row, so it is only computed when there is actually a
 // cached fingerprint to compare it against.
@@ -2998,7 +2911,6 @@ renderPage({ifChanged:true});
 movies=fresh;
 enriched=false;
 descriptionsLoaded=hasDesc;
-actorsLoaded=hasActors;
 // Soft render: if the streamed first page and the final first page hold the
 // same covers (the normal case), the <img> tags are left exactly as they are
 // rather than being rewritten, so posters already half-downloaded are kept.
@@ -3008,10 +2920,9 @@ buildSidebar();
 }
 // 4. Descriptions, if they weren't in the payload.
 if(!descriptionsLoaded) await loadDescriptions();
-if(!actorsLoaded) await loadActors();
 idle(()=>{
 if(freshSig===null) freshSig=signature(movies);
-cacheSet(movies, freshSig, descriptionsLoaded, actorsLoaded);
+cacheSet(movies, freshSig, descriptionsLoaded);
 });
 barDone(); setStatus(null);
 console.info(`[collection] ${movies.length} titles in ${Math.round(performance.now()-t0)}ms`
