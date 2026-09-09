@@ -811,12 +811,45 @@ font:700 11px 'Poppins',sans-serif;letter-spacing:1px;text-transform:uppercase;c
 .facet-clear:hover{background:#cfd8dc}
 /* Sidebar controls are inert until the collection has been indexed. */
 #sidebar.pending #facets,#sidebar.pending #sliders{opacity:.45;pointer-events:none}
-/* sort */
-#sortWrap select{
-width:100%;background:var(--pill);color:var(--pill-text);
+/* sort
+   The native <select> is kept for state (and for keyboard/AT users) but is
+   never painted: Chrome on Windows draws a select's dropdown list with the OS
+   menu font, so the options came out in Segoe UI no matter what font-family
+   the select carried. The list below is plain markup, so it honours Poppins. */
+#sortWrap{position:relative;margin-bottom:10px}
+#sortSel{
+position:absolute;width:1px;height:1px;padding:0;margin:0;border:0;
+opacity:0;pointer-events:none;clip:rect(0 0 0 0);overflow:hidden;
+}
+#sortBtn{
+width:100%;display:flex;align-items:center;justify-content:space-between;gap:8px;
+background:var(--pill);color:var(--pill-text);text-align:left;
 border:none;border-radius:8px;padding:10px 12px;cursor:pointer;
-font:700 12.5px 'Poppins',sans-serif;letter-spacing:1.2px;text-transform:uppercase;
-margin-bottom:10px;outline:none;
+font:700 12.5px 'Poppins','Segoe UI',sans-serif;letter-spacing:1.2px;text-transform:uppercase;
+outline:none;transition:box-shadow .15s;
+}
+#sortBtn:hover{box-shadow:0 0 0 2px rgba(255,255,255,.25)}
+#sortBtn .icon{font-size:13px;color:#607d8b;transition:transform .2s;flex:none}
+#sortWrap.open #sortBtn .icon{transform:rotate(180deg)}
+#sortLabel{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+#sortPanel{
+display:none;position:absolute;left:0;right:0;top:calc(100% + 5px);z-index:60;
+background:#fff;border-radius:8px;box-shadow:0 8px 22px rgba(0,0,0,.45);
+padding:6px;max-height:340px;overflow-y:auto;scrollbar-width:thin;
+}
+#sortWrap.open #sortPanel{display:block}
+#sortPanel button{
+display:block;width:100%;text-align:left;background:none;border:none;cursor:pointer;
+padding:7px 9px;border-radius:5px;color:var(--pill-text);
+font:700 11.5px 'Poppins','Segoe UI',sans-serif;letter-spacing:.4px;
+text-transform:uppercase;white-space:nowrap;
+}
+#sortPanel button:hover{background:#eceff1}
+#sortPanel button[aria-selected="true"]{background:var(--accent);color:#fff}
+/* Shown at the top of a facet panel that intersects rather than unions. */
+.facet-hint{
+font:700 10px 'Poppins','Segoe UI',sans-serif;color:#78909c;
+letter-spacing:.2px;line-height:1.45;padding:0 2px 7px;
 }
 /* sliders */
 .slider-group{margin:22px 4px 6px;text-align:center}
@@ -1251,6 +1284,9 @@ body{padding-top:var(--dd-nav-h);box-sizing:border-box}
 <option value="runtime|desc">Sort: Runtime (longest)</option>
 <option value="runtime|asc">Sort: Runtime (shortest)</option>
 </select>
+<button id="sortBtn" type="button" aria-haspopup="listbox" aria-expanded="false"
+title="Sort collection"><span id="sortLabel">Sort: Recently Added</span><span class="icon">&#9662;</span></button>
+<div id="sortPanel" role="listbox" aria-label="Sort collection"></div>
 </div>
 <div id="facets"></div>
 <div id="sliders"></div>
@@ -1393,8 +1429,8 @@ page = Math.floor(firstShown / PER_PAGE);
 (mobileMq.addEventListener ? mobileMq.addEventListener('change', ()=>{ syncPerPage(); if(movies.length) renderPage(); })
 : mobileMq.addListener(()=>{ syncPerPage(); if(movies.length) renderPage(); }));
 const FACETS = [
-{label:'Director', key:'director', csv:true},
-{label:'Actors', key:'actors', csv:true},
+{label:'Director', key:'director', csv:true, and:true, hint:'Lists the directors of the films still showing. Pick two for their co-directed films.'},
+{label:'Actors', key:'actors', csv:true, and:true, hint:'Lists whoever is in the films still showing — after one pick, that actor’s co-stars. Pick a second name for the films they made together.'},
 {label:'Genre', key:'genre', csv:true},
 {label:'MPAA Rating', key:'mpaa'},
 {label:'Quality', key:'quality'},
@@ -1434,7 +1470,8 @@ let movies=[], filtered=[], page=0, editMode=false, currentEdit=null;
 let enriched=false, descriptionsLoaded=(DESCRIPTIONS==='never');
 let rowIndex=new Map(); // sheetRow -> movie
 const selected={}; // facetKey -> Set of values
-const facetValues={}; // facetKey -> [ [value,count], ... ] sorted
+const facetValues={}; // facetKey -> [ [value,count], ... ] for the visible rows
+const facetTotals={}; // facetKey -> whole-collection counts, for titleCount()
 const rangeState={}; // sliderKey -> {lo,hi}
 FACETS.forEach(f=>{ selected[f.key]=new Set(); }); // exist before facets are built
 const $=s=>document.querySelector(s);
@@ -1920,18 +1957,75 @@ h=fnvStep(h, m.title+'|'+ymdFromEpoch(m.dateAdded)+'|'+m.viewStatusRaw+'|'+m.qua
 return (h>>>0).toString(36)+':'+list.length;
 }
 /* ---------- FACET UI ---------- */
-function buildFacetValues(){
-const counts={};
-FACETS.forEach(f=>{ counts[f.key]=new Map(); if(!selected[f.key]) selected[f.key]=new Set(); });
-for(const m of movies){
-for(const f of FACETS){
-const map=counts[f.key];
-if(f.csv){ const a=m[f.key]; if(a) for(let i=0;i<a.length;i++) map.set(a[i],(map.get(a[i])||0)+1); }
+/* Facets marked `and` in FACETS intersect instead of union: two actors means
+   the films with BOTH of them, not the films with either. Their option lists
+   are also counted off the rows currently on screen, which is what makes the
+   sidebar collaborative -- pick a director and the Actors list becomes his
+   cast; pick an actor and the Actors list becomes that actor's co-stars. */
+const AND_KEYS=new Set(FACETS.filter(f=>f.and).map(f=>f.key));
+const facetSorted={};  // facetKey -> true once its list is in display order
+function countFacets(rows,list){
+const counts=[];
+for(let j=0;j<list.length;j++){
+counts.push(new Map());
+if(!selected[list[j].key]) selected[list[j].key]=new Set();
+}
+for(let i=0;i<rows.length;i++){
+const m=rows[i];
+for(let j=0;j<list.length;j++){
+const f=list[j], map=counts[j];
+if(f.csv){ const a=m[f.key]; if(a) for(let k=0;k<a.length;k++) map.set(a[k],(map.get(a[k])||0)+1); }
 else { const v=m[f.key]; if(v) map.set(v,(map.get(v)||0)+1); }
 }
 }
-FACETS.forEach(f=>{
-facetValues[f.key]=[...counts[f.key].entries()].sort((a,b)=>collator.compare(a[0],b[0]));
+// Ordering is deferred to render(). collator.compare over a 29,000-name Actors
+// list is far too expensive to pay on every checkbox click, and at most one
+// panel is ever open to look at.
+for(let j=0;j<list.length;j++){
+facetValues[list[j].key]=[...counts[j].entries()];
+facetSorted[list[j].key]=false;
+}
+}
+// The full-collection pass. Its results are also kept in facetTotals, which is
+// what titleCount() reads: "12 titles" under a face means twelve in the whole
+// collection, not twelve among whatever is on screen right now.
+function buildFacetValues(){
+countFacets(movies,FACETS);
+FACETS.forEach(f=>{ facetTotals[f.key]=facetValues[f.key]; });
+}
+function sortedFacetValues(key){
+if(!facetSorted[key]){
+facetValues[key].sort((a,b)=>collator.compare(a[0],b[0]));
+facetSorted[key]=true;
+}
+return facetValues[key];
+}
+/* An AND facet counts off `filtered` itself -- that is the narrowing. An OR
+   facet that has picks of its own cannot: counting Genre off a set already
+   restricted to Comedy would leave Comedy as the only genre in the list and
+   there would be no way to add a second one. Those count off everything-but-
+   themselves instead, which is the ordinary faceted-search rule. Only facets
+   with active picks need that extra pass, so it is normally zero or one. */
+function refreshFacetValues(q,ranges){
+const shared=[], own=[];
+for(const f of FACETS) (!AND_KEYS.has(f.key) && selected[f.key].size ? own : shared).push(f);
+countFacets(filtered,shared);
+for(const f of own){
+const others=collectActive(f.key);
+countFacets(movies.filter(m=>rowMatches(m,q,others,ranges)),[f]);
+}
+}
+// Set once the sidebar exists. Until then the counting is skipped entirely so
+// it stays off the first-paint path, exactly as it was before.
+let facetsReady=false;
+function refreshFacetsNow(){
+if(!facetsReady) return;
+refreshFacetValues($('#searchBox').value.trim().toLowerCase(), collectRanges());
+// Counts and option lists just moved under the sidebar, so every badge and
+// whichever panel is open both need redoing.
+document.querySelectorAll('#facets .facet').forEach(el=>{
+updateBadge(el,el.dataset.key);
+if(el.classList.contains('open') && el._render) el._render();
 });
 }
 function buildFacets(){
@@ -1947,46 +2041,63 @@ el.innerHTML=`
 <span class="icon">${many?'+':'▾'}</span>
 </button>
 <div class="facet-panel">
-${facetValues[f.key].length>10?'<input class="opt-search" placeholder="Search…">':''}
+${f.and?`<div class="facet-hint">${esc(f.hint||'')}</div>`:''}
+${f.and || facetValues[f.key].length>10?'<input class="opt-search" placeholder="Search…">':''}
 <div class="opt-list"></div>
 <button class="facet-clear">Clear</button>
 </div>`;
 host.appendChild(el);
 const list=el.querySelector('.opt-list');
 const search=el.querySelector('.opt-search');
-const render=(q='')=>{
-const ql=q.toLowerCase();
-const items=facetValues[f.key].filter(([v])=>!ql||v.toLowerCase().includes(ql));
+const render=()=>{
+const ql=search?search.value.trim().toLowerCase():'';
+const keep=list.scrollTop;
+const vals=sortedFacetValues(f.key);
+const items=ql?vals.filter(([v])=>v.toLowerCase().includes(ql)):vals;
 const shown=items.slice(0,250);
-list.innerHTML=shown.map(([v,n])=>`
+list.innerHTML=(shown.length?shown.map(([v,n])=>`
 <label><input type="checkbox" value="${esc(v)}" ${selected[f.key].has(v)?'checked':''}>
 <span>${esc(v)}</span><span class="n">${n}</span></label>`).join('')
+:'<div class="opt-more">Nothing left to narrow by.</div>')
 +(items.length>250?`<div class="opt-more">${items.length-250} more — type to narrow down</div>`:'');
+list.scrollTop=keep;
 };
+el._render=render;
 el.querySelector('.facet-btn').addEventListener('click',()=>{
 const was=el.classList.contains('open');
 document.querySelectorAll('.facet.open').forEach(x=>x.classList.remove('open'));
 // The panel's checkbox list is only built when the panel is opened, so
 // the 29,000-entry Actors list never touches the DOM unless asked for.
-if(!was){ el.classList.add('open'); render(search?search.value:''); if(search) search.focus(); }
+if(!was){ el.classList.add('open'); render(); if(search) search.focus(); }
 });
-if(search) search.addEventListener('input',()=>render(search.value));
+if(search) search.addEventListener('input',render);
 list.addEventListener('change',e=>{
 if(e.target.type!=='checkbox') return;
 const v=e.target.value;
 e.target.checked?selected[f.key].add(v):selected[f.key].delete(v);
-updateBadge(el,f.key); syncInfoBarTiles(); renderChips(); applyFilters();
+// Clearing the query after a pick is the point: the list underneath has just
+// become "who else was in these films", and that is what should be on screen.
+if(f.and && e.target.checked && search) search.value='';
+syncInfoBarTiles(); renderChips(); applyFilters();
 });
 el.querySelector('.facet-clear').addEventListener('click',()=>{
-selected[f.key].clear(); render(search?search.value:''); updateBadge(el,f.key);
+selected[f.key].clear(); if(search) search.value='';
 syncInfoBarTiles(); renderChips(); applyFilters();
 });
 updateBadge(el,f.key);
 });
+facetsReady=true;
+// Anything already filtering when the sidebar arrives (a search typed during
+// load) has to be reflected in the lists straight away.
+if(filtered.length!==movies.length) refreshFacetsNow();
 }
 function updateBadge(el,key){
 const b=el.querySelector('.count-badge'), n=selected[key].size;
-b.style.display=n?'inline-block':'none'; b.textContent=n;
+b.style.display=n?'inline-block':'none';
+// The "∩" is the only thing on a closed facet that says the picks are being
+// intersected, so it has to be readable from outside.
+b.textContent = (AND_KEYS.has(key) && n>1) ? n+' ∩' : n;
+b.title = (AND_KEYS.has(key) && n>1) ? 'Only titles with all '+n : n+' selected';
 }
 document.addEventListener('click',e=>{
 if(!e.target.closest('.facet')) document.querySelectorAll('.facet.open').forEach(x=>x.classList.remove('open'));
@@ -2073,33 +2184,42 @@ s._reset=()=>{ lo.value=s.min; hi.value=s.max; paint(); };
 });
 }
 /* ---------- FILTER + SORT + RENDER ---------- */
-function applyFilters(keepPage, soft){
-const q=$('#searchBox').value.trim().toLowerCase();
-/* Which facets and sliders are actually narrowing anything is decided ONCE,
-   here, instead of being re-decided inside the row loop 19,000 times. The old
-   version walked all 13 facets and all 5 sliders for every row even when
+/* Which facets and sliders are actually narrowing anything is decided ONCE, in
+   these two, instead of being re-decided inside the row loop 19,000 times. The
+   old version walked all 13 facets and all 5 sliders for every row even when
    nothing was selected -- ~340,000 property lookups and 19,000 throwaway
    one-element arrays (`[m[f.key]]`) per pass. That pass runs on every paint,
-   and startup paints up to four times before the grid settles. */
-const activeFacets=[];
+   and startup paints up to four times before the grid settles.
+   `skipKey` leaves one facet out, which is how an OR facet's own option list
+   gets counted (see refreshFacetValues). */
+function collectActive(skipKey){
+const out=[];
 for(const f of FACETS){
+if(f.key===skipKey) continue;
 const sel=selected[f.key];
-if(sel && sel.size) activeFacets.push({key:f.key, csv:f.csv, sel});
+if(!sel || !sel.size) continue;
+// 'all' turns the picks into an intersection: every one of them has to be on
+// the row. Precomputed as a plain array so the row loop never touches the
+// Set's iterator.
+out.push({key:f.key, csv:f.csv, sel,
+all: !!(f.csv && AND_KEYS.has(f.key) && sel.size>1), want:[...sel]});
 }
-const activeRanges=[];
+return out;
+}
+function collectRanges(){
+const out=[];
 for(const s of SLIDERS){
 const r=rangeState[s.key];
-if(!r) continue;                          // sliders not built yet
+if(!r) continue;                            // sliders not built yet
 if(r.lo>s.min || r.hi<s.max){
 // A date range includes the whole of its end day; folded in once here rather
 // than recomputed for every row.
-activeRanges.push({key:s.key, lo:r.lo, hi:s.type==='date' ? r.hi+86399999 : r.hi});
+out.push({key:s.key, lo:r.lo, hi:s.type==='date' ? r.hi+86399999 : r.hi});
 }
 }
-if(!q && !activeFacets.length && !activeRanges.length){
-filtered=movies.slice();                  // nothing is filtering: skip the walk
-}else{
-filtered=movies.filter(m=>{
+return out;
+}
+function rowMatches(m,q,facets,ranges){
 // m.search is built by enrich(), which runs after the first paint. If a query
 // is typed before that finishes, fall back to the raw fields rather than
 // silently returning nothing.
@@ -2108,23 +2228,37 @@ const hay = m.search ||
 (m.sortTitle+' '+m.title+' '+m.desc+' '+m.year+' '+m.directorRaw+' '+m.actorsRaw+' '+m.genreRaw).toLowerCase();
 if(!hay.includes(q)) return false;
 }
-for(let i=0;i<activeFacets.length;i++){
-const f=activeFacets[i];
+for(let i=0;i<facets.length;i++){
+const f=facets[i];
 if(f.csv){
 const a=m[f.key];
-if(!a) return false;                  // not enriched yet, or genuinely empty
+if(!a) return false;                      // not enriched yet, or genuinely empty
+if(f.all){
+// Collaboration mode: every picked name has to appear on this row.
+if(a.length<f.want.length) return false;
+for(let j=0;j<f.want.length;j++){ if(a.indexOf(f.want[j])===-1) return false; }
+}else{
 let hit=false;
 for(let j=0;j<a.length;j++){ if(f.sel.has(a[j])){ hit=true; break; } }
 if(!hit) return false;
+}
 }else if(!f.sel.has(m[f.key])) return false;
 }
-for(let i=0;i<activeRanges.length;i++){
-const r=activeRanges[i], v=m[r.key];
+for(let i=0;i<ranges.length;i++){
+const r=ranges[i], v=m[r.key];
 if(v==null || v<r.lo || v>r.hi) return false;
 }
 return true;
-});
 }
+function applyFilters(keepPage, soft){
+const q=$('#searchBox').value.trim().toLowerCase();
+const facets=collectActive(null), ranges=collectRanges();
+if(!q && !facets.length && !ranges.length){
+filtered=movies.slice();                    // nothing is filtering: skip the walk
+}else{
+filtered=movies.filter(m=>rowMatches(m,q,facets,ranges));
+}
+refreshFacetsNow();
 sortNow();
 if(!keepPage) page=0;
 renderPage(soft?{ifChanged:true}:null);
@@ -2219,6 +2353,44 @@ $('#prevPg').addEventListener('click',goPrev);
 $('#nextPg').addEventListener('click',goNext);
 let st; $('#searchBox').addEventListener('input',()=>{clearTimeout(st);st=setTimeout(applyFilters,220);});
 $('#sortSel').addEventListener('change',()=>{sortNow();page=0;renderPage();});
+/* The visible sort control. #sortSel stays the single source of truth -- every
+   pick writes to it and fires a real 'change', so sortNow() and the listener
+   above need to know nothing about this. It exists because Chrome on Windows
+   draws a <select>'s dropdown list with the OS menu font: the options came out
+   in Segoe UI no matter what font-family the select carried. Plain markup
+   honours Poppins. */
+(function(){
+const wrap=$('#sortWrap'), sel=$('#sortSel'),
+      btn=$('#sortBtn'), panel=$('#sortPanel'), label=$('#sortLabel');
+panel.innerHTML=[].map.call(sel.options,o=>
+`<button type="button" role="option" data-v="${esc(o.value)}"`+
+` aria-selected="${o.value===sel.value}">${esc(o.textContent)}</button>`).join('');
+const sync=()=>{
+const cur=sel.options[sel.selectedIndex];
+label.textContent=cur?cur.textContent:'';
+panel.querySelectorAll('button').forEach(b=>
+b.setAttribute('aria-selected', String(b.dataset.v===sel.value)));
+};
+const close=()=>{ wrap.classList.remove('open'); btn.setAttribute('aria-expanded','false'); };
+sync();
+btn.addEventListener('click',e=>{
+e.stopPropagation();
+document.querySelectorAll('.facet.open').forEach(x=>x.classList.remove('open'));
+const open=!wrap.classList.contains('open');
+wrap.classList.toggle('open',open);
+btn.setAttribute('aria-expanded',String(open));
+if(open){ const c=panel.querySelector('[aria-selected="true"]'); if(c) c.scrollIntoView({block:'nearest'}); }
+});
+panel.addEventListener('click',e=>{
+const b=e.target.closest('button[data-v]'); if(!b) return;
+sel.value=b.dataset.v;
+sync(); close();
+sel.dispatchEvent(new Event('change'));
+});
+btn.addEventListener('keydown',e=>{ if(e.key==='Escape') close(); });
+document.addEventListener('click',e=>{ if(!e.target.closest('#sortWrap')) close(); });
+sel.addEventListener('change',sync);
+})();
 function setSbCollapsed(v){
 document.body.classList.toggle('sbCollapsed',v);
 try{ localStorage.setItem('dd_sb', v?'1':'0'); }catch(e){}
@@ -2237,6 +2409,7 @@ $('#searchBox').value='';
 FACETS.forEach(f=>selected[f.key].clear());
 document.querySelectorAll('.facet').forEach(el=>updateBadge(el,el.dataset.key));
 document.querySelectorAll('.facet .opt-list input[type=checkbox]').forEach(cb=>{cb.checked=false;});
+document.querySelectorAll('.facet .opt-search').forEach(s=>{s.value='';});
 SLIDERS.forEach(s=>s._reset&&s._reset());
 syncInfoBarTiles(); renderChips();
 applyFilters();
@@ -2438,11 +2611,13 @@ return splitCsv(key==='director'?m.directorRaw:m.actorsRaw);
 /* "3 titles" under a face = how many rows in the whole collection that person
    is on, which is exactly what buildFacetValues() has already counted. Read
    from there when it's built, walking the collection only in the window
-   before it is. facetValues[key] is replaced wholesale on every rebuild, so
+   before it is. facetTotals[key] holds the whole-collection counts -- facetValues
+is re-counted off the visible rows now, which is the wrong number for a face --
+and is replaced wholesale on every rebuild, so
    holding the array itself is a sufficient cache key. */
 const personCounts={};
 function titleCount(name,key){
-const fv=facetValues[key];
+const fv=facetTotals[key];
 if(fv && fv.length){
 if(!personCounts[key] || personCounts[key].src!==fv) personCounts[key]={src:fv, map:new Map(fv)};
 return personCounts[key].map.get(name)||0;
