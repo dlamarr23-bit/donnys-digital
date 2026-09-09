@@ -38,6 +38,11 @@ const ALLOWLIST = [
   { host: "pages.dev", wildcard: true },
   // Photon fallback used on wishlist/data/d2d
   { host: "wp.com", wildcard: true },
+  // Collection page's proxy-chain fallbacks (index.html VUDU_PROXIES) --
+  // not in netlify.toml's list because Netlify's Image CDN never touched
+  // these; they only appear once the generic /img rewrite re-wraps them.
+  { host: "statically.io", wildcard: true },
+  { host: "wsrv.nl", wildcard: true },
   // exact host only in netlify.toml (no subdomain wildcard before "image")
   { host: "image.tmdb.org", wildcard: false },
 ];
