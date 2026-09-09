@@ -1,0 +1,13 @@
+# Cloudflare Pages redirect rules — direct translation of the [[redirects]]
+# blocks in netlify.toml. Cloudflare Pages uses the same _redirects syntax
+# Netlify does, including 200-status rewrites, so this ports as-is.
+#
+# Drop this file in the repo root (same level as index.html).
+#
+# Clean URLs: /wishlist instead of /wishlist.html
+/movies       /index.html        200
+/wishlist     /wishlist.html     200
+/data         /data.html         200
+/sales        /sales.html        200
+/ma-compare   /ma-compare.html   200
+/d2d          /d2d.html          200
