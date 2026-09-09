@@ -78,7 +78,20 @@ export async function onRequestGet(context) {
   try {
     upstream = await fetch(parsed.toString(), {
       cf: { cacheEverything: true, cacheTtl: 604800 }, // 7 days at Cloudflare's edge
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; donnys-digital-image-proxy)" },
+      headers: {
+        // Some source CDNs (Akamai-fronted ones especially -- Vudu is one)
+        // block requests that don't look like a real browser tab, which a
+        // plain "Mozilla/5.0 (compatible; ...-proxy)" string doesn't. This
+        // is a best-effort browser impression, not a guarantee -- some
+        // providers block by source IP range regardless of headers.
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+        Accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        "Sec-Fetch-Dest": "image",
+        "Sec-Fetch-Mode": "no-cors",
+        "Sec-Fetch-Site": "cross-site",
+        Referer: parsed.origin + "/",
+      },
     });
   } catch {
     return new Response("Upstream fetch failed", { status: 502 });
