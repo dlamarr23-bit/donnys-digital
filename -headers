@@ -1,0 +1,35 @@
+# Cloudflare Pages header rules — direct translation of the [[headers]]
+# blocks in netlify.toml. Cloudflare Pages reads this file the same way
+# Netlify does (Netlify's own _headers convention), so this is a straight
+# port with no syntax changes.
+#
+# Drop this file in the repo root (same level as index.html) and it will be
+# picked up automatically on the next Cloudflare Pages build.
+
+# Data snapshots. Filenames carry a content hash, so a given URL can never
+# change meaning and may be cached forever.
+/snapshots/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# Brand mark and favicons. Long cache with a revalidate rather than the
+# immutable treatment reserved for hashed names.
+/assets/*
+  Cache-Control: public, max-age=604800, stale-while-revalidate=86400
+
+# CSV mirrors of the sheets the other pages parse. Stable filenames, so
+# these are revalidated rather than cached forever.
+/mirror/*
+  Cache-Control: public, max-age=0, must-revalidate
+  Content-Type: text/csv; charset=utf-8
+
+# The pointer to the current snapshots. Must be re-checked every time or a
+# rebuild would never be noticed.
+/data-manifest.json
+  Cache-Control: public, max-age=0, must-revalidate
+
+# Pages themselves: always revalidate, but a 304 costs one round trip and
+# no body.
+/*.html
+  Cache-Control: public, max-age=0, must-revalidate
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
