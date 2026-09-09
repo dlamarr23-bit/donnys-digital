@@ -1481,7 +1481,98 @@ const $=s=>document.querySelector(s);
 const ESC_MAP={'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'};
 const ESC_RE=/[&<>"']/g;
 const esc=s=>String(s??'').replace(ESC_RE,c=>ESC_MAP[c]);
-const splitCsv=s=>String(s??'').split(',').map(x=>x.trim()).filter(Boolean);
+/* The sheet spells some people more than one way -- "Shauna Macdonald" and
+   "Shauna MacDonald", "D.B. Sweeney" and "D. B. Sweeney", "Chow Yun-Fat" and
+   "Chow Yun-fat". Left alone each spelling is its own entry in the Actors list
+   holding its own subset of the films, so intersecting two of them returns
+   nothing and a person's filmography is split in half.
+   The fold is deliberately narrow -- case, accents, and the punctuation that
+   separates name parts (. - ') -- because that is the whole of the
+   disagreement this collection contains. It runs on every CSV column, but only
+   the people columns have anything to fold: genres, studios, services, awards
+   and view status collide under no rule at all, so nothing there moves.
+   Slashes and "+" are deliberately left alone so that a future "Disney+" can
+   never fold into "Disney". */
+const FOLD=new Map();
+function foldKey(s){
+let k=FOLD.get(s);
+if(k!==undefined) return k;
+let t=s;
+// normalize() is the expensive part here and most names never need it.
+if(/[^\x00-\x7F]/.test(t)) t=t.normalize('NFD').replace(/[̀-ͯ]/g,'');
+k=t.toLowerCase().replace(/[.\-'’]+/g,' ').replace(/\s+/g,' ').trim();
+FOLD.set(s,k);
+return k;
+}
+const CANON=new Map();   // folded key -> the one spelling everything displays
+const splitCsv=s=>{
+const out=[], seen=new Set();
+for(const part of String(s??'').split(',')){
+const v=part.trim();
+if(!v) continue;
+const disp=CANON.get(foldKey(v)) || v;
+// Folding can leave the same person on a row twice; count them once.
+if(seen.has(disp)) continue;
+seen.add(disp); out.push(disp);
+}
+return out;
+};
+/* Which spelling wins is decided by the collection, not by whichever row
+   happened to parse first: the one the sheet uses most often. "D.B. Sweeney"
+   appears on 19 titles and "D. B. Sweeney" on one, so the 19 win. Ties fall
+   back to the tidier-looking form. */
+const CANON_FIELDS=['director','actors','genre','whereWatch','highQ','awards','viewStatus'];
+const accents=s=>(s.match(/[^\x00-\x7F]/g)||[]).length;
+function tidier(a,b){
+const ca=/^\p{Lu}/u.test(a), cb=/^\p{Lu}/u.test(b);
+if(ca!==cb) return ca?a:b;                 // "Kate Winslet" over "kate Winslet"
+const aa=accents(a), ab=accents(b);
+if(aa!==ab) return aa>ab?a:b;              // "Paul Hébert" over "Paul Hebert"
+if(a.length!==b.length) return a.length>b.length?a:b;
+return a<b?a:b;                            // stable, so a reload cannot flip it
+}
+/* Rows parsed before the winner was known still hold their own spelling, so
+   the arrays are swept once the whole sheet is in. Without this both spellings
+   survive side by side and the fold buys nothing. */
+function canonicalizeRows(list){
+const tally=new Map();                     // folded key -> Map(spelling -> rows)
+for(let i=0;i<list.length;i++){
+const m=list[i];
+for(let f=0;f<CANON_FIELDS.length;f++){
+const a=m[CANON_FIELDS[f]];
+if(!a) continue;
+for(let j=0;j<a.length;j++){
+const k=foldKey(a[j]);
+if(!k) continue;
+let by=tally.get(k);
+if(!by){ by=new Map(); tally.set(k,by); }
+by.set(a[j],(by.get(a[j])||0)+1);
+}
+}
+}
+for(const [k,by] of tally){
+if(by.size===1){ CANON.set(k, by.keys().next().value); continue; }
+let best=null, bestN=-1;
+for(const [v,n] of by){
+if(n>bestN || (n===bestN && tidier(v,best)===v)){ best=v; bestN=n; }
+}
+CANON.set(k,best);
+}
+for(let i=0;i<list.length;i++){
+const m=list[i];
+for(let f=0;f<CANON_FIELDS.length;f++){
+const a=m[CANON_FIELDS[f]];
+if(!a) continue;
+let dirty=false;
+for(let j=0;j<a.length;j++){
+const c=CANON.get(foldKey(a[j]));
+if(c!==undefined && c!==a[j]){ a[j]=c; dirty=true; }
+}
+// Only a rewritten row can have gained a duplicate.
+if(dirty && new Set(a).size!==a.length) m[CANON_FIELDS[f]]=[...new Set(a)];
+}
+}
+}
 /* Places a fixed-position floating element (the edit modal, the description
    popover) with its top-left near (x,y) -- normally right where the user just
    clicked -- then nudges it back on-screen if that would run it off an edge.
@@ -1990,6 +2081,9 @@ facetSorted[list[j].key]=false;
 // what titleCount() reads: "12 titles" under a face means twelve in the whole
 // collection, not twelve among whatever is on screen right now.
 function buildFacetValues(){
+// Settle the spelling of every name before anything is counted, or a person
+// split across two spellings is counted as two people.
+canonicalizeRows(movies);
 countFacets(movies,FACETS);
 FACETS.forEach(f=>{ facetTotals[f.key]=facetValues[f.key]; });
 }
