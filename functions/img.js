@@ -79,9 +79,24 @@ export async function onRequestGet(context) {
     return new Response("Host not allowed", { status: 403 });
   }
 
+  // Vudu (Akamai-fronted) rejects fetches from Cloudflare's network with a
+  // 403 no matter what headers are sent -- confirmed by testing direct
+  // fetches and a statically.io relay, both blocked. Photon (WordPress's
+  // image CDN) is NOT blocked, so for Vudu specifically, always relay
+  // through Photon instead of hitting Vudu directly. Bonus: Photon also
+  // resizes, so this recovers some of the payload savings the old Netlify
+  // Image CDN provided for Vudu posters specifically.
+  const isVudu = /(^|\.)vudu\.com$/i.test(parsed.hostname);
+  const fetchTarget = isVudu
+    ? "https://i0.wp.com/" +
+      parsed.host +
+      parsed.pathname +
+      (parsed.search ? parsed.search + "&w=300" : "?w=300")
+    : parsed.toString();
+
   let upstream;
   try {
-    upstream = await fetch(parsed.toString(), {
+    upstream = await fetch(fetchTarget, {
       cf: { cacheEverything: true, cacheTtl: 604800 }, // 7 days at Cloudflare's edge
       headers: {
         // Some source CDNs (Akamai-fronted ones especially -- Vudu is one)
