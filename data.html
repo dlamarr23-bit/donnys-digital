@@ -948,49 +948,38 @@ const HEAD_OVERRIDES={
   'Jodie Foster':'Jodie Foster',
   'Barbara Stanwyck':'Barbara Stanwyck'
 };
-try{
-  if(!localStorage.getItem('dd_head_ovfix')){
-    const raw=JSON.parse(localStorage.getItem('dd_heads2')||'{}');
-    let changed=false;
-    for(const k in HEAD_OVERRIDES){ if(k in raw){ delete raw[k]; changed=true; } }
-    if(changed) localStorage.setItem('dd_heads2',JSON.stringify(raw));
-    localStorage.setItem('dd_head_ovfix','1');
-  }
-}catch(e){}
-/* .brow .face is 76px square, so 160 covers a 2x display exactly and there is
-   nothing to see past it. It was 320, which on a full board (48 directors +
-   96 actors) came to roughly 6.5MB of portraits -- the single largest thing
-   this page downloads, and about four times more pixels than any of them is
-   ever drawn at. Keep this in step with the .face rule in the stylesheet.
+/* NEVER REWRITE A WIKIMEDIA THUMBNAIL URL BY HAND.
+   These URLs carry their width in the filename
+   (.../thumb/8/89/Name.jpg/250px-Name.jpg) and it is tempting to edit that
+   number to ask for a smaller image. It does not work: Wikimedia serves only
+   an allowlist of widths and answers 400 ("Use thumbnail sizes listed on
+   https://w.wiki/GHai") for anything else. Checked against a real file --
+   120 and 250 are served; 150, 160, 200, 300 and 320 are all 400.
 
-   DECLARED HERE, not down with the other Wikipedia constants, and this
-   matters: headSized() is CALLED a few lines below, while this script is
-   still executing top to bottom. A function declaration hoists, but a const
-   does not -- reading HEAD_PX before its declaration runs throws
-   ReferenceError, the catch below swallows it, and headStore silently loads
-   EMPTY. That is exactly what happened: every returning visitor lost their
-   whole cached portrait set and fell back to re-resolving all 144 names. */
+   The API already handles this. Ask pithumbsize for the size you want and it
+   snaps UP to the nearest allowed width and hands back a URL that works:
+   ask 160, get a 250px URL. So take whatever it returns, verbatim.
+
+   This is also what had already quietly broken the portraits before any of
+   the recent performance work: the store below is permanent, it was full of
+   320px URLs written when that width was still served, and once Wikimedia
+   narrowed the list every one of them became a 400 with nothing to refresh
+   them. Hence dd_heads3 -- a new key, so the dead URLs are dropped once. */
 const HEAD_PX=160;
-/* Wikimedia thumbnail URLs carry their width in the filename
-   (.../thumb/b/bf/Name.jpg/320px-Name.jpg). Rewriting it re-points a URL at a
-   size Wikimedia renders on demand, which is what lets the shrink reach the
-   URLs already sitting in localStorage from when this asked for 320. URLs
-   with no /<n>px- segment are originals (the source was already small) and
-   pass through untouched. */
-function headSized(url){
-  return typeof url==='string' ? url.replace(/\/\d+px-/, '/'+HEAD_PX+'px-') : url;
-}
 
 let headStore={};
 try{
-  const raw=JSON.parse(localStorage.getItem('dd_heads2')||'{}');
-  for(const k in raw){ if(raw[k]) headStore[k]=headSized(raw[k]); }
+  const raw=JSON.parse(localStorage.getItem('dd_heads3')||'{}');
+  for(const k in raw){ if(raw[k]) headStore[k]=raw[k]; }
 }catch(e){}
+/* One-time tidy-up of the abandoned keys, so a browser that visited the old
+   version is not left carrying a dead megabyte of 320px URLs forever. */
+try{ localStorage.removeItem('dd_heads2'); localStorage.removeItem('dd_head_ovfix'); }catch(e){}
 let headSaveTimer=null;
 function saveHeadStore(){
   clearTimeout(headSaveTimer);
   headSaveTimer=setTimeout(()=>{
-    try{ localStorage.setItem('dd_heads2',JSON.stringify(headStore)); }catch(e){}
+    try{ localStorage.setItem('dd_heads3',JSON.stringify(headStore)); }catch(e){}
   },800);
 }
 function initials(name){
@@ -1115,8 +1104,8 @@ wireSearch('actSearchInput', 'actor', ()=>overallAct);
    half-works.                                                              */
 const WIKI_API='https://en.wikipedia.org/w/api.php';
 const HEAD_BATCH=50;
-/* HEAD_PX and headSized() live up beside the headStore load, which calls
-   them while this script is still executing. See the note there. */
+/* HEAD_PX lives up beside the headStore load. See the note there about why
+   these URLs are never rewritten by hand. */
 
 function wikiBatch(titles){
   const url=WIKI_API+'?action=query&format=json&origin=*&redirects=1'
@@ -1180,7 +1169,6 @@ async function resolveHeads(names, hint, host){
   }
 }
 function applyHead(name,url,host){
-  url=headSized(url);        // one place where every portrait URL is normalised
   headCache.set(name,url);
   headStore[name]=url;
   saveHeadStore();
@@ -1275,7 +1263,8 @@ let faceFlushTimer = null;
 /* faceSeen is declared BEFORE releaseFace even though releaseFace reads it:
    the observer's callback only names releaseFace, which hoists, whereas the
    reverse order would leave a const being read from a function that could in
-   principle run first. Same trap as HEAD_PX above -- not worth re-learning. */
+   principle run first. A const read in that position is a temporal-dead-zone
+   ReferenceError, and inside a try/catch it is a silent one. */
 const faceSeen = ('IntersectionObserver' in window)
   ? new IntersectionObserver(entries=>{
       for(const e of entries) if(e.isIntersecting) releaseFace(e.target);
