@@ -957,13 +957,33 @@ try{
     localStorage.setItem('dd_head_ovfix','1');
   }
 }catch(e){}
+/* .brow .face is 76px square, so 160 covers a 2x display exactly and there is
+   nothing to see past it. It was 320, which on a full board (48 directors +
+   96 actors) came to roughly 6.5MB of portraits -- the single largest thing
+   this page downloads, and about four times more pixels than any of them is
+   ever drawn at. Keep this in step with the .face rule in the stylesheet.
+
+   DECLARED HERE, not down with the other Wikipedia constants, and this
+   matters: headSized() is CALLED a few lines below, while this script is
+   still executing top to bottom. A function declaration hoists, but a const
+   does not -- reading HEAD_PX before its declaration runs throws
+   ReferenceError, the catch below swallows it, and headStore silently loads
+   EMPTY. That is exactly what happened: every returning visitor lost their
+   whole cached portrait set and fell back to re-resolving all 144 names. */
+const HEAD_PX=160;
+/* Wikimedia thumbnail URLs carry their width in the filename
+   (.../thumb/b/bf/Name.jpg/320px-Name.jpg). Rewriting it re-points a URL at a
+   size Wikimedia renders on demand, which is what lets the shrink reach the
+   URLs already sitting in localStorage from when this asked for 320. URLs
+   with no /<n>px- segment are originals (the source was already small) and
+   pass through untouched. */
+function headSized(url){
+  return typeof url==='string' ? url.replace(/\/\d+px-/, '/'+HEAD_PX+'px-') : url;
+}
+
 let headStore={};
 try{
   const raw=JSON.parse(localStorage.getItem('dd_heads2')||'{}');
-  /* headSized() re-points whatever is in storage from back when this asked
-     Wikipedia for 320px portraits at the 160px the board actually draws, so
-     the shrink applies to returning visitors too and nobody has to re-run
-     144 lookups to get it. */
   for(const k in raw){ if(raw[k]) headStore[k]=headSized(raw[k]); }
 }catch(e){}
 let headSaveTimer=null;
@@ -1095,22 +1115,8 @@ wireSearch('actSearchInput', 'actor', ()=>overallAct);
    half-works.                                                              */
 const WIKI_API='https://en.wikipedia.org/w/api.php';
 const HEAD_BATCH=50;
-/* .brow .face is 76px square, so 160 covers a 2x display exactly and there is
-   nothing to see past it. It was 320, which on a full board (48 directors +
-   96 actors) came to roughly 6.5MB of portraits -- the single largest thing
-   this page downloads, and about four times more pixels than any of them is
-   ever drawn at. Keep this in step with the .face rule in the stylesheet. */
-const HEAD_PX=160;
-/* Wikimedia thumbnail URLs carry their width in the filename
-   (.../thumb/b/bf/Name.jpg/320px-Name.jpg). Rewriting it re-points a URL at a
-   size Wikimedia will render on demand, which matters for the ones already
-   sitting in localStorage from when this asked for 320 -- they get the
-   smaller image without anyone having to re-run the lookups. URLs with no
-   /<n>px- segment are originals (the source was already small) and pass
-   through untouched. */
-function headSized(url){
-  return typeof url==='string' ? url.replace(/\/\d+px-/, '/'+HEAD_PX+'px-') : url;
-}
+/* HEAD_PX and headSized() live up beside the headStore load, which calls
+   them while this script is still executing. See the note there. */
 
 function wikiBatch(titles){
   const url=WIKI_API+'?action=query&format=json&origin=*&redirects=1'
@@ -1234,42 +1240,70 @@ function pumpImgs(){
     t(()=>{ imgActive--; pumpImgs(); });
   }
 }
-/* WHY THE PORTRAITS WAIT FOR THE VIEWPORT
+/* WHY THE PORTRAITS ARE HELD BACK, AND WHY THE HOLD ALWAYS LETS GO
    These load through `new Image()` rather than an <img> in the document,
    because a portrait is only allowed to replace the initials once it has
    actually decoded -- a broken one has to leave the initials alone. The cost
    of that is that `loading="lazy"`, which is what the rest of the page uses,
    does not apply: a detached Image starts downloading the moment src is set,
    wherever its slot happens to be on the page. Both boards sit well below the
-   charts, so a first visit was fetching all 144 portraits immediately, none
-   of them on screen.
+   charts, so a first visit was fetching all 144 portraits at once, none of
+   them on screen, while the data and the charts were still going.
 
-   So the gate is done by hand. The download is held until the slot is within
-   400px of the viewport, which for a page you have not scrolled means the
-   handful that are actually visible. Everything after that is unchanged --
-   same queue, same decode-before-swap, same retry.
+   So the wait is done by hand: hold the download until the slot comes within
+   400px of the viewport.
 
-   Without IntersectionObserver the job simply runs at once, exactly as
-   before. */
+   THE TIMER IS NOT BELT-AND-BRACES, IT IS THE FIX FOR A REAL BREAKAGE.
+   A first cut of this had the IntersectionObserver as the ONLY way a job
+   could ever start, and portraits stopped appearing at all. An observer only
+   reports an intersection against a viewport with a non-zero size, and there
+   are ordinary situations where it never fires -- a zero-height or collapsed
+   viewport being the one that was actually hit. Worse, applyHead() stamps
+   data-loading="1" before calling in here, so a job that never ran also
+   permanently blocked every later attempt at that name: the face was stuck on
+   initials for good, with no way back.
+
+   So the observer is now only ever an OPTIMISATION -- it starts things
+   sooner. The flush guarantees every queued portrait runs regardless, once
+   the page has had its first few seconds to itself, which is the whole window
+   this was protecting. Scrolling to a board still loads it instantly. */
+const FACE_FLUSH_MS = 5000;
 const faceJobs = new WeakMap();
+const facePending = new Set();     // strong refs so the flush can find them
+let faceFlushTimer = null;
+
+/* faceSeen is declared BEFORE releaseFace even though releaseFace reads it:
+   the observer's callback only names releaseFace, which hoists, whereas the
+   reverse order would leave a const being read from a function that could in
+   principle run first. Same trap as HEAD_PX above -- not worth re-learning. */
 const faceSeen = ('IntersectionObserver' in window)
-  ? new IntersectionObserver((entries, obs)=>{
-      for(const e of entries){
-        if(!e.isIntersecting) continue;
-        obs.unobserve(e.target);
-        const job=faceJobs.get(e.target);
-        if(job){ faceJobs.delete(e.target); job(); }
-      }
+  ? new IntersectionObserver(entries=>{
+      for(const e of entries) if(e.isIntersecting) releaseFace(e.target);
     }, {rootMargin:'400px 0px'})
   : null;
+function releaseFace(f){
+  if(!facePending.has(f)) return;
+  facePending.delete(f);
+  if(faceSeen) faceSeen.unobserve(f);
+  const job=faceJobs.get(f);
+  if(job){ faceJobs.delete(f); job(); }
+}
 
 function setFace(f,url,attempt){
   if(!faceSeen){ loadFace(f,url,attempt); return; }
   faceJobs.set(f, ()=>loadFace(f,url,attempt));
+  facePending.add(f);
   faceSeen.observe(f);
-  /* A board that is re-rendered throws its .face elements away while they are
-     still observed. Those never intersect, so the job never runs and both the
-     element and its entry fall out of the WeakMap -- nothing to clean up. */
+  if(faceFlushTimer===null){
+    faceFlushTimer=setTimeout(()=>{
+      faceFlushTimer=null;
+      /* Re-rendering a board detaches its .face elements while they are still
+         pending. They are flushed here like any other, and loadFace() drops
+         anything no longer in the document -- so this is also what keeps the
+         Set from growing. */
+      for(const el of [...facePending]) releaseFace(el);
+    }, FACE_FLUSH_MS);
+  }
 }
 function loadFace(f,url,attempt){
   attempt=attempt||0;
