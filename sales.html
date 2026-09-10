@@ -1213,7 +1213,14 @@ function readCache(){
   return null;
 }
 function writeCache(list){
-  const idle = window.requestIdleCallback || (f=>setTimeout(f,1));
+  /* The {timeout} is not decoration. requestIdleCallback only fires when the
+     page genuinely goes idle, and this one does not: posters keep streaming
+     in behind the grid. Measured against the live site, the callback had
+     still not run 20s after the merge finished, so CACHE_KEY was never
+     written and every single visit paid the full 13s cold load. With the
+     timeout the browser runs it regardless once that long has passed. */
+  const rIC = window.requestIdleCallback;
+  const idle = rIC ? (cb=>rIC(cb,{timeout:2000})) : (cb=>setTimeout(cb,1));
   idle(()=>{
     let payload;
     try{ payload=JSON.stringify({t:Date.now(), d:list}); }catch(e){ return; }

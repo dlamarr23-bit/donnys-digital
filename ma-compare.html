@@ -1176,7 +1176,12 @@ function readCache(){
   return null;
 }
 function writeCache(list){
-  const idle = window.requestIdleCallback || (f=>setTimeout(f,1));
+  /* {timeout} matters: requestIdleCallback only fires when the page really
+     goes idle, and a grid still streaming posters may never get there. On
+     /sales the same code left the cache unwritten indefinitely, so every
+     visit was a cold load. The timeout makes the browser run it anyway. */
+  const rIC = window.requestIdleCallback;
+  const idle = rIC ? (cb=>rIC(cb,{timeout:2000})) : (cb=>setTimeout(cb,1));
   idle(()=>{
     let payload;
     try{ payload=JSON.stringify({t:Date.now(), d:list}); }catch(e){ return; }

@@ -18,9 +18,19 @@
 
 # CSV mirrors of the sheets the other pages parse. Stable filenames, so
 # these are revalidated rather than cached forever.
+#
+# WHY text/plain AND NOT text/csv
+# Cloudflare picks what to compress off the Content-Type, against a fixed
+# list, and text/csv is not on it. Served as text/csv these came down RAW --
+# movies.csv 11.7MB, d2d.csv 1.27MB -- on every first visit, which silently
+# undid the whole point of mirroring. build-data.mjs says the mirrors exist
+# to get "a CDN with Brotli"; that was true on Netlify and quietly stopped
+# being true here. text/plain IS on the list, so the same bytes now arrive
+# Brotli'd. Nothing reads the Content-Type: every consumer is a
+# fetch().text() handed to that page's own CSV parser.
 /mirror/*
   Cache-Control: public, max-age=0, must-revalidate
-  Content-Type: text/csv; charset=utf-8
+  Content-Type: text/plain; charset=utf-8
 
 # The pointer to the current snapshots. Must be re-checked every time or a
 # rebuild would never be noticed.

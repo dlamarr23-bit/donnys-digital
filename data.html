@@ -153,22 +153,31 @@ html,body{margin:0;padding:0;background:#171C20}
   var SHEET_ID   = '1IHUqVvrGcjIESpHaClR9uvmjP3jutcz-ReijMqI7x38';
   var SHEET_NAME = 'Movies';
 
-  /* Published CSV of the Movies tab -- same link the collection page uses.
-     File > Share > Publish to web > "Movies" > CSV if it ever needs redoing.
-     Set to '' to force the gviz path below. */
-  /* THE LIVE SHEET. This briefly pointed at /mirror/movies.csv, which is
-     written at deploy time, so these stats reflected the sheet as of the last
-     deploy rather than now. Correctness wins here: this page has no local
-     cache to fall back on, so reading the mirror meant there was no route to
-     current data at all. The trade is the full ~9s export again on load. */
-  var CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTNcy_TXkl7kRJvIvf4U_q9pZUCdrJ9RsQ8Vgnr5NoX8K679jUhWC6iWZvbCYR2bOaRG2ypgFB13PEB/pub?gid=0&single=true&output=csv';
-/* Was the published Google CSV below. That endpoint answers
-   "Cache-Control: private, max-age=300" and is regenerated per request, so no
-   CDN could hold it and every visit paid for the whole file again. The mirror
-   is the same bytes, rebuilt at deploy time and served by Netlify with Brotli
-   and a real revalidate. If it is ever missing, this page still falls back to
-   the live sheet on its own, exactly as it did before.
-   Original: https://docs.google.com/spreadsheets/d/e/2PACX-1vTNcy_TXkl7kRJvIvf4U_q9pZUCdrJ9RsQ8Vgnr5NoX8K679jUhWC6iWZvbCYR2bOaRG2ypgFB13PEB/pub?gid=0&single=true&output=csv */
+  /* TWO SOURCES FOR THE SAME BYTES, RACED.
+     This page has swung between these twice, because each on its own is
+     wrong in a different direction:
+
+       CSV_LIVE   the published Google CSV. Always current, but answers
+                  "Cache-Control: private, max-age=300" from an endpoint that
+                  regenerates per request, so no CDN can hold it and every
+                  visit pays for the whole 11.7MB export. Measured from the
+                  live page: 1.1s on a good run, 5.6s on a bad one, ~9.5s at
+                  worst. Nothing renders until it lands.
+       CSV_MIRROR /mirror/movies.csv -- the SAME export, byte for byte,
+                  written by scripts/build-data.mjs at deploy time and served
+                  from the edge compressed. ~250ms. But it is only as fresh as
+                  the last deploy, and pointing at it alone left the page with
+                  no route to current data at all, which is why it was
+                  reverted.
+
+     So: run both. Whichever answers first paints the page -- in practice the
+     mirror, by a wide margin. If the mirror won, the live response is handed
+     to the page afterwards through __DD_FRESH and the stats re-render, but
+     only if the two actually differ. Freshness is not traded away: the page
+     still always ends up showing the live sheet. It just stops showing
+     nothing at all while it waits. */
+  var CSV_LIVE   = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTNcy_TXkl7kRJvIvf4U_q9pZUCdrJ9RsQ8Vgnr5NoX8K679jUhWC6iWZvbCYR2bOaRG2ypgFB13PEB/pub?gid=0&single=true&output=csv';
+  var CSV_MIRROR = '/mirror/movies.csv';
 
   /* Only the columns this page reads. Dropping Poster, Sort Title,
      Description, Where to Watch, Highest Quality, Awards, Acquired by and
@@ -195,6 +204,13 @@ html,body{margin:0;padding:0;background:#171C20}
   function defer(){ var d={}; d.p=new Promise(function(a,b){ d.res=a; d.rej=b; }); return d; }
   var out = defer();
   window.__DD_DATA = out.p;
+
+  /* Resolves with the live sheet's data when, and only when, the mirror got
+     there first AND the live copy turns out to be different. Resolves null in
+     every other case (live won the race, live failed, nothing changed), so
+     the page's one consumer can just check for a truthy value. */
+  var fresh = defer();
+  window.__DD_FRESH = fresh.p;
 
   /* ---- incremental RFC-4180 CSV parser ---------------------------------
      Fed arbitrary network chunks. Complete records are committed and dropped;
@@ -235,9 +251,19 @@ html,body{margin:0;padding:0;background:#171C20}
     return this.rows;
   };
 
-  function streamCsv(){
-    if(!CSV_URL) return Promise.reject(new Error('CSV_URL not set'));
-    return fetch(CSV_URL, {credentials:'omit'}).then(function(r){
+  /* Only one racer may drive the progress bar, or the two fight over the same
+     readout. The mirror leads, because it is the one that decides when the
+     page paints -- but if it is missing, the live stream is promoted so the
+     bar keeps meaning something on the slow path. */
+  var leader = 'mirror';
+
+  /* Streams one CSV URL to {cols, rows, src, bytes}. `bytes` counts DECODED
+     bytes, so it stays comparable between the two sources even though one
+     arrives compressed and the other does not. */
+  function streamCsv(url, src){
+    if(!url) return Promise.reject(new Error('no URL for '+src));
+    function tick(o){ if(leader===src) emit(o); }
+    return fetch(url, {credentials:'omit'}).then(function(r){
       if(!r.ok) throw new Error('CSV HTTP '+r.status);
       var cs=new CsvStream(), cols=null, bytes=0;
       function header(){
@@ -251,8 +277,9 @@ html,body{margin:0;padding:0;background:#171C20}
       if(!r.body || !r.body.getReader){
         return r.text().then(function(txt){
           cs.push(txt); var rows=cs.end(); header();
-          emit({stage:'downloaded', bytes:txt.length, rows:rows.length});
-          out.res({cols:cols, rows:rows, src:'csv'});
+          if(!cols || !rows.length) throw new Error('empty CSV');
+          tick({stage:'downloaded', bytes:txt.length, rows:rows.length});
+          return {cols:cols, rows:rows, src:src, bytes:txt.length};
         });
       }
       var reader=r.body.getReader(), dec=new TextDecoder('utf-8');
@@ -261,15 +288,14 @@ html,body{margin:0;padding:0;background:#171C20}
           if(res.done){
             var rows=cs.end(); header();
             if(!cols || !rows.length) throw new Error('empty CSV');
-            try{ localStorage.setItem('dd_stats_bytes', String(bytes)); }catch(e){}
-            emit({stage:'downloaded', bytes:bytes, rows:rows.length});
-            out.res({cols:cols, rows:rows, src:'csv'});
-            return;
+            if(leader===src){ try{ localStorage.setItem('dd_stats_bytes', String(bytes)); }catch(e){} }
+            tick({stage:'downloaded', bytes:bytes, rows:rows.length});
+            return {cols:cols, rows:rows, src:src, bytes:bytes};
           }
           bytes += res.value.byteLength;
           cs.push(dec.decode(res.value,{stream:true}));
           header();
-          emit({stage:'download', bytes:bytes, total:window.__DD_EXP, rows:cs.rows.length});
+          tick({stage:'download', bytes:bytes, total:window.__DD_EXP, rows:cs.rows.length});
           return pump();
         });
       })();
@@ -327,9 +353,52 @@ html,body{margin:0;padding:0;background:#171C20}
     gvizJsonp(url).then(function(j){ if(!settled) out.res(gvizToRaw(j)); }, fail);
   }
 
-  streamCsv().catch(function(e){ errs.push((e&&e.message)||String(e)); startGviz(); });
-  if(!CSV_URL) startGviz();
-  else setTimeout(function(){ if(!settled) startGviz(); }, 6000);
+  /* ---- the race ----------------------------------------------------------
+     Both requests go out now, together, before the stylesheet or the main
+     script have been parsed. The mirror leads the progress bar because it is
+     the one that decides when the page paints.
+
+     Whoever finishes first calls out.res() and the page renders. The loser is
+     not wasted: if the mirror won, the live copy is compared against it and,
+     if the sheet has moved on since the last deploy, handed over through
+     __DD_FRESH for a silent re-render. If they match -- the common case,
+     since a sheet edit triggers a rebuild -- __DD_FRESH resolves null and
+     nothing re-renders. */
+  var mirrorWon=false, mirrorBytes=-1;
+
+  streamCsv(CSV_MIRROR, 'mirror').then(function(d){
+    mirrorBytes=d.bytes;
+    if(settled) return;                  // live beat us; its data is already in
+    mirrorWon=true;
+    out.res(d);
+  }, function(e){
+    /* No mirror (not built yet, or a bad deploy) is not an error: the live
+       request below is still running and is the authoritative source anyway.
+       It only means the page waits for it, exactly as it used to -- so hand
+       the progress bar over to the request that is actually still going. */
+    errs.push('mirror: '+((e&&e.message)||String(e)));
+    if(!settled) leader='csv';
+  });
+
+  var live = streamCsv(CSV_LIVE, 'csv');
+  live.then(function(d){
+    if(!settled){ out.res(d); fresh.res(null); return; }
+    /* The mirror already painted. Only disturb the page if the sheet really
+       has changed -- both counts are decoded bytes of the same export, so
+       equal length means equal content. */
+    fresh.res(mirrorWon && d.bytes !== mirrorBytes ? d : null);
+  }, function(e){
+    errs.push('live: '+((e&&e.message)||String(e)));
+    fresh.res(null);
+    /* Live failed. If the mirror already painted, the page stands as-is on
+       deploy-time data rather than going blank. If nothing has painted, walk
+       down to gviz exactly as before. */
+    if(!settled) startGviz();
+  });
+
+  /* Neither CSV answered in 6s and nothing is on screen -- start gviz beside
+     them rather than waiting either out. */
+  setTimeout(function(){ if(!settled) startGviz(); }, 6000);
 })();
 </script>
 
@@ -891,7 +960,11 @@ try{
 let headStore={};
 try{
   const raw=JSON.parse(localStorage.getItem('dd_heads2')||'{}');
-  for(const k in raw){ if(raw[k]) headStore[k]=raw[k]; }
+  /* headSized() re-points whatever is in storage from back when this asked
+     Wikipedia for 320px portraits at the 160px the board actually draws, so
+     the shrink applies to returning visitors too and nobody has to re-run
+     144 lookups to get it. */
+  for(const k in raw){ if(raw[k]) headStore[k]=headSized(raw[k]); }
 }catch(e){}
 let headSaveTimer=null;
 function saveHeadStore(){
@@ -1022,10 +1095,26 @@ wireSearch('actSearchInput', 'actor', ()=>overallAct);
    half-works.                                                              */
 const WIKI_API='https://en.wikipedia.org/w/api.php';
 const HEAD_BATCH=50;
+/* .brow .face is 76px square, so 160 covers a 2x display exactly and there is
+   nothing to see past it. It was 320, which on a full board (48 directors +
+   96 actors) came to roughly 6.5MB of portraits -- the single largest thing
+   this page downloads, and about four times more pixels than any of them is
+   ever drawn at. Keep this in step with the .face rule in the stylesheet. */
+const HEAD_PX=160;
+/* Wikimedia thumbnail URLs carry their width in the filename
+   (.../thumb/b/bf/Name.jpg/320px-Name.jpg). Rewriting it re-points a URL at a
+   size Wikimedia will render on demand, which matters for the ones already
+   sitting in localStorage from when this asked for 320 -- they get the
+   smaller image without anyone having to re-run the lookups. URLs with no
+   /<n>px- segment are originals (the source was already small) and pass
+   through untouched. */
+function headSized(url){
+  return typeof url==='string' ? url.replace(/\/\d+px-/, '/'+HEAD_PX+'px-') : url;
+}
 
 function wikiBatch(titles){
   const url=WIKI_API+'?action=query&format=json&origin=*&redirects=1'
-    +'&prop=pageimages&piprop=thumbnail&pithumbsize=320&pilimit='+HEAD_BATCH
+    +'&prop=pageimages&piprop=thumbnail&pithumbsize='+HEAD_PX+'&pilimit='+HEAD_BATCH
     +'&titles='+encodeURIComponent(titles.join('|'));
   return fetch(url).then(r=>{
     if(!r.ok) throw new Error('HTTP '+r.status);
@@ -1085,6 +1174,7 @@ async function resolveHeads(names, hint, host){
   }
 }
 function applyHead(name,url,host){
+  url=headSized(url);        // one place where every portrait URL is normalised
   headCache.set(name,url);
   headStore[name]=url;
   saveHeadStore();
@@ -1119,7 +1209,7 @@ async function headSearch(query,retried){
   try{
     const api=WIKI_API+'?action=query&generator=search'
       +'&gsrsearch='+encodeURIComponent(query)+'&gsrlimit=5'
-      +'&prop=pageimages&piprop=thumbnail&pithumbsize=320&pilimit=5&format=json&origin=*';
+      +'&prop=pageimages&piprop=thumbnail&pithumbsize='+HEAD_PX+'&pilimit=5&format=json&origin=*';
     const r=await fetch(api);
     if(r.status===429 && !retried){
       await new Promise(res=>setTimeout(res,1500));
@@ -1144,7 +1234,44 @@ function pumpImgs(){
     t(()=>{ imgActive--; pumpImgs(); });
   }
 }
+/* WHY THE PORTRAITS WAIT FOR THE VIEWPORT
+   These load through `new Image()` rather than an <img> in the document,
+   because a portrait is only allowed to replace the initials once it has
+   actually decoded -- a broken one has to leave the initials alone. The cost
+   of that is that `loading="lazy"`, which is what the rest of the page uses,
+   does not apply: a detached Image starts downloading the moment src is set,
+   wherever its slot happens to be on the page. Both boards sit well below the
+   charts, so a first visit was fetching all 144 portraits immediately, none
+   of them on screen.
+
+   So the gate is done by hand. The download is held until the slot is within
+   400px of the viewport, which for a page you have not scrolled means the
+   handful that are actually visible. Everything after that is unchanged --
+   same queue, same decode-before-swap, same retry.
+
+   Without IntersectionObserver the job simply runs at once, exactly as
+   before. */
+const faceJobs = new WeakMap();
+const faceSeen = ('IntersectionObserver' in window)
+  ? new IntersectionObserver((entries, obs)=>{
+      for(const e of entries){
+        if(!e.isIntersecting) continue;
+        obs.unobserve(e.target);
+        const job=faceJobs.get(e.target);
+        if(job){ faceJobs.delete(e.target); job(); }
+      }
+    }, {rootMargin:'400px 0px'})
+  : null;
+
 function setFace(f,url,attempt){
+  if(!faceSeen){ loadFace(f,url,attempt); return; }
+  faceJobs.set(f, ()=>loadFace(f,url,attempt));
+  faceSeen.observe(f);
+  /* A board that is re-rendered throws its .face elements away while they are
+     still observed. Those never intersect, so the job never runs and both the
+     element and its entry fall out of the WeakMap -- nothing to clean up. */
+}
+function loadFace(f,url,attempt){
   attempt=attempt||0;
   imgQueue.push(done=>{
     if(!f.isConnected){ done(); return; }
@@ -1420,6 +1547,36 @@ function refresh(){
   renderCards(filteredRows());
   buildCharts();
 }
+/* The page painted from /mirror/movies.csv, which is only as fresh as the
+   last deploy. The live sheet was requested at the same moment and is still
+   in flight; when it lands, __DD_FRESH hands it over -- but ONLY if it
+   differs from what is already on screen (see the race in <head>). So the
+   usual outcome here is one quiet no-op, and the page never shows deploy-time
+   data as if it were current.
+
+   Deliberately NOT re-run: roll(), which picks a random title for the spot-
+   light. Re-rolling would swap the card out from under whoever is reading it.
+   Focus chips, the search boxes and the active filters are module state, so
+   refresh() redraws through them and the view the user built survives. */
+async function awaitFresh(){
+  let data;
+  try{ data=await window.__DD_FRESH; }catch(e){ return; }
+  if(!data) return;                                  // nothing changed
+  let next;
+  try{
+    next=parse(data.cols, data.rows);
+    if(!next.length) return;                         // never blank a good page
+  }catch(e){ return; }
+  /* Re-parsing 19k rows and rebuilding every chart is ~1.4s of main thread.
+     Hold it until the browser has a gap so it does not land mid-scroll. */
+  const rIC = window.requestIdleCallback;
+  (rIC ? cb=>rIC(cb,{timeout:3000}) : cb=>setTimeout(cb,300))(()=>{
+    rows=next;
+    populateSearchLists();
+    refresh();
+    console.info(`[stats] refreshed to the live sheet (${rows.length} titles)`);
+  });
+}
 (async function init(){
   try{
     const data=await window.__DD_DATA;          // download started back in <head>
@@ -1436,6 +1593,10 @@ function refresh(){
     roll();
     setBar(1); barDone(); setStatus(null);
     console.info(`[stats] ${rows.length} titles (source: ${data.src})`);
+    /* Not awaited: the page is finished and interactive at this point. The
+       catch is only so a failed background refresh can never surface as the
+       "could not load the sheet" panel below over a page that loaded fine. */
+    if(data.src==='mirror') awaitFresh().catch(()=>{});
   }catch(err){
     barDone();
     setStatus('Could not load the sheet.<br><small>Check it is shared as '

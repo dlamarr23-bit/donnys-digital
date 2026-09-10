@@ -1106,7 +1106,12 @@ function readCache(){
   return null;
 }
 function writeCache(list){
-  const idle = window.requestIdleCallback || (f=>setTimeout(f,1));
+  /* {timeout} matters: requestIdleCallback only fires when the page really
+     goes idle, and a grid still streaming posters may never get there. On
+     /sales the same code left the cache unwritten indefinitely, so every
+     visit was a cold load. The timeout makes the browser run it anyway. */
+  const rIC = window.requestIdleCallback;
+  const idle = rIC ? (cb=>rIC(cb,{timeout:2000})) : (cb=>setTimeout(cb,1));
   idle(()=>{
     let payload;
     try{ payload=JSON.stringify({t:Date.now(), d:list}); }catch(e){ return; }
@@ -1119,20 +1124,51 @@ function writeCache(list){
    1. Cached rows paint immediately, with no network wait at all.
    2. The live sheet (already downloading since <head>) replaces them when it
       lands, keeping filters, sliders and the current page. */
+
+/* First of these promises to hand back a non-empty list wins; null if none
+   of them does. Promise.any is nearly this, but it would count a source that
+   "succeeded" with zero rows as the winner and paint an empty grid. Rejected
+   and empty are treated the same: not an answer, wait for the other one. */
+function firstNonEmpty(promises){
+  const running = promises.filter(Boolean);
+  if(!running.length) return Promise.resolve(null);
+  return new Promise(resolve=>{
+    let left = running.length;
+    const lose = () => { if(--left === 0) resolve(null); };
+    running.forEach(p => p.then(v => { if(v && v.length) resolve(v); else lose(); }, lose));
+  });
+}
+
 (async function init(){
   syncPerPage();
   let cached=readCache();
-  /* No local cache yet (first visit, cleared storage, private window) -- paint
-     from the mirrored CSV on Netlify rather than waiting on the live sheet,
-     which is 1.27MB and answered in ~9.5s when measured. It is parsed by this
-     page's OWN parseCsvData/parseGviz, so there is no second parser to keep in
-     step. loadData() still runs below and replaces this with live data. */
+  /* No local cache yet (first visit, cleared storage, private window). Two
+     things can paint the first screen and there is no telling in advance
+     which arrives first, so race them:
+
+       the mirror  /mirror/d2d.csv, the whole tab, from the edge. Fast and
+                   predictable, but it is the entire 1.27MB export (~250KB
+                   once Cloudflare compresses it -- see _headers).
+       the live    the column-pruned, Own-filtered gviz query the <head>
+                   script fired before this script even parsed. ~54KB, but
+                   behind Google's TTFB, measured anywhere from 0.5s to 11s.
+
+     This used to `await` the mirror unconditionally and only then look at the
+     live request -- so on the runs where the live answer was already sitting
+     there, the page downloaded and parsed 1.27MB it had no use for. Racing
+     costs nothing extra and takes whichever route is quicker today.
+
+     Both are parsed by this page's OWN parseCsvData/parseGviz, so there is no
+     second parser to keep in step. loadData() still runs below either way. */
   if(!cached || !cached.length){
-    try{
-      const txt=await (await fetch(PUBLISHED_CSV_URL,{credentials:'omit'})).text();
-      const seed=parseGviz(parseCsvData(txt));
-      if(seed && seed.length) cached=seed;
-    }catch(e){ console.warn('[md2d] mirror seed unavailable:', e && e.message); }
+    const early = window.__MD && window.__MD.early;
+    const fromLive = early ? early.then(txt=>parseGviz(unwrap(txt))) : null;
+    const fromMirror = fetch(PUBLISHED_CSV_URL,{credentials:'omit'})
+      .then(r=>{ if(!r.ok) throw new Error('mirror HTTP '+r.status); return r.text(); })
+      .then(txt=>parseGviz(parseCsvData(txt)));
+    const seed = await firstNonEmpty([fromLive, fromMirror]);
+    if(seed) cached=seed;
+    else console.warn('[md2d] no seed available; waiting on the live sheet');
   }
   if(cached && cached.length){
     movies=cached;

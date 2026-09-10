@@ -37,11 +37,16 @@
 # are revalidated rather than cached forever: a repeat visit costs one 304 and
 # no body, and a rebuild is picked up straight away. Still far better than
 # Google's "private, max-age=300" on a regenerated-per-request endpoint.
+#
+# text/plain, not text/csv, and kept in step with _headers: Cloudflare picks
+# what to compress off the Content-Type and text/csv is not on its list, so
+# these went out uncompressed there. Nothing reads the type -- every consumer
+# is a fetch().text() into that page's own CSV parser.
 [[headers]]
   for = "/mirror/*"
   [headers.values]
     Cache-Control = "public, max-age=0, must-revalidate"
-    Content-Type = "text/csv; charset=utf-8"
+    Content-Type = "text/plain; charset=utf-8"
 
 # The pointer to the current snapshots. Small, and must be re-checked every
 # time or a rebuild would never be noticed.
