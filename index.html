@@ -1654,8 +1654,11 @@ function fmtRuntime(min){
 const h=Math.floor(min/60), r=Math.round(min%60);
 return h ? (r? h+'h '+r+'m' : h+'h') : r+'m';
 }
+// First line is COLUMN C (Sort Title) -- the readable name. Column B is the
+// padded sort key ("00028 Days Later"), which is what used to show up here.
+// Same source the info bar already uses, so hover and the ⓘ bar now agree.
 function tooltip(m){
-const lines=[ m.title + (m.year?' ('+m.year+')':'') ];
+const lines=[ (m.sortTitle||m.title) + (m.year?' ('+m.year+')':'') ];
 if(m.runtime!=null) lines.push('Runtime: '+fmtRuntime(m.runtime));
 if(m.imdb!=null) lines.push('IMDb: '+m.imdb);
 if(m.tomato!=null) lines.push('Rotten Tomatoes: '+m.tomato+'%');
@@ -2405,16 +2408,17 @@ const slice=filtered.slice(start,end);
 // Only card-affecting data goes into the key -- deliberately NOT the result
 // total, which jumps from the streamed slice to the full sheet while the very
 // same 60 covers stay on screen.
-// m.title IS card-affecting and used to be missing here: it is the hover
-// tooltip, the img alt, and the text shown when a cover cannot be fetched.
-// Without it, renaming a title in the Sheet refreshed the DATA but the soft
-// render then decided the cards were identical and left the old name on
-// screen until something else forced a repaint.
+// m.title and m.sortTitle are BOTH card-affecting and used to be missing
+// here: title is the img alt, sortTitle is the hover tooltip and the text
+// shown when a cover cannot be fetched. Without them, renaming a title in
+// the Sheet refreshed the DATA but the soft render then decided the cards
+// were identical and left the old name on screen until something else forced
+// a repaint.
 // infoRow is in the key because the open card carries an extra class: without
 // it, opening the bar on a card that is already on screen would be a no-op
 // render and the outline would never appear.
 let k=page+'|'+infoRow+'|';
-for(const m of slice) k+=m.sheetRow+'\u0001'+m.title+'\u0001'+m.img+'\u0001'+m.link+'\u0001'+m.color+'\u0001'
+for(const m of slice) k+=m.sheetRow+'\u0001'+m.title+'\u0001'+m.sortTitle+'\u0001'+m.img+'\u0001'+m.link+'\u0001'+m.color+'\u0001'
 +(m.viewStatus&&m.viewStatus.length?m.viewStatus.join(','):'')+'\u0002';
 if(opts && opts.ifChanged && k===renderedKey) return;  // identical -> leave the loading images alone
 renderedKey=k;
@@ -2427,7 +2431,7 @@ style="background:${esc(m.color)||'var(--bg-soft)'}">
 ${m.img?`<img loading="${i<20?'eager':'lazy'}" ${i<10?'fetchpriority="high"':''} decoding="async"
 width="250" height="375" alt="${esc(m.title)}"
 src="${esc(m.img)}" data-pidx="${firstIdx(m.img)}">`
-:`<div class="ph">${esc(m.title)}</div>`}
+:`<div class="ph">${esc(m.sortTitle||m.title)}</div>`}
 <span class="edit-tag" title="Edit details">&#9998;</span>
 <span class="info-tag" title="Details">&#8505;</span>
 ${(m.viewStatus||[]).includes('Watched')
