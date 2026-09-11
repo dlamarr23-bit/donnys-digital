@@ -1129,11 +1129,12 @@ async function getToken(){
 }
 function dropToken(){ sessionToken=''; sessionStorage.removeItem('wl_token'); }
 // Google Sites can swallow bubbling clicks inside embeds — bind at the
-// document capture phase too so the toggle always sees them.
+// document capture phase so the toggle always sees them. Bind ONCE — adding a
+// listener on the button itself too fires this handler twice per click, which
+// toggles edit mode on and straight back off whenever a token is cached.
 document.addEventListener('click',e=>{
   if(e.target.closest && e.target.closest('#editToggle')) handleEditToggle();
 }, true);
-$('#editToggle').addEventListener('click', ()=>handleEditToggle());
 async function handleEditToggle(){
   if(!editMode){
     if(!APPS_SCRIPT_URL){
@@ -1180,6 +1181,7 @@ $('#priceBtn').addEventListener('click',async()=>{
     buildFacetValues();   // refresh Price bucket counts
     applyFilters();       // re-evaluate in case a Price filter is active
   }catch(err){
+    if(/token/i.test(err.message||'')) dropToken();   // bad token — re-prompt next click
     const hint=/unknown action/i.test(err.message)
       ? 'Your Apps Script is outdated — paste the newest version and redeploy (Deploy \u2192 Manage deployments \u2192 pencil \u2192 New version).'
       : err.message;
