@@ -1429,8 +1429,8 @@ page = Math.floor(firstShown / PER_PAGE);
 (mobileMq.addEventListener ? mobileMq.addEventListener('change', ()=>{ syncPerPage(); if(movies.length) renderPage(); })
 : mobileMq.addListener(()=>{ syncPerPage(); if(movies.length) renderPage(); }));
 const FACETS = [
-{label:'Director', key:'director', csv:true, and:true, hint:'Lists the directors of the films still showing. Pick two for their co-directed films.'},
-{label:'Actors', key:'actors', csv:true, and:true, hint:'Lists whoever is in the films still showing — after one pick, that actor’s co-stars. Pick a second name for the films they made together.'},
+{label:'Director', key:'director', csv:true, and:true, byCount:true, hint:'Lists the directors of the films still showing. Pick two for their co-directed films.'},
+{label:'Actors', key:'actors', csv:true, and:true, byCount:true, hint:'Lists whoever is in the films still showing — after one pick, that actor’s co-stars. Pick a second name for the films they made together.'},
 {label:'Genre', key:'genre', csv:true},
 {label:'MPAA Rating', key:'mpaa'},
 {label:'Quality', key:'quality'},
@@ -2057,6 +2057,11 @@ return (h>>>0).toString(36)+':'+list.length;
    sidebar collaborative -- pick a director and the Actors list becomes his
    cast; pick an actor and the Actors list becomes that actor's co-stars. */
 const AND_KEYS=new Set(FACETS.filter(f=>f.and).map(f=>f.key));
+// Most-credited first rather than A-Z. On a people list the alphabet is noise:
+// it opens on whoever happens to be called Aaron. It also decides which 250
+// survive the cap in render(), so the names that do show are the ones with the
+// most titles behind them instead of the ones earliest in the alphabet.
+const BYCOUNT_KEYS=new Set(FACETS.filter(f=>f.byCount).map(f=>f.key));
 const facetSorted={};  // facetKey -> true once its list is in display order
 function countFacets(rows,list){
 const counts=[];
@@ -2092,7 +2097,11 @@ FACETS.forEach(f=>{ facetTotals[f.key]=facetValues[f.key]; });
 }
 function sortedFacetValues(key){
 if(!facetSorted[key]){
-facetValues[key].sort((a,b)=>collator.compare(a[0],b[0]));
+// Count descending, then A-Z among names that tie -- which, once a pick has
+// narrowed the list, is most of them.
+facetValues[key].sort(BYCOUNT_KEYS.has(key)
+? (a,b)=> b[1]-a[1] || collator.compare(a[0],b[0])
+: (a,b)=> collator.compare(a[0],b[0]));
 facetSorted[key]=true;
 }
 return facetValues[key];
