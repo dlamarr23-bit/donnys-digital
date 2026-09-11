@@ -2155,9 +2155,16 @@ ${f.and || facetValues[f.key].length>10?'<input class="opt-search" placeholder="
 host.appendChild(el);
 const list=el.querySelector('.opt-list');
 const search=el.querySelector('.opt-search');
+/* A re-render starts at the top. The panel has either just been opened or had
+   its list rebuilt underneath it, and an offset measured against the old list
+   means nothing in the new one -- past the end of it, often, which is how you
+   end up scrolling back up to see the names you asked for. The one exception
+   is ticking a box in a union facet: that list barely moves, and the next box
+   you want is probably still under the cursor. */
+let keepScroll=false;
 const render=()=>{
 const ql=search?search.value.trim().toLowerCase():'';
-const keep=list.scrollTop;
+const prev=list.scrollTop;
 const vals=sortedFacetValues(f.key);
 const items=ql?vals.filter(([v])=>v.toLowerCase().includes(ql)):vals;
 const shown=items.slice(0,250);
@@ -2166,7 +2173,8 @@ list.innerHTML=(shown.length?shown.map(([v,n])=>`
 <span>${esc(v)}</span><span class="n">${n}</span></label>`).join('')
 :'<div class="opt-more">Nothing left to narrow by.</div>')
 +(items.length>250?`<div class="opt-more">${items.length-250} more — type to narrow down</div>`:'');
-list.scrollTop=keep;
+list.scrollTop = keepScroll ? prev : 0;
+keepScroll=false;
 };
 el._render=render;
 el.querySelector('.facet-btn').addEventListener('click',()=>{
@@ -2184,6 +2192,9 @@ e.target.checked?selected[f.key].add(v):selected[f.key].delete(v);
 // Clearing the query after a pick is the point: the list underneath has just
 // become "who else was in these films", and that is what should be on screen.
 if(f.and && e.target.checked && search) search.value='';
+// An intersecting facet swaps in a different set of people and sorts the name
+// just ticked to the top of it, so only a union facet holds its place.
+keepScroll = !f.and;
 syncInfoBarTiles(); renderChips(); applyFilters();
 });
 el.querySelector('.facet-clear').addEventListener('click',()=>{
