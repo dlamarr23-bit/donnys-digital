@@ -102,7 +102,7 @@ html,body{margin:0;padding:0;background:#171C20}
 #topbar{position:fixed;top:0;left:0;right:0;height:3px;z-index:200;
   background:rgba(255,255,255,.09);overflow:hidden}
 #topbar.done{opacity:0;transition:opacity .4s .25s}
-#topfill{height:100%;width:0;background:linear-gradient(90deg,#8e1f1f,#c62828,#ef5350);
+#topfill{height:100%;width:0;background:linear-gradient(90deg,#004A75,#007BC4,#4FA8E0);
   transition:width .3s ease-out}
 #topbar.indet #topfill{width:38%;animation:ddslide 1.15s ease-in-out infinite}
 @keyframes ddslide{0%{transform:translateX(-110%)}100%{transform:translateX(275%)}}
@@ -237,7 +237,7 @@ html,body{margin:0;padding:0;background:#171C20}
   --pill-text:#37474f;
   --bar:#8a9096;
   --bar-text:#ffffff;
-  --accent:#c62828;
+  --accent:#007BC4;
   --track:#4a565e;
   --track-fill:#eceff1;
 }
@@ -434,7 +434,7 @@ body{
 }
 .card .where-tag{
   position:absolute;top:6px;left:6px;z-index:2;
-  background:rgba(198,40,40,.92);color:#fff;border-radius:6px;
+  background:rgba(0,123,196,.92);color:#fff;border-radius:6px;
   padding:2px 6px;font:700 10px 'Poppins',sans-serif;letter-spacing:.6px;text-transform:uppercase;
   pointer-events:none;max-width:calc(100% - 12px);
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
@@ -510,7 +510,7 @@ body.filtersOpen #mobileFilterBtn{background:var(--accent);color:#fff}
   padding:8px 13px;border-radius:6px;white-space:nowrap;
   transition:color .12s ease,background .12s ease}
 .dd-links a:hover{color:#fff;background:#1b2126}
-.dd-links a[aria-current=page]{color:#ef5350}
+.dd-links a[aria-current=page]{color:#007BC4}
 .dd-links a[aria-current=page]:hover{background:transparent}
 /* Everything the pages already draw starts below the bar. */
 body{padding-top:var(--dd-nav-h);box-sizing:border-box}

@@ -105,7 +105,7 @@ html,body{margin:0;padding:0;background:#171C20}
 #topbar{position:fixed;top:0;left:0;right:0;height:3px;z-index:200;
   background:rgba(255,255,255,.09);overflow:hidden}
 #topbar.done{opacity:0;transition:opacity .4s .25s}
-#topfill{height:100%;width:0;background:linear-gradient(90deg,#8e1f1f,#e53935,#ef5350);
+#topfill{height:100%;width:0;background:linear-gradient(90deg,#004A75,#007BC4,#4FA8E0);
   transition:width .3s ease-out}
 #topbar.indet #topfill{width:38%;animation:ddslide 1.15s ease-in-out infinite}
 @keyframes ddslide{0%{transform:translateX(-110%)}100%{transform:translateX(275%)}}
@@ -411,7 +411,7 @@ html,body{margin:0;padding:0;background:#171C20}
 <style>
 :root{
   --bg:#171C20; --panel:#1f262b; --panel2:#242c32;
-  --ink:#eceff1; --muted:#90a4ae; --accent:#e53935;
+  --ink:#eceff1; --muted:#90a4ae; --accent:#007BC4;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html{background:var(--bg);scrollbar-width:none;-ms-overflow-style:none}
@@ -434,7 +434,7 @@ h1{font:700 26px 'Poppins',sans-serif;letter-spacing:2.5px;text-transform:upperc
 .card{background:var(--panel);border-radius:10px;padding:14px 14px 12px;border-top:3px solid var(--accent)}
 .card .num{font:700 26px 'Poppins',sans-serif;letter-spacing:1px}
 .card .lbl{color:var(--muted);font:700 10.5px 'Poppins',sans-serif;letter-spacing:1.4px;text-transform:uppercase;margin-top:2px}
-#cards .skel{height:78px;border-top:3px solid rgba(229,57,53,.35)}
+#cards .skel{height:78px;border-top:3px solid rgba(0,123,196,.35)}
 #panels{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .panel{background:var(--panel);border-radius:10px;padding:14px 16px 10px;min-width:0}
 .panel.wide{grid-column:1/-1}
@@ -481,7 +481,7 @@ h1{font:700 26px 'Poppins',sans-serif;letter-spacing:2.5px;text-transform:upperc
   font:700 13px 'Poppins',sans-serif;outline:none;transition:border-color .15s,box-shadow .15s;
 }
 .board-search::placeholder{color:var(--muted)}
-.board-search:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(229,57,53,.25)}
+.board-search:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(0,123,196,.25)}
 .board-search.no-match{border-color:var(--accent);animation:ddshake .3s}
 @keyframes ddshake{25%{transform:translateX(-4px)}75%{transform:translateX(4px)}}
 /* Collaborations panel (shows for two focused actors, or an actor + a director) */
@@ -531,7 +531,7 @@ h1{font:700 26px 'Poppins',sans-serif;letter-spacing:2.5px;text-transform:upperc
 #rollBtn{background:#fff;color:#37474f}
 #rollBtn:hover{background:#eceff1}
 #watchLink{background:var(--accent);color:#fff}
-#watchLink:hover{background:#b71c1c}
+#watchLink:hover{background:#005E96}
 </style>
 <!-- Favicon: the avatar, at the sizes browsers actually ask for. Served from
      /assets/ so they are cached immutably alongside the nav mark. -->
@@ -563,7 +563,7 @@ h1{font:700 26px 'Poppins',sans-serif;letter-spacing:2.5px;text-transform:upperc
   padding:8px 13px;border-radius:6px;white-space:nowrap;
   transition:color .12s ease,background .12s ease}
 .dd-links a:hover{color:#fff;background:#1b2126}
-.dd-links a[aria-current=page]{color:#ef5350}
+.dd-links a[aria-current=page]{color:#007BC4}
 .dd-links a[aria-current=page]:hover{background:transparent}
 /* Everything the pages already draw starts below the bar. */
 body{padding-top:var(--dd-nav-h);box-sizing:border-box}
@@ -783,9 +783,9 @@ function wirePosters(root){
   });
 }
 /* palette: blues, grays, black, white, red only */
-const PALETTE=['#e53935','#1e88e5','#90a4ae','#eceff1','#0d47a1','#546e7a','#42a5f5','#b71c1c','#b0bec5','#1565c0','#78909c','#263238'];
+const PALETTE=['#007BC4','#1e88e5','#90a4ae','#eceff1','#0d47a1','#546e7a','#42a5f5','#004A75','#b0bec5','#1565c0','#78909c','#263238'];
 const DIM='rgba(120,144,156,.30)';
-const RED='#e53935', BLUE='#1e88e5';
+const RED='#007BC4', BLUE='#1e88e5';
 const TV_RE=/tv|television|series/i;
 let rows=[];
 const focus={decade:null, genre:null, media:null, status:null,
@@ -1456,7 +1456,7 @@ function buildCharts(){
   upsert('growthChart',{
     type:'line',
     data:{labels:gLabels,datasets:[{data:gData,fill:true,tension:.25,
-      borderColor:RED,backgroundColor:'rgba(229,57,53,.12)',pointRadius:0,borderWidth:2}]},
+      borderColor:RED,backgroundColor:'rgba(0,123,196,.12)',pointRadius:0,borderWidth:2}]},
     options:base({plugins:{legend:{display:false}},
       scales:{
         x:{
