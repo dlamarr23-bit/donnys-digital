@@ -482,21 +482,21 @@ body.filtersOpen #mobileFilterBtn{background:var(--accent);color:#fff}
      extra round trip -- it is under 1KB and never changes independently.
      ==================================================================== -->
 <style>
-:root{--dd-nav-h:52px}
+:root{--dd-nav-h:78px}
 .dd-nav{position:fixed;top:0;left:0;right:0;height:var(--dd-nav-h);z-index:150;
   display:flex;align-items:center;gap:4px;padding:0 18px;background:#000;
   border-bottom:1px solid #23292e;
   font-family:'Poppins','Segoe UI',system-ui,sans-serif;font-weight:700}
 .dd-brand{display:flex;align-items:center;gap:9px;margin-right:22px;flex:0 0 auto;
-  color:#fff;text-decoration:none;font-size:16px;letter-spacing:.6px;white-space:nowrap}
+  color:#fff;text-decoration:none;font-size:24px;letter-spacing:.6px;white-space:nowrap}
 /* Transparent PNG, so it needs no plate behind it -- it sits straight on the
    bar. object-fit:contain keeps the whole avatar rather than cropping the
    popcorn out of the bottom-left corner. */
-.dd-brand-img{width:32px;height:32px;flex:0 0 auto;object-fit:contain}
+.dd-brand-img{width:48px;height:48px;flex:0 0 auto;object-fit:contain}
 .dd-links{display:flex;align-items:center;gap:2px;overflow-x:auto;
   scrollbar-width:none;-ms-overflow-style:none}
 .dd-links::-webkit-scrollbar{display:none}
-.dd-links a{color:#eceff1;text-decoration:none;font-size:15px;letter-spacing:.3px;
+.dd-links a{color:#eceff1;text-decoration:none;font-size:22.5px;letter-spacing:.3px;
   padding:8px 13px;border-radius:6px;white-space:nowrap;
   transition:color .12s ease,background .12s ease}
 .dd-links a:hover{color:#fff;background:#1b2126}
@@ -507,17 +507,17 @@ body{padding-top:var(--dd-nav-h);box-sizing:border-box}
 /* The loading toast is fixed near the top and would sit under the bar. */
 #status{top:calc(var(--dd-nav-h) + 20px)!important}
 @media(max-width:760px){
-  :root{--dd-nav-h:46px}
+  :root{--dd-nav-h:69px}
   .dd-nav{padding:0 10px}
-  .dd-brand{margin-right:12px;font-size:14px}
-  .dd-brand-img{width:27px;height:27px}
-  .dd-links a{font-size:13.5px;padding:7px 9px}
+  .dd-brand{margin-right:12px;font-size:21px}
+  .dd-brand-img{width:40.5px;height:40.5px}
+  .dd-links a{font-size:20.25px;padding:7px 9px}
 }
 </style><nav class="dd-nav">
   <a class="dd-brand" href="/">
     <img class="dd-brand-img" src="/assets/brand-64.png"
          srcset="/assets/brand-64.png 1x, /assets/brand-128.png 2x"
-         width="30" height="30" alt="" decoding="async">
+         width="45" height="45" alt="" decoding="async">
     Donny's Digital
   </a>
   <div class="dd-links">
