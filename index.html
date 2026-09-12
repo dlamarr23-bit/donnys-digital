@@ -2386,7 +2386,12 @@ const mul=dir==='desc'?-1:1;
 // Secondary key: alphabetical by title, always A→Z regardless of the
 // primary sort's direction. Used to break ties on every sort mode except
 // the default (Recently/First Added), which is left exactly as it was.
-const alphaTitle=(a,b)=>collator.compare(a.sortTitle||'', b.sortTitle||'');
+// Compares COLUMN B (Title) -- the sheet's purpose-built sort key, with
+// numbers zero-padded ("00028 Days Later") and a leading The/A/An dropped, so
+// 28 Days Later files under 28 and "The Matrix" under M. Column C (Sort
+// Title) holds the readable name that the cards, tooltip and info bar show;
+// sorting on that would bury every "The ..." under T.
+const alphaTitle=(a,b)=>collator.compare(a.title||a.sortTitle||'', b.title||b.sortTitle||'');
 filtered.sort((a,b)=>{
 if(key==='sortTitle'){
 return mul*alphaTitle(a,b);
@@ -2429,7 +2434,7 @@ const slice=filtered.slice(start,end);
 // total, which jumps from the streamed slice to the full sheet while the very
 // same 60 covers stay on screen.
 // m.title and m.sortTitle are BOTH card-affecting and used to be missing
-// here: title is the img alt, sortTitle is the hover tooltip and the text
+// here: sortTitle (column C) is the img alt, the hover tooltip and the text
 // shown when a cover cannot be fetched. Without them, renaming a title in
 // the Sheet refreshed the DATA but the soft render then decided the cards
 // were identical and left the old name on screen until something else forced
@@ -2449,7 +2454,7 @@ grid.innerHTML=slice.map((m,i)=>`
 data-row="${m.sheetRow}" title="${esc(tooltip(m))}"
 style="background:${esc(m.color)||'var(--bg-soft)'}">
 ${m.img?`<img loading="${i<20?'eager':'lazy'}" ${i<10?'fetchpriority="high"':''} decoding="async"
-width="250" height="375" alt="${esc(m.title)}"
+width="250" height="375" alt="${esc(m.sortTitle||m.title)}"
 src="${esc(m.img)}" data-pidx="${firstIdx(m.img)}">`
 :`<div class="ph">${esc(m.sortTitle||m.title)}</div>`}
 <span class="edit-tag" title="Edit details">&#9998;</span>
@@ -2658,7 +2663,7 @@ throw new Error(data.error||'save failed');
 m.viewStatusRaw=newVal;
 m.viewStatus=splitCsv(newVal);
 if(enriched) buildFacetValues();
-toast(`"${m.title}" → ${newVal}`);
+toast(`"${m.sortTitle||m.title}" → ${newVal}`);
 const keep=page;
 applyFilters(true);
 page=Math.min(keep, Math.max(0,Math.ceil(filtered.length/PER_PAGE)-1));
@@ -2671,7 +2676,7 @@ btn.disabled=false;
 function openEditor(sheetRow, x, y){
 const m=rowIndex.get(sheetRow); if(!m) return;
 currentEdit=m;
-$('#modalTitle').textContent='Edit: '+m.title;
+$('#modalTitle').textContent='Edit: '+(m.sortTitle||m.title);
 $('#modalMsg').textContent= APPS_SCRIPT_URL ? '' :
 'Saving is not set up yet — deploy the Apps Script and add its URL to the embed, or edit directly in the Sheet.';
 $('#modalMsg').className='msg';
