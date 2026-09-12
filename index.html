@@ -1277,12 +1277,12 @@ body{padding-top:var(--dd-nav-h);box-sizing:border-box}
 <option value="sortTitle|desc">Sort: Title Z &rarr; A</option>
 <option value="year|desc">Sort: Year (newest)</option>
 <option value="year|asc">Sort: Year (oldest)</option>
-<option value="imdb|desc">Sort: IMDB Rating (high)</option>
-<option value="imdb|asc">Sort: IMDB Rating (low)</option>
-<option value="tomato|desc">Sort: Tomato Meter (high)</option>
-<option value="tomato|asc">Sort: Tomato Meter (low)</option>
-<option value="runtime|desc">Sort: Runtime (longest)</option>
-<option value="runtime|asc">Sort: Runtime (shortest)</option>
+<option value="imdb|desc" data-short="Sort: IMDB Rating &darr;">Sort: IMDB Rating (high)</option>
+<option value="imdb|asc" data-short="Sort: IMDB Rating &uarr;">Sort: IMDB Rating (low)</option>
+<option value="tomato|desc" data-short="Sort: Tomato Meter &darr;">Sort: Tomato Meter (high)</option>
+<option value="tomato|asc" data-short="Sort: Tomato Meter &uarr;">Sort: Tomato Meter (low)</option>
+<option value="runtime|desc" data-short="Sort: Runtime &#10231;">Sort: Runtime (longest)</option>
+<option value="runtime|asc" data-short="Sort: Runtime &harr;">Sort: Runtime (shortest)</option>
 </select>
 <button id="sortBtn" type="button" aria-haspopup="listbox" aria-expanded="false"
 title="Sort collection"><span id="sortLabel">Sort: Recently Added</span><span class="icon">&#9662;</span></button>
@@ -2483,9 +2483,18 @@ const wrap=$('#sortWrap'), sel=$('#sortSel'),
 panel.innerHTML=[].map.call(sel.options,o=>
 `<button type="button" role="option" data-v="${esc(o.value)}"`+
 ` aria-selected="${o.value===sel.value}">${esc(o.textContent)}</button>`).join('');
+/* The closed button gives the label about 181px, and the six graded sorts --
+   IMDB Rating, Tomato Meter, Runtime -- run past it with "(high)"/"(longest)"
+   spelled out, so they arrived ellipsed with the one word that tells them
+   apart cut off. data-short swaps that suffix for an arrow: down for
+   highest-first, up for lowest-first, and a short or long horizontal arrow
+   for runtime. Only the closed button takes it. The panel below, the native
+   <select> behind it and the button's tooltip all keep the full wording --
+   this is a space-saver for the one place with no space, not a rename. */
 const sync=()=>{
 const cur=sel.options[sel.selectedIndex];
-label.textContent=cur?cur.textContent:'';
+label.textContent=cur?(cur.dataset.short||cur.textContent):'';
+btn.title=cur?cur.textContent:'Sort collection';
 panel.querySelectorAll('button').forEach(b=>
 b.setAttribute('aria-selected', String(b.dataset.v===sel.value)));
 };
