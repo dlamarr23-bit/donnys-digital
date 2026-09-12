@@ -27,12 +27,16 @@
         for a host-based filter to match. (Confirmed working on a network
         that was blocking Vudu.)
 
-     2. The Image CDN resizes and re-encodes: a poster arrives as ~10KB of
-        webp instead of ~40KB of source jpeg.
+     2. Resizing: this USED to also re-encode, when the proxy was Netlify's
+        Image CDN -- a poster arrived as ~10KB of webp instead of ~40KB of
+        source jpeg. On Cloudflare Pages there is no image-processing step,
+        so the &w= and &fm= below are sent and ignored, and posters arrive
+        at their original size and format. See README.md "Posters".
 
-     Requires the [images] remote_images allowlist in netlify.toml -- a URL
-     whose host is not on that list is refused by the Image CDN, so add the
-     host there before pointing anything new at it.
+     The host allowlist lives in functions/img.js -- a URL whose host is not
+     on that list is refused, so add the host there before pointing anything
+     new at it. (It used to be [images] remote_images in netlify.toml, which
+     Cloudflare does not read.)
      =================================================================== -->
 <script>
 (function () {
@@ -44,7 +48,7 @@
     if (!u) return u;
     u = String(u).trim();
     if (!/^(https?:)?\/\//i.test(u)) return u;              // relative -> leave alone
-    if (u.indexOf("/.netlify/images") !== -1) return u;     // already proxied
+    if (u.indexOf(PROXY + "?url=") === 0) return u;         // already proxied
     if (u.indexOf("//" + location.host) !== -1) return u;   // same-site -> leave alone
     if (u.slice(0, 2) === "//") u = "https:" + u;
     else if (u.slice(0, 5).toLowerCase() === "http:") u = "https:" + u.slice(5);

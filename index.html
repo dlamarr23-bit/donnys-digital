@@ -27,12 +27,16 @@
         for a host-based filter to match. (Confirmed working on a network
         that was blocking Vudu.)
 
-     2. The Image CDN resizes and re-encodes: a poster arrives as ~10KB of
-        webp instead of ~40KB of source jpeg.
+     2. Resizing: this USED to also re-encode, when the proxy was Netlify's
+        Image CDN -- a poster arrived as ~10KB of webp instead of ~40KB of
+        source jpeg. On Cloudflare Pages there is no image-processing step,
+        so the &w= and &fm= below are sent and ignored, and posters arrive
+        at their original size and format. See README.md "Posters".
 
-     Requires the [images] remote_images allowlist in netlify.toml -- a URL
-     whose host is not on that list is refused by the Image CDN, so add the
-     host there before pointing anything new at it.
+     The host allowlist lives in functions/img.js -- a URL whose host is not
+     on that list is refused, so add the host there before pointing anything
+     new at it. (It used to be [images] remote_images in netlify.toml, which
+     Cloudflare does not read.)
      =================================================================== -->
 <script>
 (function () {
@@ -44,7 +48,7 @@
     if (!u) return u;
     u = String(u).trim();
     if (!/^(https?:)?\/\//i.test(u)) return u;              // relative -> leave alone
-    if (u.indexOf("/.netlify/images") !== -1) return u;     // already proxied
+    if (u.indexOf(PROXY + "?url=") === 0) return u;         // already proxied
     if (u.indexOf("//" + location.host) !== -1) return u;   // same-site -> leave alone
     if (u.slice(0, 2) === "//") u = "https:" + u;
     else if (u.slice(0, 5).toLowerCase() === "http:") u = "https:" + u.slice(5);
@@ -174,9 +178,10 @@ html,body{margin:0;padding:0;background:#171C20}
    It does NOT replace the live sheet. init() treats a decoded snapshot exactly
    as it treats an IndexedDB cache hit: paint from it, then run the existing
    revalidation probe against the real sheet and catch up if anything moved.
-   signature() fingerprints on Title/Date Added/Viewing Status/Quality, all of
-   which live in the core tier -- so a snapshot fingerprint is directly
-   comparable to a live one and the existing probe logic needs no changes.
+   signature() fingerprints on Title/Date Added/Viewing Status/Quality/Genre/
+   Studio, all of which live in the core tier -- so a snapshot fingerprint is
+   directly comparable to a live one and the existing probe logic needs no
+   changes.
 
    If any of this fails, every path below still works: init() falls through to
    window.__startCsv() exactly as it did before the snapshot existed. */
@@ -357,27 +362,29 @@ var BASE='https://docs.google.com/spreadsheets/d/'+SHEET_ID
 /* ---- REVALIDATION PROBE ---------------------------------------------------
    The full export is ~11.1MB and is re-downloaded on every visit, even when
    nothing in the sheet has moved. This probe answers "has anything changed?"
-   for ~955KB instead.
+   for ~2.3MB (~400KB on the wire, gzipped) instead.
 
-   WHY THESE FOUR COLUMNS AND NOT MORE
-   The page's own change test -- signature(), further down -- has always
-   compared exactly Title | Date Added | Viewing Status | Quality. Anything
-   else (ratings, runtime, genre, poster URL...) already did NOT count as a
-   change: the old code downloaded all 11.1MB, hashed those four fields,
-   found them equal, and threw the fresh copy away. So probing precisely
-   those four columns is not a weaker test than before -- it is the SAME
-   test, asked before the download instead of after it.
+   WHY THESE SIX COLUMNS
+   The probe has to cover every column the page's own change test -- signature(),
+   further down -- compares, or an edit to a column it skips is invisible: the
+   probe says "unchanged", the download never starts, and the cached copy keeps
+   painting. That is exactly what happened to Genre and Studio, which are edited
+   on their own and so move nothing else on the row.
 
-   Column letters are fixed for this sheet: B=Title, K=Quality,
-   M=Viewing Status, X=Date Added. If the tab's columns are ever reordered
-   the letters go stale, so the probe checks the header labels it gets back
-   and reports 'changed' if they don't match -- which just falls through to
-   the ordinary full download. Every failure mode here costs a download; none
-   of them can serve stale data.
+   Title, Quality, Viewing Status and Date Added cost ~955KB between them;
+   adding Genre and Studio roughly doubles that, and it is still ~2.3MB against
+   the 11.1MB download it avoids.
+
+   Column letters are fixed for this sheet: B=Title, G=Genre, K=Quality,
+   M=Viewing Status, N=Studio, X=Date Added. If the tab's columns are ever
+   reordered the letters go stale, so the probe checks the header labels it
+   gets back and reports 'changed' if they don't match -- which just falls
+   through to the ordinary full download. Every failure mode here costs a
+   download; none of them can serve stale data.
    Set REVALIDATE=false to switch this off and always pull the whole sheet. */
 var REVALIDATE=true;
-var PROBE_COLS='select B,K,M,X';
-var PROBE_HEAD=['Title','Quality','Viewing Status','Date Added'];
+var PROBE_COLS='select B,G,K,M,N,X';
+var PROBE_HEAD=['Title','Genre','Quality','Viewing Status','Studio','Date Added'];
 /* If the probe hasn't answered by now, start the full download anyway rather
    than let a slow gviz hold up a sheet that really has changed. */
 var PROBE_GRACE_MS=4000;
@@ -722,6 +729,9 @@ rel="stylesheet" media="print" onload="this.media='all'">
 --bar:#8a9096;
 --bar-text:#ffffff;
 --accent:#007BC4;
+/* Same hue, lifted, for the places where --accent has to carry meaning as a
+   thin line or small text on the dark sidebar rather than as a filled pill. */
+--accent-bright:#3AA0E3;
 --track:#4a565e;
 --track-fill:#eceff1;
 }
@@ -883,6 +893,22 @@ background:transparent;border:none;border-bottom:1px solid #eceff1;
 color:#eceff1;font:700 13px 'Poppins',sans-serif;text-align:center;
 width:56px;padding:1px 2px;outline:none;color-scheme:dark;cursor:text;
 }
+/* A slider that has been pulled off its ends is narrowing the wall, and until
+   now nothing said so: the count badge that marks an active facet has no
+   equivalent here, and the two numbers underneath read as "the range of the
+   data", not as "a filter you set" -- they show the full span when nothing is
+   set at all. So an adjusted slider goes blue: title, fill, both thumbs and
+   both value fields. Which of the five are on is then one glance, instead of
+   five comparisons against bounds you would have to already know.
+   --accent-bright rather than --accent: the fill is a 3px line sitting on a
+   #4a565e rail, and #007BC4 is close enough to that grey in lightness to read
+   as "slightly different track" rather than as blue. */
+.slider-group.active .sl-title{color:var(--accent-bright)}
+.slider-group.active .fill{background:var(--accent-bright)}
+.slider-group.active input[type=range]::-webkit-slider-thumb{background:var(--accent-bright)}
+.slider-group.active input[type=range]::-moz-range-thumb{background:var(--accent-bright)}
+.slider-group.active .sl-vals input{color:var(--accent-bright);
+border-bottom-color:var(--accent-bright)}
 .sl-vals input:focus{border-bottom-color:#fff;background:rgba(255,255,255,.08)}
 .sl-vals input.date{width:106px;font-size:12px}
 .sl-vals input::-webkit-outer-spin-button,
@@ -1058,7 +1084,7 @@ scrollbar-width:thin;scrollbar-color:#4a565e transparent}
 background:#242c32;border-radius:10px;padding:8px 5px 7px;cursor:pointer;
 transition:background .15s,transform .12s;text-align:center}
 .brow:hover{background:#2a333a;transform:translateY(-2px)}
-.brow.active{outline:2px solid var(--accent)}
+.brow.active{outline:2px solid var(--accent);outline-offset:-2px}
 .brow .face{width:46px;height:46px;min-width:46px;border-radius:50%;overflow:hidden;background:#37474f;
 display:flex;align-items:center;justify-content:center;color:#eceff1;
 font:700 14px 'Poppins',sans-serif;letter-spacing:1px}
@@ -1066,13 +1092,26 @@ font:700 14px 'Poppins',sans-serif;letter-spacing:1px}
 .brow .who{width:100%;font:700 11px 'Poppins',sans-serif;line-height:1.2;overflow:hidden;
 display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 .brow .n{font:700 10px 'Poppins',sans-serif;color:#90a4ae;letter-spacing:.5px}
-/* Whichever person the bar has focused, shown above the wall so it is still
-   obvious what the grid is narrowed to once the bar has been closed. */
+/* Every active pick, shown above the wall so it is still obvious what the grid
+   is narrowed to once the info bar is closed, the facet panel is shut, or the
+   whole sidebar is collapsed.
+   The facet name is set smaller and half-transparent rather than given its own
+   colour: at 12px on an accent-blue ground there is no second colour that
+   stays legible, and opacity keeps the value itself the thing you read. */
 #chipRow{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
 #chipRow:empty{display:none}
-#chipRow .chip{display:flex;align-items:center;gap:8px;background:var(--accent);color:#fff;
-border-radius:16px;padding:5px 12px;font:700 12px 'Poppins',sans-serif;letter-spacing:.5px}
-#chipRow .chip button{background:none;border:none;color:#fff;cursor:pointer;font-size:13px;line-height:1}
+#chipRow .chip{display:flex;align-items:center;gap:7px;background:var(--accent);color:#fff;
+border-radius:16px;padding:5px 12px;font:700 12px 'Poppins',sans-serif;letter-spacing:.5px;
+max-width:100%}
+#chipRow .chip .k{font-size:10px;text-transform:uppercase;letter-spacing:1px;opacity:.72;
+flex:0 0 auto}
+/* A long cast name must not push the ✕ off the chip, so the value is the only
+   part allowed to shrink, and it ellipses instead of wrapping. */
+#chipRow .chip .v{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;
+white-space:nowrap}
+#chipRow .chip button{background:none;border:none;color:#fff;cursor:pointer;font-size:13px;
+line-height:1;flex:0 0 auto;padding:0;opacity:.85}
+#chipRow .chip button:hover{opacity:1}
 /* The card whose bar is open. */
 .card.infoOpen{outline:2px solid var(--accent);outline-offset:-2px}
 /* The wall normally hides its scrollbar -- fine when it is most of the screen
@@ -1428,20 +1467,23 @@ page = Math.floor(firstShown / PER_PAGE);
 }
 (mobileMq.addEventListener ? mobileMq.addEventListener('change', ()=>{ syncPerPage(); if(movies.length) renderPage(); })
 : mobileMq.addListener(()=>{ syncPerPage(); if(movies.length) renderPage(); }));
+/* `chip` is the short name the chip row uses where the sidebar's own label is
+   too long to sit in front of a value. It falls back to `label`, so a facet
+   only needs one where the full label would crowd the chip. */
 const FACETS = [
-{label:'Director', key:'director', csv:true, and:true, byCount:true, hint:'Lists the directors of the films still showing. Pick two for their co-directed films.'},
-{label:'Actors', key:'actors', csv:true, and:true, byCount:true, hint:'Lists whoever is in the films still showing — after one pick, that actor’s co-stars. Pick a second name for the films they made together.'},
+{label:'Director', key:'director', chip:'Dir', csv:true, and:true, byCount:true, hint:'Lists the directors of the films still showing. Pick two for their co-directed films.'},
+{label:'Actors', key:'actors', chip:'Actor', csv:true, and:true, byCount:true, hint:'Lists whoever is in the films still showing — after one pick, that actor’s co-stars. Pick a second name for the films they made together.'},
 {label:'Genre', key:'genre', csv:true},
-{label:'MPAA Rating', key:'mpaa'},
+{label:'MPAA Rating', key:'mpaa', chip:'MPAA'},
 {label:'Quality', key:'quality'},
-{label:'Media Type', key:'mediaType'},
-{label:'Viewing Status', key:'viewStatus', csv:true},
+{label:'Media Type', key:'mediaType', chip:'Type'},
+{label:'Viewing Status', key:'viewStatus', chip:'Status', csv:true},
 {label:'Studio', key:'studio'},
-{label:'Where to Watch', key:'whereWatch', csv:true},
-{label:'Highest Quality', key:'highQ', csv:true},
-{label:'Awards', key:'awards', csv:true},
-{label:'Acquired by', key:'acqBy'},
-{label:'Language', key:'lang'},
+{label:'Where to Watch', key:'whereWatch', chip:'Watch on', csv:true},
+{label:'Highest Quality', key:'highQ', chip:'Highest', csv:true},
+{label:'Awards', key:'awards', chip:'Award', csv:true},
+{label:'Acquired by', key:'acqBy', chip:'Acquired'},
+{label:'Language', key:'lang', chip:'Lang'},
 ];
 const SLIDERS = [
 {label:'Year', key:'year', min:1918, max:2026, step:1},
@@ -1986,18 +2028,30 @@ tx.oncomplete=res; tx.onerror=()=>rej(tx.error);
 try{ localStorage.setItem('dd_cache_t', String(t)); }catch(e){}
 }catch(e){ /* private mode / quota — caching is optional */ }
 }
+/* Genre reaches the two sides of a comparison with different punctuation: the
+   CSV hands over the sheet's own text ("Horror,Mystery"), while the Netlify
+   snapshot rebuilds it from a dictionary and joins with ", ". Both are reduced
+   to the same canonical list here, so a signature compares the VALUES rather
+   than the spacing between them. */
+const normList=v=>String(v==null?'':v).split(',').map(s=>s.trim()).filter(Boolean).join(',');
 // Cheap 32-bit fingerprint. Used to skip a pointless repaint when the sheet
 // hasn't changed since the cached copy.
+//
+// Genre and Studio are part of the fingerprint because they are the fields
+// that get edited on their own: rewriting a title's genres moves nothing
+// else on the row, so without them such an edit hashes as "no change" and
+// the page goes on painting the cached copy.
 function signature(list){
 let h=0x811c9dc5;
 for(const m of list){
-const s=m.title+'|'+m.dateAdded+'|'+m.viewStatusRaw+'|'+m.quality;
+const s=m.title+'|'+m.dateAdded+'|'+m.viewStatusRaw+'|'+m.quality
+  +'|'+normList(m.genreRaw)+'|'+String(m.studio==null?'':m.studio).trim();
 for(let i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,0x01000193); }
 }
 return (h>>>0).toString(36)+':'+list.length;
 }
 /* ---------- REVALIDATION SIGNATURES ----------
-The same fingerprint as signature() above, but computed from the four-column
+The same fingerprint as signature() above, but computed from the six-column
 probe instead of from a fully parsed collection -- so the two can be compared
 without the 11.1MB download ever happening.
 
@@ -2028,7 +2082,8 @@ function fnvStep(h,s){
 for(let i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,0x01000193); }
 return h;
 }
-// rows come from the probe as [Title, Quality, Viewing Status, Date Added]
+/* rows come from the probe as
+   [Title, Genre, Quality, Viewing Status, Studio, Date Added] */
 function probeSigFromRows(rows){
 let h=0x811c9dc5, n=0;
 for(let r=0;r<rows.length;r++){
@@ -2036,9 +2091,11 @@ const row=rows[r];
 const title=String(row[0]==null?'':row[0]);
 if(!title.trim()) continue;                       // matches parseRows
 n++;
-h=fnvStep(h, title+'|'+ymdFromProbe(row[3])+'|'
-  +String(row[2]==null?'':row[2])+'|'
-  +String(row[1]==null?'':row[1]).trim());       // parseRows trims Quality
+h=fnvStep(h, title+'|'+ymdFromProbe(row[5])+'|'
+  +String(row[3]==null?'':row[3])+'|'
+  +String(row[2]==null?'':row[2]).trim()+'|'      // parseRows trims Quality
+  +normList(row[1])+'|'                           // Genre
+  +String(row[4]==null?'':row[4]).trim());        // Studio, trimmed both sides
 }
 return (h>>>0).toString(36)+':'+n;
 }
@@ -2046,7 +2103,8 @@ function probeSigFromMovies(list){
 let h=0x811c9dc5;
 for(let r=0;r<list.length;r++){
 const m=list[r];
-h=fnvStep(h, m.title+'|'+ymdFromEpoch(m.dateAdded)+'|'+m.viewStatusRaw+'|'+m.quality);
+h=fnvStep(h, m.title+'|'+ymdFromEpoch(m.dateAdded)+'|'+m.viewStatusRaw+'|'+m.quality
+  +'|'+normList(m.genreRaw)+'|'+String(m.studio==null?'':m.studio).trim());
 }
 return (h>>>0).toString(36)+':'+list.length;
 }
@@ -2233,16 +2291,41 @@ SLIDERS.forEach(s=>{
 const isDate=s.type==='date';
 const mm=minMax(movies,s.key);
 if(isDate){
-const DAY=86400000;
 const now=new Date();
 const todayLocal=new Date(now.getFullYear(),now.getMonth(),now.getDate()).getTime();
-s.min=mm?mm.mn:todayLocal-365*DAY;
+s.min=mm?mm.mn:new Date(now.getFullYear(),now.getMonth(),now.getDate()-365).getTime();
 s.max=Math.max(mm?mm.mx:todayLocal, todayLocal);
-s.step=DAY;
+s.step=86400000;
 } else if(mm){
 s.min=Math.floor(Math.min(s.min,mm.mn)); s.max=Math.ceil(Math.max(s.max,mm.mx));
 }
 rangeState[s.key]={lo:s.min,hi:s.max};
+/* ---- what the range INPUT counts in ---------------------------------------
+   A range input can only sit on min + n*step, so a date slider stepping by
+   86400000ms is only correct while every local day is exactly 24h long. It
+   isn't. The steps here are counted from a PST midnight in 2013, so by
+   September they land at 01:00 PDT, the top handle stops 23h short of max,
+   and the day the clocks change is unreachable outright.
+   So the control counts DAY INDICES -- 0, 1, 2... -- and days are converted
+   to timestamps with date arithmetic, which gets 23- and 25-hour days right
+   by construction. rangeState, collectRanges() and the filter itself go on
+   speaking epoch ms; only the input and the fill percentage work in units.
+   A numeric slider's unit is just its own value, so both share one path. */
+const baseD=new Date(s.min);
+const dateFromIdx=i=>new Date(baseD.getFullYear(),baseD.getMonth(),baseD.getDate()+i).getTime();
+const idxFromTime=t=>{
+// The estimate is off by at most a day (DST), so two nudges settle it.
+let i=Math.round((t-s.min)/86400000);
+while(dateFromIdx(i)>t) i--;
+while(dateFromIdx(i+1)<=t) i++;
+return i;
+};
+const toVal  = isDate ? dateFromIdx : (u=>u);
+const toUnit = isDate ? idxFromTime : (v=>v);
+const uStep = isDate ? 1 : s.step;
+const uMin  = isDate ? 0 : s.min;
+const uMax  = isDate ? idxFromTime(s.max) : s.max;
+const uSpan = (uMax-uMin)||1;   // one value in the whole column: no divide by 0
 const pad=n=>String(n).padStart(2,'0');
 const toStr=v=>{ if(!isDate) return String(v);
 const d=new Date(v); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; };
@@ -2260,8 +2343,8 @@ el.innerHTML=`
 <div class="sl-title">${esc(s.label)}</div>
 <div class="range-wrap">
 <div class="rail"></div><div class="fill"></div>
-<input type="range" class="lo" min="${s.min}" max="${s.max}" step="${s.step}" value="${s.min}">
-<input type="range" class="hi" min="${s.min}" max="${s.max}" step="${s.step}" value="${s.max}">
+<input type="range" class="lo" min="${uMin}" max="${uMax}" step="${uStep}" value="${uMin}">
+<input type="range" class="hi" min="${uMin}" max="${uMax}" step="${uStep}" value="${uMax}">
 </div>
 <div class="sl-vals">
 <input class="v-lo ${isDate?'date':'number'}"
@@ -2274,13 +2357,27 @@ const lo=el.querySelector('.lo'), hi=el.querySelector('.hi'),
 fill=el.querySelector('.fill'), vlo=el.querySelector('.v-lo'), vhi=el.querySelector('.v-hi');
 const paint=()=>{
 const a=+lo.value,b=+hi.value;
-let mn=Math.min(a,b),mx=Math.max(a,b);
-if(mn < s.min + s.step/2) mn = s.min; // treat end positions as exact bounds
-if(mx > s.max - s.step/2) mx = s.max; // (step snapping + DST can leave them ~1h short)
+let uLo=Math.min(a,b), uHi=Math.max(a,b);
+/* A handle that cannot move any further out is sitting ON the bound. Dates
+   are integer indices so this is already exact; it is float-stepped sliders
+   (IMDB moves by 0.1) that need the tolerance, and a full step is the right
+   one -- the next position in is exactly one step away, so this can never
+   swallow a deliberate one-step drag. */
+if(uLo-uMin < uStep) uLo=uMin;
+if(uMax-uHi < uStep) uHi=uMax;
+const mn=toVal(uLo), mx=toVal(uHi);
 rangeState[s.key]={lo:mn,hi:mx};
-const pct=v=>(v-s.min)/(s.max-s.min)*100;
-fill.style.left=pct(mn)+'%'; fill.style.width=(pct(mx)-pct(mn))+'%';
+// Percentages come off the units, so a date slider is linear in DAYS. The
+// old version divided timestamps, which made the 23- and 25-hour days a
+// fraction wider or narrower than the rest.
+const pct=u=>(u-uMin)/uSpan*100;
+fill.style.left=pct(uLo)+'%'; fill.style.width=(pct(uHi)-pct(uLo))+'%';
 vlo.value=toStr(mn); vhi.value=toStr(mx);
+/* Deliberately the same test collectRanges() uses to decide whether this
+   slider filters anything, so the blue can never disagree with the grid:
+   if it is on, rows are being dropped, and if rows are being dropped it is
+   on. */
+el.classList.toggle('active', uLo>uMin || uHi<uMax);
 };
 paint();
 let t;
@@ -2290,14 +2387,14 @@ const manual=(inputEl,rangeEl)=>{
 let v=fromStr(inputEl.value);
 if(v==null){ paint(); return; } // bad entry: snap back
 v=Math.max(s.min,Math.min(s.max,v));
-rangeEl.value=v;
+rangeEl.value=toUnit(v);
 paint(); applyFilters();
 };
 vlo.addEventListener('change',()=>manual(vlo,lo));
 vhi.addEventListener('change',()=>manual(vhi,hi));
 vlo.addEventListener('keydown',e=>{ if(e.key==='Enter') vlo.blur(); });
 vhi.addEventListener('keydown',e=>{ if(e.key==='Enter') vhi.blur(); });
-s._reset=()=>{ lo.value=s.min; hi.value=s.max; paint(); };
+s._reset=()=>{ lo.value=uMin; hi.value=uMax; paint(); };
 });
 }
 /* ---------- FILTER + SORT + RENDER ---------- */
@@ -2857,27 +2954,39 @@ cb.checked=selected[key].has(cb.value);
 });
 }
 
-/* The people filter is the one filter you can set without touching the
-   sidebar, so it gets a chip above the wall -- otherwise closing the bar
-   would leave the grid narrowed with nothing on screen saying why. */
+/* Every pick, from every facet, gets a chip above the wall.
+   The chips started as a Director/Actors-only affordance, because the people
+   tiles in the info bar are the one place a filter can be set without touching
+   the sidebar -- close the bar and the grid was narrowed with nothing on screen
+   saying why. The same is true of a sidebar pick once its panel is shut: the
+   only trace is a small count badge on a collapsed row, and with the sidebar
+   itself collapsed there is not even that. So the row now walks FACETS in
+   order, which keeps Director and Actors first exactly where they were.
+   Each chip carries its facet's name, dimmed, so "Horror" and "Miramax" are
+   told apart at a glance without the label competing with the value. */
 function renderChips(){
 const row=$('#chipRow');
 row.innerHTML='';
-const add=(label,key,name)=>{
+const add=(facet,name)=>{
 const chip=document.createElement('div');
 chip.className='chip';
-chip.innerHTML=`<span>${esc(label)}</span>`;
+chip.innerHTML=`<span class="k">${esc(facet.chip||facet.label)}</span>`
+  +`<span class="v">${esc(name)}</span>`;
 const x=document.createElement('button');
-x.type='button'; x.title='Clear'; x.textContent='✕';
+x.type='button';
+x.title=`Clear ${facet.label}: ${name}`;
+x.textContent='✕';
 x.addEventListener('click',()=>{
-selected[key].delete(name);
-syncFacetUI(key); syncInfoBarTiles(); renderChips(); applyFilters();
+selected[facet.key].delete(name);
+syncFacetUI(facet.key); syncInfoBarTiles(); renderChips(); applyFilters();
 });
 chip.appendChild(x);
 row.appendChild(chip);
 };
-selected.director.forEach(v=>add('Dir: '+v,'director',v));
-selected.actors.forEach(v=>add(v,'actors',v));
+for(const f of FACETS){
+const sel=selected[f.key];
+if(sel) sel.forEach(v=>add(f,v));
+}
 }
 
 document.addEventListener('keydown',e=>{
@@ -3145,8 +3254,8 @@ console.warn('[collection] snapshot unavailable, using live sheet:', e && e.mess
    different -- and on the overwhelmingly common "nothing changed" visit, threw
    the whole download away again (see the `unchanged` branch below).
 
-   The probe answers that same question for ~955KB, using exactly the four
-   columns signature() has always compared. Three outcomes:
+   The probe answers that same question for ~2.3MB (~400KB gzipped), using
+   exactly the six columns signature() compares. Three outcomes:
      match      -> the sheet is unchanged; the download is never started at all
      mismatch   -> start the full download and carry on exactly as before
      no answer  -> ditto; the probe never gets to decide anything on its own */
