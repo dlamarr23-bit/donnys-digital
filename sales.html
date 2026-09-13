@@ -431,6 +431,56 @@ body.filtersOpen #mobileFilterBtn{background:var(--accent);color:#fff}
   #main{width:100%;flex:1;min-height:0;padding:12px 8px 12px}
   #grid{grid-template-columns:repeat(4,1fr);gap:7px}
 }
+/* ---------- PAGER -----------------------------------------------------------
+   Phone sizing first. The bar was drawn at desktop scale everywhere, and 34px
+   digits between two 132px arrows leave about 140px for the label, so
+   "1 - 148 / 19020" wrapped onto a second line and the bar grew a chin.
+
+   Then #pagerBottom: a second copy of the pager parked at the foot of the
+   wall, revealed only once you have scrolled to the end of it -- the moment
+   you actually want the next page. It carries a jump menu, so the far end of a
+   19,000-title collection is one pick away rather than a hundred-odd taps of
+   an arrow, and the page count is on screen rather than guessed at.
+
+   It is absolutely positioned inside #main (already position:relative) rather
+   than fixed to the window, so it tracks the sidebar for free -- no
+   left-offset maths, and collapsing the sidebar widens it on its own.
+   -------------------------------------------------------------------------- */
+#pagerBottom{
+  position:absolute;left:4px;right:10px;bottom:14px;z-index:40;
+  box-shadow:0 6px 20px rgba(0,0,0,.6);
+  opacity:0;transform:translateY(140%);pointer-events:none;
+  transition:opacity .18s ease,transform .18s ease;
+}
+/* Shown at the end of the wall's own scroll, and only when there is somewhere
+   else to go -- a single page of results needs no pager. */
+body.atEnd.multiPage #pagerBottom{opacity:1;transform:none;pointer-events:auto}
+/* Blank strip at the foot of the wall for the bar to sit over, so the last row
+   of covers is never hidden behind it. */
+#grid{padding-bottom:70px}
+#pgJump{
+  flex:1;min-width:0;height:100%;border:none;background:transparent;
+  color:var(--bar-text);text-align:center;text-align-last:center;
+  font:700 34px 'Poppins',sans-serif;letter-spacing:2px;
+  cursor:pointer;outline:none;-webkit-appearance:none;appearance:none;
+}
+/* The open list is drawn by the OS at its own size, so it gets a readable type
+   size and its colours outright -- rather than inheriting the 34px closed
+   state, or trusting a UA default that the page's dark colour-scheme flips. */
+#pgJump option{background:#263238;color:#fff;font-size:15px;letter-spacing:normal}
+@media(prefers-reduced-motion:reduce){#pagerBottom{transition:none}}
+@media(max-width:760px){
+  .pagerBar{height:46px}
+  .pagerBar .pg-arrow{width:62px;font-size:30px}
+  .pagerBar .pg-label{font:700 20px 'Poppins',sans-serif;letter-spacing:.5px;white-space:nowrap}
+  /* The drawer is a tool for the wall, not a replacement for it, so it has to
+     leave posters on screen: this caps it at the search box, the sort and six
+     facets. The seventh row peeks out under the cap to say the list scrolls. */
+  #sidebar{max-height:min(55%,340px)}
+  #grid{padding-bottom:58px}
+  #pagerBottom{left:8px;right:8px;bottom:8px}
+  #pgJump{font:700 19px 'Poppins',sans-serif;letter-spacing:.5px}
+}
 </style>
 <!-- Favicon: the avatar, at the sizes browsers actually ask for. Served from
      /assets/ so they are cached immutably alongside the nav mark. -->
@@ -532,6 +582,14 @@ body{padding-top:var(--dd-nav-h);box-sizing:border-box}
        replaces them wholesale. */
     (function(){var g=document.getElementById('grid'),h='',i=0;for(;i<120;i++)h+='<div class="skel"></div>';g.innerHTML=h;})();
     </script>
+<!-- Second pager, parked at the foot of the wall and revealed once it has been
+     scrolled to its end; see #pagerBottom in the CSS above and the
+     bottom-pager block in the script below. -->
+<div class="pagerBar" id="pagerBottom">
+<button class="pg-arrow" id="prevPgB" title="Previous page">&#10094;</button>
+<select id="pgJump" aria-label="Jump to page"></select>
+<button class="pg-arrow" id="nextPgB" title="Next page">&#10095;</button>
+</div>
   </main>
 </div>
 <div id="status"><div class="spin"></div><div id="statusTxt">Loading sales&hellip;</div></div>
@@ -566,7 +624,7 @@ const LINK_BASE  = 'https://athome.fandango.com/content/movies/details/title/';
 // Posters past the first ~20 are loading="lazy", so raising these does not
 // delay the first covers appearing; it only means more images to pull if you
 // scroll the whole page.
-const PAGE_SIZES = { mobile:48, wide:120, normal:100 };
+const PAGE_SIZES = { mobile:148, wide:120, normal:100 };
 // ---- Caching ----------------------------------------------------------------
 // Merged results are kept so a revisit paints instantly instead of refetching
 // 44 tabs. Fresh data still loads in the background every time; the cache only
@@ -1510,6 +1568,7 @@ function renderPage(){
   $('#pgLabel').textContent=label;
   const atFirst=page===0, atLast=page>=pages-1;
   $('#prevPg').disabled=atFirst;  $('#nextPg').disabled=atLast;
+  if(window.syncBottomPager) syncBottomPager(page,pages);
   const frag=document.createDocumentFragment();
   const used=new Set();
   filtered.slice(start,end).forEach(m=>{
@@ -1527,6 +1586,52 @@ function toTop(){
 function goPrev(){ if(page>0){ page--; renderPage(); toTop(); } }
 function goNext(){ page++; renderPage(); toTop(); }
 $('#prevPg').addEventListener('click',goPrev);   $('#nextPg').addEventListener('click',goNext);
+/* ---- BOTTOM PAGER ----------------------------------------------------------
+   A second set of controls pinned to the foot of the screen, revealed only
+   once #grid -- which is the scroll container on this page, not the window --
+   has been scrolled to its end. The jump menu is the point of it: at a full
+   page of covers per flip, walking to the far end of the collection used to be
+   a hundred-odd taps of the arrow, with no way to see how many were left.
+   ------------------------------------------------------------------------- */
+(function(){
+  const jump=document.getElementById('pgJump'), grid=document.getElementById('grid'),
+        prevB=document.getElementById('prevPgB'), nextB=document.getElementById('nextPgB');
+  let builtFor=-1;               // page count the <option> list was built for
+  /* Within 24px of the end counts as the end: the scroll metrics are fractional
+     on a high-DPI phone, so waiting for exact equality means a fling that stops
+     half a pixel short never shows the bar.
+     Measured straight out of the scroll handler rather than inside a rAF --
+     it is one read, and the class is only written when the answer changes
+     (twice per trip down the wall), so there is no layout thrash to batch. */
+  let shown=null;
+  function atEnd(){
+    const end = grid.scrollHeight-grid.scrollTop-grid.clientHeight<=24;
+    if(end!==shown){ shown=end; document.body.classList.toggle('atEnd',end); }
+  }
+  grid.addEventListener('scroll',atEnd,{passive:true});
+  window.addEventListener('resize',atEnd);
+  // Called from renderPage() on every repaint.
+  window.syncBottomPager=function(cur,pages){
+    if(builtFor!==pages){
+      let h='';
+      for(let i=0;i<pages;i++) h+='<option value="'+i+'">Page '+(i+1)+' of '+pages+'</option>';
+      jump.innerHTML=h;
+      builtFor=pages;
+    }
+    jump.value=String(cur);
+    prevB.disabled=cur===0; nextB.disabled=cur>=pages-1;
+    document.body.classList.toggle('multiPage',pages>1);
+    /* renderPage() has not written the new slice yet when this runs, and
+       toTop() moves the scroll after it, so re-measure once both are done.
+       A timeout rather than rAF: this has to settle even when the tab is
+       throttled, and reading scrollHeight forces the layout it needs. */
+    setTimeout(function(){ shown=null; atEnd(); },0);
+  };
+  jump.addEventListener('change',function(){ page=+jump.value; renderPage(); toTop(); });
+  prevB.addEventListener('click',goPrev);
+  nextB.addEventListener('click',goNext);
+  atEnd();
+})();
 let searchTimer;
 $('#searchBox').addEventListener('input',()=>{ clearTimeout(searchTimer); searchTimer=setTimeout(applyFilters,200); });
 $('#sortSel').addEventListener('change',()=>{ sortItems(); page=0; renderPage(); });
