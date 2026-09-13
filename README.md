@@ -96,14 +96,64 @@ hashes them, and compares that against the same hash taken from what is already
 on screen. Equal means the 11.1MB export is never requested at all.
 
 So a column that is *not* in that list can be edited in the sheet and stay
-invisible on the site indefinitely: the probe reports "unchanged", the download
-never starts, and the cached copy goes on painting. This is exactly what
-happened to Genre and Studio, which are edited on their own and so move nothing
-else on the row — they were added to the probe for that reason.
+invisible on the site: the probe reports "unchanged", the download never starts,
+and the cached copy goes on painting. This happened to Genre and Studio, which
+are edited on their own and so move nothing else on the row — they were added to
+the probe for that reason — and then again to Actors.
 
-**If you start editing a column that is not on that list and expect the site to
-notice, it has to be added to the probe.** Three places, all in `index.html`,
-and all three have to agree:
+Widening the probe column by column does not scale. Actors alone carries ~29k
+names and Description is larger still, so fetching them here would cost most of
+what the probe exists to save.
+
+### Column Y, the fingerprint
+
+Instead there is a seventh probe column, **Y — `Fingerprint`**, which is a
+formula in the sheet rather than data:
+
+```
+Y1:  Fingerprint
+Y2:  =ARRAYFORMULA(IF($B$2:$B="","",LEN($C$2:$C)&"."&LEN($D$2:$D)&"."&LEN($E$2:$E)&"."&LEN($F$2:$F)&"."&LEN($H$2:$H)&"."&LEN($I$2:$I)&"."&LEN($J$2:$J)&"."&LEN($L$2:$L)&"."&LEN($O$2:$O)&"."&LEN($P$2:$P)&"."&LEN($Q$2:$Q)&"."&LEN($R$2:$R)&"."&LEN($S$2:$S)&"."&LEN($T$2:$T)&"."&LEN($U$2:$U)&"."&LEN($V$2:$V)&"."&LEN($W$2:$W)))
+```
+
+It is the LENGTH of every field the probe does not fetch — Sort Title, Director,
+Actors, Description, Img, Link, MPAA, Media Type, Where to Watch, Highest
+Quality, Awards, Acquired by, Language, Year, Tomato Meter, IMDB Rating, Runtime
+— joined with dots. (Column A, Poster, is skipped: nothing on the site reads it.)
+A few dozen bytes a row stands in for megabytes of text, and editing any of those
+fields moves it, so the probe sees the change and pulls the full sheet.
+
+One ARRAYFORMULA in `Y2` covers the whole column and extends itself to new rows.
+`Y1` must be the literal text `Fingerprint` — the probe checks that label.
+
+**What it does not catch** is an edit that leaves every length identical —
+swapping one actor for another of exactly the same name length, say. Those wait
+for the 24h cache TTL instead, which is now allowed to actually expire (see
+below) rather than being renewed on every quiet visit.
+
+**Column Y is optional.** gviz answers `select …,Y` on a sheet without it by
+padding an unnamed empty column rather than erroring, and that is accepted: the
+fingerprint then reads as `""` on both sides of every comparison, which is
+self-consistent and simply leaves the probe as blind as it was before. Removing
+the formula degrades the site, it does not break it. A *different* named column
+at Y does fail the check, which costs a download and never serves stale data.
+
+### The 24h TTL is a deadline, not a suggestion
+
+The cached collection carries a 24-hour TTL. The revalidation branch re-saves
+the record on every quiet visit so that descriptions loaded this session are
+kept — and it used to stamp `Date.now()` when it did, which renewed the TTL.
+A collection that was merely not moving in the probed columns therefore had a
+cache that could never expire, and an edit the probe could not see stayed on
+screen *indefinitely* rather than for a day.
+
+`cacheSet()` now takes a `keepT` argument, and that branch passes the record's
+original timestamp. Fresh downloads still stamp the current time.
+
+### Adding a column to the probe
+
+If you need edits to a column to show up *immediately* rather than within a day,
+and the fingerprint's length test is not enough for it, it has to go in the probe
+proper. Three places, all in `index.html`, and all three have to agree:
 
 - `PROBE_COLS` / `PROBE_HEAD` — the gviz query and the header labels it is
   checked against (a mismatch forces a full download rather than serving
@@ -114,9 +164,9 @@ and all three have to agree:
   and re-downloads everything
 
 Each added column costs bandwidth on every visit: the original four were ~955KB,
-Genre and Studio roughly doubled that to ~2.3MB (~400KB gzipped). Still far
-under the 11.1MB it avoids, but it is not free — do not add a column to the
-probe unless edits to it actually need to show up.
+Genre and Studio roughly doubled that to ~2.3MB (~400KB gzipped), and column Y
+adds a rounding error on top. Still far under the 11.1MB it avoids, but a real
+data column is not free — prefer the fingerprint.
 
 ## Deploying
 
@@ -165,6 +215,10 @@ the Language facet. Add the new column to `COLS` in the right position, then
 pick its tier (`TIER_FACETS`, `TIER_DESC`, or leave it in core) and whether it
 should be dictionary-encoded (`MULTI` for comma-separated, `SINGLE` for whole
 values).
+
+Columns listed in `OPTIONAL` are exempt from that check — currently just
+`Fingerprint`, which is a pure optimisation and whose absence every consumer
+reads as an empty string.
 
 ## Sales and D2D
 

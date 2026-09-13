@@ -364,27 +364,51 @@ var BASE='https://docs.google.com/spreadsheets/d/'+SHEET_ID
    nothing in the sheet has moved. This probe answers "has anything changed?"
    for ~2.3MB (~400KB on the wire, gzipped) instead.
 
-   WHY THESE SIX COLUMNS
+   WHY THESE SEVEN COLUMNS
    The probe has to cover every column the page's own change test -- signature(),
    further down -- compares, or an edit to a column it skips is invisible: the
    probe says "unchanged", the download never starts, and the cached copy keeps
-   painting. That is exactly what happened to Genre and Studio, which are edited
-   on their own and so move nothing else on the row.
+   painting. That happened to Genre and Studio, which are edited on their own
+   and so move nothing else on the row, and then again to Actors.
+
+   Widening the probe column by column does not scale: Actors alone carries
+   ~29k names and Description is larger still, so pulling them here would cost
+   most of what the probe exists to save. Y is the answer to that. It is a
+   formula column in the sheet holding the LENGTH of every field the probe does
+   NOT fetch -- Director, Actors, Description, Img, Link, MPAA, Media Type,
+   Where to Watch, Highest Quality, Awards, Acquired by, Language, Year, Tomato,
+   IMDB, Runtime -- joined with dots. A few dozen bytes a row stands in for
+   megabytes of text, and editing any of those fields moves it.
+
+   What it does NOT catch is an edit that leaves every length identical, such as
+   swapping one actor for another of exactly the same name length. Those are
+   covered by the 24h cache TTL instead, which is now allowed to actually
+   expire (see cacheSet's keepT, below) rather than being renewed on every
+   quiet visit.
 
    Title, Quality, Viewing Status and Date Added cost ~955KB between them;
-   adding Genre and Studio roughly doubles that, and it is still ~2.3MB against
-   the 11.1MB download it avoids.
+   adding Genre and Studio roughly doubles that; Y adds a rounding error. It is
+   still ~2.3MB against the 11.1MB download it avoids.
 
    Column letters are fixed for this sheet: B=Title, G=Genre, K=Quality,
-   M=Viewing Status, N=Studio, X=Date Added. If the tab's columns are ever
-   reordered the letters go stale, so the probe checks the header labels it
-   gets back and reports 'changed' if they don't match -- which just falls
-   through to the ordinary full download. Every failure mode here costs a
-   download; none of them can serve stale data.
+   M=Viewing Status, N=Studio, X=Date Added, Y=Fingerprint. If the tab's columns
+   are ever reordered the letters go stale, so the probe checks the header
+   labels it gets back and reports 'changed' if they don't match -- which just
+   falls through to the ordinary full download. Same if Y is missing entirely,
+   which is what a sheet that has not had the formula added yet looks like.
+   Every failure mode here costs a download; none of them can serve stale data.
    Set REVALIDATE=false to switch this off and always pull the whole sheet. */
 var REVALIDATE=true;
-var PROBE_COLS='select B,G,K,M,N,X';
+var PROBE_COLS='select B,G,K,M,N,X,Y';
 var PROBE_HEAD=['Title','Genre','Quality','Viewing Status','Studio','Date Added'];
+/* The seventh column is OPTIONAL. A sheet that has not had the formula added
+   yet answers `select ...,Y` with an unnamed empty column rather than an error
+   (gviz pads instead of failing), and that is accepted: every row's fingerprint
+   is then "" on BOTH sides of the comparison, which is exactly the old
+   six-column behaviour. Rejecting it instead would cost a full 11.1MB download
+   on every visit until the column exists. Anything else at Y is a real layout
+   change and does fail the check. */
+var PROBE_FP_HEAD='Fingerprint';
 /* If the probe hasn't answered by now, start the full download anyway rather
    than let a slow gviz hold up a sheet that really has changed. */
 var PROBE_GRACE_MS=4000;
@@ -653,6 +677,12 @@ function startProbe(){
         throw new Error('probe columns moved (expected "'+PROBE_HEAD.join('", "')
           +'", got "'+head.join('", "')+'")');
       }
+    }
+    /* Optional: blank means the sheet has no fingerprint column, which is fine.
+       A DIFFERENT name there means something else moved into Y. */
+    var fpHead=String(head[PROBE_HEAD.length]==null?'':head[PROBE_HEAD.length]).trim();
+    if(fpHead && fpHead!==PROBE_FP_HEAD){
+      throw new Error('probe column Y is "'+fpHead+'", expected "'+PROBE_FP_HEAD+'" or empty');
     }
     /* The probe has answered, so the grace timer has nothing left to guard
        against -- from here the decision belongs to init(), which will call
@@ -1578,7 +1608,11 @@ const COLMAP = {
 'Quality':'quality','Media Type':'mediaType','Viewing Status':'viewStatusRaw','Studio':'studio',
 'Where to Watch':'whereWatchRaw','Highest Quality':'highQRaw','Awards':'awardsRaw',
 'Acquired by':'acqBy','Language':'lang','Year':'year','Tomato Meter':'tomato',
-'IMDB Rating':'imdb','Runtime':'runtime','Date Added':'dateAdded','Color':'color'
+'IMDB Rating':'imdb','Runtime':'runtime','Date Added':'dateAdded','Color':'color',
+/* Column Y: a formula holding the LENGTH of every field the revalidation
+   probe does not fetch, so an edit to Actors or Description moves something
+   the probe CAN see cheaply. See PROBE_COLS at the top of the file. */
+'Fingerprint':'fp'
 };
 const EDIT_FIELDS = [
 {h:'Title'},{h:'Sort Title'},{h:'Director'},{h:'Actors',full:true},
@@ -1984,6 +2018,7 @@ viewStatus:splitCsv(vsRaw),
 year:N(r,'year'), tomato:N(r,'tomato'), imdb:N(r,'imdb'), runtime:N(r,'runtime'),
 dateAdded: iDate==null ? null : toTime(r[iDate]),
 color:S(r,'color').trim(),
+fp:S(r,'fp').trim(),
 search:''
 });
 }
@@ -2090,9 +2125,16 @@ return usable(await idbGet(db, which==='head' ? IDB_HEAD : IDB_KEY));
 function slim(list){
 return list.map(m=>{ const o={}; for(const k in m) if(!DERIVED.has(k)) o[k]=m[k]; return o; });
 }
-async function cacheSet(list, sig, hasDesc){
+/* keepT: re-save the record WITHOUT restarting its 24h clock.
+   The revalidation branch calls this on every quiet visit, to persist
+   descriptions loaded this session. Stamping Date.now() there meant the TTL
+   was renewed each time, so a cache could never expire on a collection that
+   was merely not moving in the six probed columns -- and an edit the probe
+   cannot see (see PROBE_COLS) stayed on screen indefinitely rather than for a
+   day. Passing the original timestamp keeps the TTL an actual deadline. */
+async function cacheSet(list, sig, hasDesc, keepT){
 try{
-const full=slim(list), t=Date.now();
+const full=slim(list), t=keepT || Date.now();
 const db=await openIdb();
 await new Promise((res,rej)=>{
 const tx=db.transaction(IDB_STORE,'readwrite');
@@ -2124,7 +2166,8 @@ function signature(list){
 let h=0x811c9dc5;
 for(const m of list){
 const s=m.title+'|'+m.dateAdded+'|'+m.viewStatusRaw+'|'+m.quality
-  +'|'+normList(m.genreRaw)+'|'+String(m.studio==null?'':m.studio).trim();
+  +'|'+normList(m.genreRaw)+'|'+String(m.studio==null?'':m.studio).trim()
+  +'|'+String(m.fp==null?'':m.fp).trim();   // column Y — stands in for the wide columns
 for(let i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,0x01000193); }
 }
 return (h>>>0).toString(36)+':'+list.length;
@@ -2162,7 +2205,7 @@ for(let i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,0x01000193); }
 return h;
 }
 /* rows come from the probe as
-   [Title, Genre, Quality, Viewing Status, Studio, Date Added] */
+   [Title, Genre, Quality, Viewing Status, Studio, Date Added, Fingerprint] */
 function probeSigFromRows(rows){
 let h=0x811c9dc5, n=0;
 for(let r=0;r<rows.length;r++){
@@ -2174,7 +2217,8 @@ h=fnvStep(h, title+'|'+ymdFromProbe(row[5])+'|'
   +String(row[3]==null?'':row[3])+'|'
   +String(row[2]==null?'':row[2]).trim()+'|'      // parseRows trims Quality
   +normList(row[1])+'|'                           // Genre
-  +String(row[4]==null?'':row[4]).trim());        // Studio, trimmed both sides
+  +String(row[4]==null?'':row[4]).trim()+'|'     // Studio, trimmed both sides
+  +String(row[6]==null?'':row[6]).trim());        // Fingerprint (column Y)
 }
 return (h>>>0).toString(36)+':'+n;
 }
@@ -2183,7 +2227,8 @@ let h=0x811c9dc5;
 for(let r=0;r<list.length;r++){
 const m=list[r];
 h=fnvStep(h, m.title+'|'+ymdFromEpoch(m.dateAdded)+'|'+m.viewStatusRaw+'|'+m.quality
-  +'|'+normList(m.genreRaw)+'|'+String(m.studio==null?'':m.studio).trim());
+  +'|'+normList(m.genreRaw)+'|'+String(m.studio==null?'':m.studio).trim()
+  +'|'+String(m.fp==null?'':m.fp).trim());
 }
 return (h>>>0).toString(36)+':'+list.length;
 }
@@ -3299,6 +3344,9 @@ still happens, just no longer in front of the posters. */
 (async function init(){
 const t0=performance.now();
 let cachedSig=null, painted=false;
+/* When the cached record was actually downloaded. Handed back to cacheSet()
+   on the unchanged path so re-saving it does not restart the 24h TTL. */
+let cachedT=0;
 const paint=(soft)=>{
 // Built with a plain loop. new Map(movies.map(...)) allocated a 19,000-entry
 // array of 19,000 two-element arrays first, and paint() runs up to four times
@@ -3331,6 +3379,7 @@ const rec=await cacheGet();
 if(rec){
 movies=rec.d;
 cachedSig=rec.sig;
+cachedT=rec.t||0;
 descriptionsLoaded = !!rec.hasDesc || DESCRIPTIONS==='never';
 partialData=false;
 paint(true);   // soft: the head record already put these very covers on screen
@@ -3428,9 +3477,11 @@ if(revalidated){
 // the air, and make sure nothing can start it after this point.
 window.__cancelCsv();
 if(!descriptionsLoaded) await loadDescriptions();
-// Re-stamp the cache so a collection that is simply not changing doesn't
-// expire out from under the 24h TTL and force a cold download anyway.
-idle(()=>cacheSet(movies, cachedSig, descriptionsLoaded));
+// Re-save so descriptions loaded this visit are kept -- but with the
+// ORIGINAL timestamp (cachedT), so the 24h TTL still expires on schedule.
+// Renewing it here is what let an edit the probe cannot see sit on screen
+// forever instead of for a day.
+idle(()=>cacheSet(movies, cachedSig, descriptionsLoaded, cachedT));
 barDone(); setStatus(null);
 console.info(`[collection] ${movies.length} titles in ${Math.round(performance.now()-t0)}ms`
   + ` (source: cache + revalidation probe, full download skipped,`

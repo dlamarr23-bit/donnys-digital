@@ -62,7 +62,20 @@ const COLS = [
   'Viewing Status', 'Studio', 'Where to Watch', 'Highest Quality', 'Awards',
   'Acquired by', 'Language', 'Year', 'Tomato Meter', 'IMDB Rating',
   'Runtime', 'Date Added',
+  /* Column Y. A formula column holding the LENGTH of every field the site's
+     revalidation probe does not fetch, so that an edit to Actors or Description
+     moves something the probe can see for a few bytes instead of megabytes.
+     OPTIONAL (see OPTIONAL below): a sheet without it still builds, and simply
+     leaves the probe as blind to those columns as it was before. */
+  'Fingerprint',
 ];
+
+/* Columns that may be absent without failing the build. Fingerprint is a pure
+   optimisation: when the sheet does not have it, every consumer reads an empty
+   string for it on BOTH sides of a comparison, which is self-consistent and
+   simply leaves the revalidation probe as cheap -- and as blind -- as it was
+   before the column existed. */
+const OPTIONAL = new Set(['Fingerprint']);
 
 /* Which tier each column rides in.
      core   -> needed to paint the grid and drive the cheap facets
@@ -342,7 +355,7 @@ async function main() {
 
   /* Fail loudly rather than shipping a snapshot whose columns have shifted --
      a silent mismatch would put Studio data in the Language facet. */
-  const missing = COLS.filter((c) => !head.includes(c));
+  const missing = COLS.filter((c) => !head.includes(c) && !OPTIONAL.has(c));
   if (missing.length) {
     throw new Error(
       `sheet columns changed. Missing: ${missing.join(', ')}\n` +
