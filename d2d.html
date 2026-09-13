@@ -480,9 +480,9 @@ body.filtersOpen #mobileFilterBtn{background:var(--accent);color:#fff}
 
    Then #pagerBottom: a second copy of the pager parked at the foot of the
    wall, revealed only once you have scrolled to the end of it -- the moment
-   you actually want the next page. It carries a jump menu, so the far end of a
-   19,000-title collection is one pick away rather than a hundred-odd taps of
-   an arrow, and the page count is on screen rather than guessed at.
+   you actually want the next page. Its middle is the jump control, so the far
+   end of a 19,000-title collection is one move away rather than a hundred-odd
+   taps of an arrow, and the page count is on screen rather than guessed at.
 
    It is absolutely positioned inside #main (already position:relative) rather
    than fixed to the window, so it tracks the sidebar for free -- no
@@ -500,16 +500,29 @@ body.atEnd.multiPage #pagerBottom{opacity:1;transform:none;pointer-events:auto}
 /* Blank strip at the foot of the wall for the bar to sit over, so the last row
    of covers is never hidden behind it. */
 #grid{padding-bottom:70px}
+/* The jump control. This was a <select>, which on a 19,000-title collection
+   meant scrolling a 127-item menu to reach page 67 -- a list, not a jump. It
+   is now the page number itself: click it and it turns into a field you type
+   into. The count stays beside the field while you type, so you can still see
+   what you are aiming at. */
+#pgJumpWrap{flex:1;min-width:0;display:flex;align-items:center;justify-content:center}
+#pgJump,#pgJumpIn,#pgJumpOf{font:700 34px 'Poppins',sans-serif;letter-spacing:2px}
 #pgJump{
-  flex:1;min-width:0;height:100%;border:none;background:transparent;
-  color:var(--bar-text);text-align:center;text-align-last:center;
-  font:700 34px 'Poppins',sans-serif;letter-spacing:2px;
-  cursor:pointer;outline:none;-webkit-appearance:none;appearance:none;
+  max-width:100%;border:none;background:transparent;color:var(--bar-text);
+  padding:1px 12px;border-radius:6px;cursor:pointer;outline:none;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
-/* The open list is drawn by the OS at its own size, so it gets a readable type
-   size and its colours outright -- rather than inheriting the 34px closed
-   state, or trusting a UA default that the page's dark colour-scheme flips. */
-#pgJump option{background:#263238;color:#fff;font-size:15px;letter-spacing:normal}
+#pgJump:hover,#pgJump:focus-visible{background:rgba(255,255,255,.18)}
+#pgJumpForm{display:flex;align-items:center;gap:10px}
+/* The `hidden` attribute is how the two states are swapped, and its UA rule is
+   a plain display:none -- which the display values above would beat. */
+#pgJump[hidden],#pgJumpForm[hidden]{display:none}
+#pgJumpIn{
+  width:3.4em;text-align:center;padding:1px 6px;
+  background:rgba(0,0,0,.3);border:none;border-radius:6px;
+  color:#fff;caret-color:#fff;outline:none;color-scheme:dark;
+}
+#pgJumpOf{color:var(--bar-text)}
 @media(prefers-reduced-motion:reduce){#pagerBottom{transition:none}}
 @media(max-width:760px){
   .pagerBar{height:46px}
@@ -521,7 +534,8 @@ body.atEnd.multiPage #pagerBottom{opacity:1;transform:none;pointer-events:auto}
   #sidebar{max-height:min(55%,340px)}
   #grid{padding-bottom:58px}
   #pagerBottom{left:8px;right:8px;bottom:8px}
-  #pgJump{font:700 19px 'Poppins',sans-serif;letter-spacing:.5px}
+  #pgJump,#pgJumpIn,#pgJumpOf{font:700 19px 'Poppins',sans-serif;letter-spacing:.5px}
+  #pgJumpForm{gap:7px}
 }
 </style>
 <!-- Favicon: the avatar, at the sizes browsers actually ask for. Served from
@@ -627,7 +641,11 @@ body{padding-top:var(--dd-nav-h);box-sizing:border-box}
      bottom-pager block in the script below. -->
 <div class="pagerBar" id="pagerBottom">
 <button class="pg-arrow" id="prevPgB" title="Previous page">&#10094;</button>
-<select id="pgJump" aria-label="Jump to page"></select>
+<div id="pgJumpWrap">
+<button type="button" id="pgJump" title="Jump to a page">&ndash;</button>
+<form id="pgJumpForm" hidden><input id="pgJumpIn" type="text" inputmode="numeric" pattern="[0-9]*"
+ aria-label="Page number" autocomplete="off"><span id="pgJumpOf"></span></form>
+</div>
 <button class="pg-arrow" id="nextPgB" title="Next page">&#10095;</button>
 </div>
   </main>
@@ -1125,16 +1143,40 @@ function goNext(){ page++; renderPage(); toTop(); }
 $('#prevPg').addEventListener('click',goPrev);
 $('#nextPg').addEventListener('click',goNext);
 /* ---- BOTTOM PAGER ----------------------------------------------------------
-   A second set of controls pinned to the foot of the screen, revealed only
-   once #grid -- which is the scroll container on this page, not the window --
-   has been scrolled to its end. The jump menu is the point of it: at a full
-   page of covers per flip, walking to the far end of the collection used to be
-   a hundred-odd taps of the arrow, with no way to see how many were left.
+   A second set of controls parked at the foot of the wall, revealed only once
+   #grid -- which is the scroll container on this page, not the window -- has
+   been scrolled to its end.
+
+   The middle of the bar is the jump control. It shows "Page 67 of 127"; click
+   it and it becomes a field you type a page number into, because the <select>
+   this replaced meant scrolling a 127-item menu to get anywhere, which is a
+   list rather than a jump. Enter commits, Escape or clicking away cancels, and
+   anything out of range is clamped rather than rejected.
    ------------------------------------------------------------------------- */
 (function(){
-  const jump=document.getElementById('pgJump'), grid=document.getElementById('grid'),
-        prevB=document.getElementById('prevPgB'), nextB=document.getElementById('nextPgB');
-  let builtFor=-1;               // page count the <option> list was built for
+  const grid=document.getElementById('grid'),
+        prevB=document.getElementById('prevPgB'), nextB=document.getElementById('nextPgB'),
+        label=document.getElementById('pgJump'), form=document.getElementById('pgJumpForm'),
+        field=document.getElementById('pgJumpIn'), ofTxt=document.getElementById('pgJumpOf');
+  let cur=0, pageCount=1;
+  function openJump(){
+    field.value=String(cur+1);
+    label.hidden=true; form.hidden=false;
+    field.focus(); field.select();
+  }
+  function closeJump(){ if(!form.hidden){ form.hidden=true; label.hidden=false; } }
+  label.addEventListener('click',openJump);
+  form.addEventListener('submit',function(e){
+    e.preventDefault();
+    const n=parseInt(field.value,10);
+    closeJump();
+    if(!isFinite(n)) return;                       // empty or junk -- just close
+    const want=Math.min(pageCount,Math.max(1,n))-1;
+    if(want===cur) return;
+    page=want; renderPage(); toTop();
+  });
+  field.addEventListener('keydown',function(e){ if(e.key==='Escape'){ e.preventDefault(); closeJump(); } });
+  field.addEventListener('blur',closeJump);        // clicking away cancels
   /* Within 24px of the end counts as the end: the scroll metrics are fractional
      on a high-DPI phone, so waiting for exact equality means a fling that stops
      half a pixel short never shows the bar.
@@ -1149,25 +1191,19 @@ $('#nextPg').addEventListener('click',goNext);
   grid.addEventListener('scroll',atEnd,{passive:true});
   window.addEventListener('resize',atEnd);
   // Called from renderPage() on every repaint.
-  window.syncBottomPager=function(cur,pages){
-    if(builtFor!==pages){
-      let h='';
-      for(let i=0;i<pages;i++) h+='<option value="'+i+'">Page '+(i+1)+' of '+pages+'</option>';
-      jump.innerHTML=h;
-      builtFor=pages;
-    }
-    jump.value=String(cur);
-    prevB.disabled=cur===0; nextB.disabled=cur>=pages-1;
+  window.syncBottomPager=function(c,pages){
+    cur=c; pageCount=pages;
+    label.textContent='Page '+(c+1)+' of '+pages;
+    ofTxt.textContent='of '+pages;
+    prevB.disabled=c===0; nextB.disabled=c>=pages-1;
     document.body.classList.toggle('multiPage',pages>1);
+    closeJump();      // a flip from anywhere else drops you out of the field
     /* renderPage() has not written the new slice yet when this runs, and
        toTop() moves the scroll after it, so re-measure once both are done.
        A timeout rather than rAF: this has to settle even when the tab is
        throttled, and reading scrollHeight forces the layout it needs. */
     setTimeout(function(){ shown=null; atEnd(); },0);
   };
-  jump.addEventListener('change',function(){ page=+jump.value; renderPage(); toTop(); });
-  prevB.addEventListener('click',goPrev);
-  nextB.addEventListener('click',goNext);
   atEnd();
 })();
 let st; $('#searchBox').addEventListener('input',()=>{clearTimeout(st);st=setTimeout(applyFilters,220);});
