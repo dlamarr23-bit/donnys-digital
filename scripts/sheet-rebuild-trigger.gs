@@ -33,8 +33,9 @@
  *      at the "main" branch and paste the URL it gives you into DD_HOOK_URL
  *      below. Treat that URL as a password: anyone holding it can spend your
  *      build minutes, so keep it in the script and out of the repo.
- *   2. Set DD_DAILY_HOUR to an hour AFTER your automatic sales refresh lands.
- *      This is the one that matters for Sales -- see the note on it below.
+ *   2. Check DD_DAILY_HOURS against when your tabs actually refresh, and check
+ *      the script timezone under Project Settings. These are what keep Sales
+ *      current -- see the note on them below.
  *   3. Save, run ddInstallTriggers once, accept the permissions.
  *   4. Wire up the menu (see MENU at the bottom).
  */
@@ -60,23 +61,36 @@ var DD_WATCH_SHEETS = [];
 // below about 5, or you will start snapshotting stale data.
 var DD_QUIET_MINUTES = 10;
 
-// ---- THE DAILY BACKSTOP, AND WHY IT IS NOT OPTIONAL ----
+// ---- THE SCHEDULED BUILDS, AND WHY THEY ARE NOT OPTIONAL ----
 // Everything above is driven by ddOnSheetEdit, and onEdit fires for a PERSON
 // TYPING IN A CELL and for almost nothing else. A write from a script, from
 // the Sheets API, from an IMPORTRANGE recalculating, or from any external
 // sync leaves it completely silent -- no event, no dirty flag, no build.
 //
-// The sales tabs refresh automatically every day. That refresh is exactly the
-// case onEdit cannot see, so the edit-driven path is blind to the one update
-// that happens every single day, and sales.html would go back to seeding its
-// first paint from a bundle that is up to a day old.
+// The sales tabs refresh themselves every day. That refresh is exactly the
+// case onEdit cannot see, so the edit-driven path above is blind to the one
+// update that happens every single day, and sales.html would go back to
+// seeding its first paint from a bundle up to a day old.
 //
-// So this runs unconditionally, once a day, with the dirty flag ignored on
-// purpose: there is nothing to be dirty. Point it at an hour AFTER the sales
-// refresh has landed. Apps Script runs "atHour" somewhere inside that hour,
-// not on the dot, so leave an hour of slack rather than cutting it fine.
-// Costs ~30 builds a month against Cloudflare's 500.
-var DD_DAILY_HOUR = 6;   // 24h clock, in the script's timezone
+// So these run unconditionally, with the dirty flag ignored on purpose: there
+// is nothing to be dirty. One trigger is created per hour listed here, and the
+// hours land AFTER each known update window, never during it:
+//
+//   06:00-07:00  the daily sales tabs refresh  ->  build at 08:00
+//   12:00-13:00  MA Compare refreshes          ->  build at 14:00
+//   Fanflix moves at irregular times           ->  build at 20:00 sweeps up
+//
+// The slack is deliberate. Apps Script fires "atHour" somewhere INSIDE that
+// hour rather than on the dot, so a build at 07:00 could start at 07:50 -- or
+// at 07:05, while a refresh was still finishing. On top of that the published
+// CSV the build reads trails live edits by a few minutes.
+//
+// Each hour costs ~30 builds a month and Cloudflare's free tier allows 500,
+// so adding one is cheap. Three, plus edit-driven builds, is comfortable.
+//
+// TIMEZONE: these are the SCRIPT's timezone, not necessarily yours. Check it
+// under Project Settings in the Apps Script editor before trusting them.
+var DD_DAILY_HOURS = [8, 14, 20];   // 24h clock
 
 // "var", not "const": if this file is ever added twice, var redeclaration is
 // harmless, where a duplicate const would break every script in the project.
@@ -106,10 +120,10 @@ function ddFlushBuild() {
   ddTriggerBuild_('sheet edit');
 }
 
-// Time-driven, once a day. Deliberately does NOT consult DD_P_DIRTY -- the
-// updates this exists to catch never set it.
+// Time-driven. Deliberately does NOT consult DD_P_DIRTY -- the updates this
+// exists to catch never set it. Every hour in DD_DAILY_HOURS points here.
 function ddDailyBuild() {
-  ddTriggerBuild_('daily');
+  ddTriggerBuild_('scheduled');
 }
 
 function ddTriggerBuild_(reason) {
@@ -143,10 +157,12 @@ function ddInstallTriggers() {
   var ss = SpreadsheetApp.getActive();
   ScriptApp.newTrigger('ddOnSheetEdit').forSpreadsheet(ss).onEdit().create();
   ScriptApp.newTrigger('ddFlushBuild').timeBased().everyMinutes(5).create();
-  ScriptApp.newTrigger('ddDailyBuild').timeBased().atHour(DD_DAILY_HOUR).everyDays(1).create();
+  DD_DAILY_HOURS.forEach(function (h) {
+    ScriptApp.newTrigger('ddDailyBuild').timeBased().atHour(h).everyDays(1).create();
+  });
   ss.toast('Auto-rebuild installed. Edits rebuild about ' + DD_QUIET_MINUTES
-           + ' minutes after you stop, plus one build a day at '
-           + DD_DAILY_HOUR + ':00 for the automatic sales refresh.',
+           + ' minutes after you stop, plus scheduled builds at '
+           + DD_DAILY_HOURS.join(':00, ') + ':00 for the automatic refreshes.',
            "Donny's Digital", 8);
 }
 
@@ -174,19 +190,23 @@ function ddShowStatus() {
     return t.getHandlerFunction();
   });
   var installed = fns.indexOf('ddFlushBuild') !== -1;
-  var daily = fns.indexOf('ddDailyBuild') !== -1;
+  var daily = 0;
+  for (var i = 0; i < fns.length; i++) if (fns[i] === 'ddDailyBuild') daily++;
   SpreadsheetApp.getUi().alert(
     "Donny's Digital -- auto-rebuild" + '\n\n'
     + 'Timer installed: ' + (installed ? 'yes' : 'NO -- run ddInstallTriggers') + '\n'
-    + 'Daily build:     ' + (daily ? 'yes, at ' + DD_DAILY_HOUR + ':00'
-                                   : 'NO -- run ddInstallTriggers') + '\n'
+    + 'Scheduled:       ' + (daily === DD_DAILY_HOURS.length
+                               ? daily + ' a day, at ' + DD_DAILY_HOURS.join(':00, ') + ':00'
+                               : daily + ' of ' + DD_DAILY_HOURS.length
+                                 + ' installed -- run ddInstallTriggers') + '\n'
     + 'Pending changes: ' + (p.getProperty(DD_P_DIRTY) === '1' ? 'yes' : 'no') + '\n'
     + 'Last edit seen:  ' + fmt(p.getProperty(DD_P_LASTEDIT)) + '\n'
     + 'Last build sent: ' + fmt(p.getProperty(DD_P_LASTBUILD)) + '\n\n'
     + 'Builds fire once the sheet has been quiet for ' + DD_QUIET_MINUTES
-    + ' minutes, and once a day at ' + DD_DAILY_HOUR + ':00 regardless.\n\n'
-    + 'The daily one is the only thing that catches the automatic sales\n'
-    + 'refresh: onEdit does not fire for changes a script or an import makes.');
+    + ' minutes, and at ' + DD_DAILY_HOURS.join(':00, ') + ':00 regardless.\n\n'
+    + 'The scheduled ones are the only thing that catches the automatic\n'
+    + 'refreshes: onEdit does not fire for a change a script or an import\n'
+    + 'makes, only for a person typing in a cell.');
 }
 
 // ------------------------------------------------------------------ MENU --
