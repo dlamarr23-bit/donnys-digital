@@ -667,9 +667,14 @@ const EARLY_PAINT = false;
 // How many tabs to have in flight at once. docs.google.com is HTTP/2, so these
 // multiplex over one connection rather than queueing. Measured against the live
 // sheet, all 44 tabs: pool 8 -> 5.4s, pool 20 -> 2.7s, pool 40 -> 2.5s. The
-// curve is flat past ~20 because Google, not the connection, is the limit --
-// 32 removes the last wave boundary without pushing into that ceiling.
-const POOL = 32;
+// curve is flat past ~20 because Google, not the connection, is the limit.
+//
+// 32 DID push into that ceiling: Google answered 429 on two of the 46 tabs,
+// and before the retry in loadTab() those two were dropped in silence. 16
+// keeps nearly all the speed (the curve is close to flat from 8 up) and stops
+// provoking the limit in the first place; the retry is the safety net, not
+// the plan. Raise this only alongside a check that failedTabs stays empty.
+const POOL = 16;
 // Painting from cache and immediately re-fetching all 44 tabs puts the refresh
 // in direct competition with the covers the user is actually looking at. When
 // there is a cache on screen the refresh waits for the page to go idle first.
@@ -957,7 +962,16 @@ function raceGviz(url){
 // genuine last resort rather than the primary path -- and they are only reached
 // after the gid request has actually FAILED, never when it merely answers with
 // the wrong tab, which is what used to lose "T TV" and "W TV".
-async function loadTab(tab){
+/* Google answers 429 when 46 tab requests go out at once -- seen twice in a
+   single load at POOL 32. A 429 says nothing about the tab; it is transient and
+   clears on a retry. The old code could not tell it apart from "tab missing or
+   renamed", so it returned null, loadTabs() dropped the rows on the floor, and
+   the page still reported "822 titles from 46 tabs" while two of those tabs had
+   contributed nothing at all. Missing sales that announce themselves as a full
+   load are worse than a slow load. */
+const TAB_RETRY_MS = [400, 1200, 3000];
+const failedTabs = [];
+async function loadTabOnce(tab){
   const attempts = tab.gid ? [tab.gid] : [];
   attempts.push(tab.name, tab.name+' ', tab.name.replace(/\s+/g,' '));
   const tried=new Set();
@@ -974,6 +988,22 @@ async function loadTab(tab){
     }
   }
   return null; // tab missing/renamed/empty -- skip it
+}
+/* One attempt is not enough under a 429. Back off and try the whole attempt
+   chain again; only after that does a tab count as genuinely gone, and when it
+   does it is RECORDED rather than quietly skipped. */
+async function loadTab(tab){
+  for(let a=0; a<=TAB_RETRY_MS.length; a++){
+    const json = await loadTabOnce(tab);
+    if(json) return json;
+    if(a<TAB_RETRY_MS.length){
+      // Jittered, so 46 tabs that all tripped the same limit do not all come
+      // back in the same instant and trip it again.
+      await new Promise(r=>setTimeout(r, TAB_RETRY_MS[a] + Math.random()*250));
+    }
+  }
+  failedTabs.push(tab.name);
+  return null;
 }
 const money=v=>{
   if(v==null||v==='') return null;
@@ -1773,11 +1803,27 @@ $('#sbExpand').addEventListener('click',()=>{ document.body.classList.remove('sb
     items=mergeItems(rawRows);
     rebuild();
     setBar(1);
-    writeCache(items);
+    /* Only a COMPLETE load earns the cache. A load that lost tabs to a 429 is
+       missing sales, and caching it would serve that hole back for the next
+       six hours -- turning one rate-limited request into a day of quietly
+       incomplete grids. An incomplete load still paints; it just does not get
+       to persist. */
+    if(!failedTabs.length) writeCache(items);
     barDone();
     setStatus(null);
-    console.info(`[sales] ${items.length} titles from ${TABS.length} tabs in ${Math.round(performance.now()-t0)}ms`
+    const answered = TABS.length - failedTabs.length;
+    console.info(`[sales] ${items.length} titles from ${answered} of ${TABS.length} tabs`
+                 + ` in ${Math.round(performance.now()-t0)}ms`
                  + ` (transport: ${TRANSPORT}, filter: ${SHEET_QUERY_FILTER?'on':'off'}, proxy: ${proxyIdx})`);
+    /* A tab that never answered means sales are MISSING from a grid that
+       otherwise looks complete. Say so, rather than letting it pass as a clean
+       load -- that silence is what the old "from 46 tabs" line was hiding. */
+    if(failedTabs.length){
+      console.warn(`[sales] ${failedTabs.length} tab(s) never answered: ${failedTabs.join(', ')}`);
+      setStatus(`${failedTabs.length} of ${TABS.length} tabs did not load — some sales are missing`, false, true);
+      toast(`Could not load: ${failedTabs.join(', ')}. Reload to try again.`, true);
+      return;
+    }
   }catch(err){
     barDone();
     if(items.length){

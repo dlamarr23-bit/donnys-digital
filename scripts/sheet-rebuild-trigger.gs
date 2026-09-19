@@ -31,7 +31,8 @@
  *   1. Cloudflare dashboard -> Workers & Pages -> donnys-digital -> Settings
  *      -> Builds & deployments -> Deploy hooks -> Add deploy hook. Point it
  *      at the "main" branch and paste the URL it gives you into DD_HOOK_URL
- *      below. Cloudflare will not show you that URL again, so paste it now.
+ *      below. Treat that URL as a password: anyone holding it can spend your
+ *      build minutes, so keep it in the script and out of the repo.
  *   2. Save, run ddInstallTriggers once, accept the permissions.
  *   3. Wire up the menu (see MENU at the bottom).
  */
@@ -39,8 +40,18 @@
 // ---------------------------------------------------------------- settings --
 var DD_HOOK_URL = 'PASTE_YOUR_CLOUDFLARE_DEPLOY_HOOK_URL_HERE';
 
-// Only edits on these tabs count; editing any other tab will not rebuild.
-var DD_WATCH_SHEETS = ['Movies'];
+// Which tabs count as a change worth rebuilding for. EMPTY MEANS EVERY TAB,
+// which is what you want here.
+//
+// This used to be ['Movies'], and that quietly broke the Sales page. The sales
+// grid is built from 46 tabs -- Today, M, T, W, Th, F, Sat, Sun, their eight TV
+// counterparts, ten Mix & Match and twenty Fanflix -- and not one of them is
+// named "Movies". So a day of editing sales changed nothing the trigger could
+// see, no build ran, and sales.html went on seeding its first paint from
+// whatever bundle the last Movies edit happened to produce.
+//
+// Sales change daily, so this is the tab set that needs the rebuild most.
+var DD_WATCH_SHEETS = [];
 
 // How long the sheet must be quiet before building. Also gives the published
 // CSV cache time to catch up so the build sees your latest edits. Do not go
@@ -56,7 +67,8 @@ var DD_P_LASTBUILD = 'ddLastBuild';
 // Installable onEdit trigger. Deliberately cheap -- it only records state.
 function ddOnSheetEdit(e) {
   try {
-    if (e && e.range && DD_WATCH_SHEETS.indexOf(e.range.getSheet().getName()) === -1) return;
+    if (e && e.range && DD_WATCH_SHEETS.length &&
+        DD_WATCH_SHEETS.indexOf(e.range.getSheet().getName()) === -1) return;
   } catch (err) {
     // Sheet name unreadable -- fall through and treat it as a real edit.
   }
