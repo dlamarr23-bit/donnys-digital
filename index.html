@@ -14,7 +14,7 @@
      POSTER ROUTING -- runs before anything else in the page.
 
      Rewrites the src of every <img>, now and as the grid renders more, to
-     load through this domain via Netlify's Image CDN instead of straight
+     load through this domain via this site's own /img proxy instead of straight
      from the image host.
 
      Two reasons, in order of how much they matter:
@@ -148,7 +148,7 @@ html,body{margin:0;padding:0;background:#171C20}
 }
 </style>
 <script>
-/* ============ STATIC SNAPSHOT (Netlify) ============
+/* ============ STATIC SNAPSHOT (built at deploy time) ============
    Deliberately the FIRST script in the document, so the snapshot request is on
    the wire before anything else is even parsed.
 
@@ -168,8 +168,9 @@ html,body{margin:0;padding:0;background:#171C20}
    had come down from Google.
 
    The snapshot is that same collection, rebuilt at deploy time into a compact
-   tiered encoding and served by Netlify as an immutable, content-hashed,
-   Brotli-compressed file: ~589KB for everything the grid needs to paint.
+   tiered encoding and served by Cloudflare Pages as an immutable,
+   content-hashed, Brotli-compressed file: ~589KB for everything the grid
+   needs to paint.
    Effectively it is a warm cache that a browser gets to use on a page it has
    never visited.
 
@@ -1343,9 +1344,10 @@ body.atEnd.multiPage #pagerBottom{opacity:1;transform:none;pointer-events:auto}
 <link rel="apple-touch-icon" sizes="180x180" href="/assets/favicon-180.png"></head>
 <body>
 <!-- ==== SHARED NAV =========================================================
-     Google Sites drew this bar; on Netlify the pages own it. Inlined rather
-     than pulled from a stylesheet so it paints in the first frame with no
-     extra round trip -- it is under 1KB and never changes independently.
+     Google Sites drew this bar; on Cloudflare Pages the pages own it.
+     Inlined rather than pulled from a stylesheet so it paints in the first
+     frame with no extra round trip -- it is under 1KB and never changes
+     independently.
      ==================================================================== -->
 <style>
 :root{--dd-nav-h:52px}
@@ -1983,15 +1985,22 @@ for(let ri=from; ri<to; ri++){
 const r=rows[ri]; if(!r) continue;
 const rawTitle=r[iTitle];
 if(rawTitle==null) continue;
-const title=String(rawTitle);
-const t=title.trim();
-if(!t) continue;                                  // blank row
+/* TRIMMED AT THE DOOR, and it has to be. build-data.mjs trims every cell it
+   writes into the snapshot, so a title carrying a stray trailing space -- three
+   of them in this sheet -- reached the fingerprint as "South Park: Season 027 "
+   from the live CSV and "South Park: Season 027" from the snapshot. Same 19,076
+   rows, different hash, so the probe called CHANGED on every cold visit and
+   pulled the entire 11MB export to find out nothing had moved. Viewing Status
+   is trimmed here for the same reason; the other five fields the probe compares
+   were already trimmed on both sides. */
+const title=String(rawTitle).trim();
+if(!title) continue;                              // blank row
 // Legacy AwesomeTable directive row. The old code skipped ANY row titled
 // "Hidden", which silently ate the two real films actually called Hidden
 // (1987, Jack Sholder / 2015, the Duffer brothers). A directive row carries
 // no poster and no link, so require that before dropping it.
-if(t==='Hidden' && !S(r,'img') && !S(r,'link')) continue;
-const vsRaw=S(r,'viewStatusRaw');
+if(title==='Hidden' && !S(r,'img') && !S(r,'link')) continue;
+const vsRaw=S(r,'viewStatusRaw').trim();
 out.push({
 sheetRow: ri+2,                                   // header row is 1; row 0 = sheet row 2
 title,
@@ -2150,7 +2159,7 @@ try{ localStorage.setItem('dd_cache_t', String(t)); }catch(e){}
 }catch(e){ /* private mode / quota — caching is optional */ }
 }
 /* Genre reaches the two sides of a comparison with different punctuation: the
-   CSV hands over the sheet's own text ("Horror,Mystery"), while the Netlify
+   CSV hands over the sheet's own text ("Horror,Mystery"), while the deploy-time
    snapshot rebuilds it from a dictionary and joins with ", ". Both are reduced
    to the same canonical list here, so a signature compares the VALUES rather
    than the spacing between them. */
@@ -2210,11 +2219,11 @@ function probeSigFromRows(rows){
 let h=0x811c9dc5, n=0;
 for(let r=0;r<rows.length;r++){
 const row=rows[r];
-const title=String(row[0]==null?'':row[0]);
-if(!title.trim()) continue;                       // matches parseRows
+const title=String(row[0]==null?'':row[0]).trim();
+if(!title) continue;                              // matches parseRows
 n++;
 h=fnvStep(h, title+'|'+ymdFromProbe(row[5])+'|'
-  +String(row[3]==null?'':row[3])+'|'
+  +String(row[3]==null?'':row[3]).trim()+'|'
   +String(row[2]==null?'':row[2]).trim()+'|'      // parseRows trims Quality
   +normList(row[1])+'|'                           // Genre
   +String(row[4]==null?'':row[4]).trim()+'|'     // Studio, trimmed both sides
@@ -3062,7 +3071,7 @@ infoRow=sheetRow;
 $('#infoTitle').textContent = m.sortTitle || m.title;
 const poster=$('#infoPoster');
 // The poster-routing script at the top of the page rewrites this src through
-// the Netlify Image CDN on its own, same as every cover in the grid.
+// this site's /img proxy on its own, same as every cover in the grid.
 if(m.img){ poster.src=m.img; poster.style.display=''; }
 else { poster.removeAttribute('src'); poster.style.display='none'; }
 // Same numbers, and the same formatting, as the poster's hover tooltip.
@@ -3387,7 +3396,7 @@ setStatus('Checking for changes…'); setBar(0.55);
 await enrich();
 buildSidebar();
 }
-/* 1b-bis. NO IndexedDB CACHE -> fall back to the Netlify snapshot.
+/* 1b-bis. NO IndexedDB CACHE -> fall back to the deploy-time snapshot.
    This is the first-visit path, and it is the one that was slow: with no
    cache there was nothing to paint and nothing to revalidate against, so the
    page had no choice but to pull the whole 3.45MB export from Google before

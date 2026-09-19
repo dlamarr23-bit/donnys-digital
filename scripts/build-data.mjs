@@ -12,7 +12,8 @@
      * it is generated per request, so there is no ETag worth revalidating.
 
    So we pull the sheet ONCE at build time, re-encode it far smaller, and let
-   Netlify serve it as an immutable, content-hashed, Brotli-compressed file.
+   Cloudflare Pages serve it as an immutable, content-hashed,
+   Brotli-compressed file.
    The browser then caches it for a year and a repeat visit costs 0 bytes.
 
    ENCODING
@@ -297,7 +298,7 @@ async function buildSalesBundle() {
 
    Reshaping every one of those loaders into the tiered format would be a lot
    of surface area for the benefit. Mirroring the CSV byte-for-byte onto
-   Netlify gets most of the win for a one-line change per page: same bytes,
+   the CDN gets most of the win for a one-line change per page: same bytes,
    same parser, but now from a CDN with Brotli and a real revalidate instead of
    `private, max-age=300` from an endpoint that regenerates on every request.
 
@@ -444,7 +445,7 @@ async function main() {
   };
   const descPayload = { v: 1, n: descs.length, rows: descs };
 
-  /* An empty directory does not survive git, and Netlify checks out a clean
+  /* An empty directory does not survive git, and the builder checks out a clean
      tree on every build, so create it rather than assuming it is there. */
   await mkdir(DATA, { recursive: true });
 

@@ -18,10 +18,10 @@ why the move was cheap, but a few things did not carry over:
 | Image proxy | `/.netlify/images` (Image CDN) | `functions/img.js` → `/img?url=…` |
 | Rebuild without a push | build hook | deploy hook |
 
-**`netlify.toml` is dead weight.** Cloudflare does not read it. It is kept only
-as a record of what the headers used to say; `_headers` and `_redirects` are
-the live copies and are the ones to edit. If the two ever disagree, `_headers`
-wins, because it is the only one being served.
+**`netlify.toml` is gone.** It was deleted in 4579dc3; Cloudflare never read
+it. `_headers` and `_redirects` are the live copies and the ones to edit. If
+you find a copy of `netlify.toml` in an old clone, it is a record of what the
+headers used to say and nothing more.
 
 The image proxy is the one real functional difference: Cloudflare Pages
 Functions have no image-processing step, so `functions/img.js` proxies posters
@@ -289,7 +289,6 @@ ma-compare.html     MA Compare
 d2d.html            D2D
 _headers            caching headers            <- LIVE (Cloudflare reads this)
 _redirects          /movies -> index.html      <- LIVE
-netlify.toml        old Netlify config         <- DEAD, kept for reference only
 functions/
   img.js            same-origin poster proxy, served at /img
 scripts/

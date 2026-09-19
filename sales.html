@@ -14,7 +14,7 @@
      POSTER ROUTING -- runs before anything else in the page.
 
      Rewrites the src of every <img>, now and as the grid renders more, to
-     load through this domain via Netlify's Image CDN instead of straight
+     load through this domain via this site's own /img proxy instead of straight
      from the image host.
 
      Two reasons, in order of how much they matter:
@@ -503,9 +503,10 @@ body.atEnd.multiPage #pagerBottom{opacity:1;transform:none;pointer-events:auto}
 <link rel="apple-touch-icon" sizes="180x180" href="/assets/favicon-180.png"></head>
 <body>
 <!-- ==== SHARED NAV =========================================================
-     Google Sites drew this bar; on Netlify the pages own it. Inlined rather
-     than pulled from a stylesheet so it paints in the first frame with no
-     extra round trip -- it is under 1KB and never changes independently.
+     Google Sites drew this bar; on Cloudflare Pages the pages own it.
+     Inlined rather than pulled from a stylesheet so it paints in the first
+     frame with no extra round trip -- it is under 1KB and never changes
+     independently.
      ==================================================================== -->
 <style>
 :root{--dd-nav-h:52px}
@@ -1234,7 +1235,7 @@ async function loadTabs(tabs, onProgress){
    measured between 0.5s and 11.3s per tab. With nothing in localStorage there
    was no way to show anything until enough of those had come back.
 
-   The build bundles all 46 gviz responses into one file on Netlify, so a first
+   The build bundles all 46 gviz responses into one file at deploy time, so a first
    visit can paint from a single request instead of forty-six. The responses are
    stored verbatim and fed straight back through this page's OWN
    parseTabRows/parseBundleRows below, so there is no second copy of the per-tab
@@ -1711,7 +1712,7 @@ $('#sbExpand').addEventListener('click',()=>{ document.body.classList.remove('sb
   };
   let cached=readCache();
   /* No local cache (first visit, cleared storage, private window) -- seed the
-     first paint from the Netlify bundle instead of sitting blank through 46
+     first paint from the deploy-time bundle instead of sitting blank through 46
      sequential sheet requests. The live refresh below still runs either way. */
   let seeded=false;
   if(!cached){

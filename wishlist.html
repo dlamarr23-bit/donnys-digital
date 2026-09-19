@@ -14,7 +14,7 @@
      POSTER ROUTING -- runs before anything else in the page.
 
      Rewrites the src of every <img>, now and as the grid renders more, to
-     load through this domain via Netlify's Image CDN instead of straight
+     load through this domain via this site's own /img proxy instead of straight
      from the image host.
 
      Two reasons, in order of how much they matter:
@@ -500,9 +500,10 @@ body.atEnd.multiPage #pagerBottom{opacity:1;transform:none;pointer-events:auto}
 <link rel="apple-touch-icon" sizes="180x180" href="/assets/favicon-180.png"></head>
 <body>
 <!-- ==== SHARED NAV =========================================================
-     Google Sites drew this bar; on Netlify the pages own it. Inlined rather
-     than pulled from a stylesheet so it paints in the first frame with no
-     extra round trip -- it is under 1KB and never changes independently.
+     Google Sites drew this bar; on Cloudflare Pages the pages own it.
+     Inlined rather than pulled from a stylesheet so it paints in the first
+     frame with no extra round trip -- it is under 1KB and never changes
+     independently.
      ==================================================================== -->
 <style>
 :root{--dd-nav-h:52px}
@@ -662,7 +663,7 @@ const MIRROR_CSV_URL = '/mirror/wishlist.csv';
 /* Was the published Google CSV below. That endpoint answers
    "Cache-Control: private, max-age=300" and is regenerated per request, so no
    CDN could hold it and every visit paid for the whole file again. The mirror
-   is the same bytes, rebuilt at deploy time and served by Netlify with Brotli
+   is the same bytes, rebuilt at deploy time and served by Cloudflare with Brotli
    and a real revalidate. If it is ever missing, this page still falls back to
    the live sheet on its own, exactly as it did before.
    Original: https://docs.google.com/spreadsheets/d/e/2PACX-1vRoppbitXf4M7TtjyYx2pnmqX0YV4MaWWclDBBYVBsymbdUrKCcJsKZLRYuUmLC7LiHmVp_fqqfq032/pub?gid=424360819&single=true&output=csv */
@@ -719,9 +720,9 @@ const splitCsv=s=>String(s??'').split(',').map(x=>x.trim()).filter(Boolean);
 // for Vudu URLs we walk a list of routes and the first that answers wins.
 // Non-Vudu posters load directly, then fall back to Photon.
 const stripScheme = u => u.replace(/^https?:\/\//,'');
-// Every entry here is handed to the Image CDN by the POSTER ROUTING shim at the
-// top of the page, so a route only works if its HOST is in the remote_images
-// allowlist in netlify.toml AND the upstream actually answers. The old chain
+// Every entry here is handed to the /img proxy by the POSTER ROUTING shim at
+// the top of the page, so a route only works if its HOST is in the allowlist
+// in functions/img.js AND the upstream actually answers. The old chain
 // failed both tests on every single entry:
 //
 //   cdn.statically.io  -> 400, host not allowlisted (and 403 direct: Statically
