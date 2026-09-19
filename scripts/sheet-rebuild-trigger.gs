@@ -19,8 +19,8 @@
  * almost always stale. This rebuilds it after you edit.
  *
  * WHY IT WAITS RATHER THAN BUILDING ON EVERY EDIT
- *   1. Netlify free tier is 300 build minutes a month; one build per cell
- *      edit would exhaust that in a day.
+ *   1. Cloudflare Pages free tier is 500 builds a month; one build per cell
+ *      edit would exhaust that in an afternoon.
  *   2. build-data.mjs reads the PUBLISHED csv, which lags live edits by a few
  *      minutes -- an instant build would snapshot your pre-edit data.
  * An edit only marks state dirty. A 5-minute timer builds once the sheet has
@@ -28,14 +28,16 @@
  * produces exactly ONE build, shortly after you stop.
  *
  * SETUP
- *   1. Netlify -> Site configuration -> Build and deploy -> Build hooks
- *      -> Add build hook. Paste the URL into DD_HOOK_URL below.
+ *   1. Cloudflare dashboard -> Workers & Pages -> donnys-digital -> Settings
+ *      -> Builds & deployments -> Deploy hooks -> Add deploy hook. Point it
+ *      at the "main" branch and paste the URL it gives you into DD_HOOK_URL
+ *      below. Cloudflare will not show you that URL again, so paste it now.
  *   2. Save, run ddInstallTriggers once, accept the permissions.
  *   3. Wire up the menu (see MENU at the bottom).
  */
 
 // ---------------------------------------------------------------- settings --
-var DD_HOOK_URL = 'PASTE_YOUR_NETLIFY_BUILD_HOOK_URL_HERE';
+var DD_HOOK_URL = 'PASTE_YOUR_CLOUDFLARE_DEPLOY_HOOK_URL_HERE';
 
 // Only edits on these tabs count; editing any other tab will not rebuild.
 var DD_WATCH_SHEETS = ['Movies'];
@@ -74,17 +76,18 @@ function ddFlushBuild() {
 
 function ddTriggerBuild_(reason) {
   if (!DD_HOOK_URL || DD_HOOK_URL.indexOf('http') !== 0) {
-    throw new Error('DD_HOOK_URL is not set -- paste your Netlify build hook URL at the top.');
+    throw new Error('DD_HOOK_URL is not set -- paste your Cloudflare deploy hook URL at the top.');
   }
-  var url = DD_HOOK_URL + (DD_HOOK_URL.indexOf('?') === -1 ? '?' : '&')
-          + 'trigger_title=' + encodeURIComponent('Sheet updated (' + reason + ')');
-  var res = UrlFetchApp.fetch(url, { method: 'post', payload: '', muteHttpExceptions: true });
+  // Netlify took a ?trigger_title= to label the deploy in its UI. A Cloudflare
+  // deploy hook ignores query parameters, so the reason is only recorded in
+  // this script's own execution log, below.
+  var res = UrlFetchApp.fetch(DD_HOOK_URL, { method: 'post', payload: '', muteHttpExceptions: true });
   var code = res.getResponseCode();
   var p = PropertiesService.getScriptProperties();
   if (code >= 200 && code < 300) {
     p.setProperty(DD_P_DIRTY, '0');
     p.setProperty(DD_P_LASTBUILD, String(Date.now()));
-    console.log('Netlify build triggered (' + reason + ')');
+    console.log('Cloudflare Pages build triggered (' + reason + ')');
     return true;
   }
   console.error('Build hook failed: ' + code + ' ' + res.getContentText());
