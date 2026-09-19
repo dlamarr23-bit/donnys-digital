@@ -2728,6 +2728,10 @@ $('#nextPg').addEventListener('click',goNext);
     field.focus(); field.select();
   }
   function closeJump(){ if(!form.hidden){ form.hidden=true; label.hidden=false; } }
+  // The arrows run the same goPrev/goNext as the top bar, so a flip from the
+  // foot of the wall lands exactly where a flip from the head does.
+  prevB.addEventListener('click',goPrev);
+  nextB.addEventListener('click',goNext);
   label.addEventListener('click',openJump);
   form.addEventListener('submit',function(e){
     e.preventDefault();
