@@ -671,7 +671,7 @@ const MIRROR_CSV_URL = '/mirror/wishlist.csv';
 // ---- Price buckets (checkbox facet) --------------------------------------
 // Titles with no Buy Price fall into UNAVAILABLE. The order below is the exact
 // order the checkboxes appear in the Price facet.
-const PRICE_ORDER = ['Under $5 – $10 – $15 – $20 – $25 & up','UNAVAILABLE'];
+const PRICE_ORDER = ['Under $5','$5 – $9.99','$10 – $14.99','$15 – $19.99','$20 – $24.99','$25 & up','UNAVAILABLE'];
 function priceBucket(p){
   if(p==null || isNaN(p)) return 'UNAVAILABLE';
   if(p < 5)  return 'Under $5';
@@ -710,7 +710,7 @@ const EDIT_FIELDS = [
 ];
 let movies=[], filtered=[], page=0, editMode=false, currentEdit=null;
 const selected={};           // facetKey -> Set of values
-const facetValues={};        // facetKey -> [ [value,count], ... ] sorted
+const facetValues={};        // facetKey -> [ [value,count], ... ] for the visible titles
 const rangeState={};         // sliderKey -> {lo,hi}
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -923,16 +923,46 @@ function parseGviz(json){
   return out;
 }
 /* ---------- FACET UI ---------- */
-function buildFacetValues(){
-  FACETS.forEach(f=>{
+/* Option lists are counted off the titles currently on screen, the same rule
+   the Collection page follows: pick a genre and every other list shrinks to
+   what that genre actually has, so nothing on offer can only ever return zero.
+   A facet with picks of its own is the exception. Counting Genre off a list
+   already narrowed to Comedy would leave Comedy as the only genre and no way
+   to tick a second one, so it counts off everything-but-itself instead. */
+function countFacets(rows,list){
+  list.forEach(f=>{
     const counts=new Map();
-    movies.forEach(m=>{
+    rows.forEach(m=>{
       const vals=f.csv?m[f.key]:[m[f.key]].filter(Boolean);
       vals.forEach(v=>counts.set(v,(counts.get(v)||0)+1));
     });
     facetValues[f.key]=[...counts.entries()].sort((a,b)=>
       f.order ? f.order.indexOf(a[0])-f.order.indexOf(b[0]) : a[0].localeCompare(b[0]));
-    if(!selected[f.key]) selected[f.key]=new Set();   // keep active selections on rebuild
+  });
+}
+// The whole-wishlist pass. buildFacets() sizes its panels off it, so it runs
+// before every build; applyFilters() narrows the lists from there.
+function buildFacetValues(){
+  FACETS.forEach(f=>{ if(!selected[f.key]) selected[f.key]=new Set(); });   // keep active selections on rebuild
+  countFacets(movies,FACETS);
+}
+function refreshFacetValues(q){
+  const shared=[], own=[];
+  FACETS.forEach(f=>(selected[f.key].size?own:shared).push(f));
+  countFacets(filtered,shared);
+  own.forEach(f=>countFacets(movies.filter(m=>rowMatches(m,q,f.key)),[f]));
+}
+// Set once the sidebar exists. A search typed while the sheet is still
+// loading has nothing to count yet.
+let facetsReady=false;
+function refreshFacetsNow(){
+  if(!facetsReady) return;
+  refreshFacetValues($('#searchBox').value.trim().toLowerCase());
+  // Counts and option lists just moved under the sidebar, so every badge and
+  // whichever panel is open both need redoing.
+  document.querySelectorAll('#facets .facet').forEach(el=>{
+    updateBadge(el,el.dataset.key);
+    if(el.classList.contains('open') && el._render) el._render();
   });
 }
 function buildFacets(){
@@ -956,31 +986,43 @@ function buildFacets(){
     const panel=el.querySelector('.facet-panel');
     const list=el.querySelector('.opt-list');
     const search=el.querySelector('.opt-search');
-    const render=(q='')=>{
-      const ql=q.toLowerCase();
+    // A re-render starts at the top -- the panel has just been opened, or had
+    // its list recounted underneath it -- except straight after a tick, when
+    // the list barely moves and the next box you want is still under the cursor.
+    let keepScroll=false;
+    const render=()=>{
+      const ql=search?search.value.trim().toLowerCase():'';
+      const prev=list.scrollTop;
       const items=facetValues[f.key].filter(([v])=>!ql||v.toLowerCase().includes(ql));
       const shown=items.slice(0,250);
-      list.innerHTML=shown.map(([v,n])=>`
+      list.innerHTML=(shown.length?shown.map(([v,n])=>`
         <label><input type="checkbox" value="${esc(v)}" ${selected[f.key].has(v)?'checked':''}>
         <span>${esc(v)}</span><span class="n">${n}</span></label>`).join('')
+        :'<div class="opt-more">Nothing left to narrow by.</div>')
         +(items.length>250?`<div class="opt-more">${items.length-250} more — type to narrow down</div>`:'');
+      list.scrollTop = keepScroll ? prev : 0;
+      keepScroll=false;
     };
+    el._render=render;
     el.querySelector('.facet-btn').addEventListener('click',()=>{
       const was=el.classList.contains('open');
       document.querySelectorAll('.facet.open').forEach(x=>x.classList.remove('open'));
-      if(!was){ el.classList.add('open'); render(search?search.value:''); if(search) search.focus(); }
+      if(!was){ el.classList.add('open'); render(); if(search) search.focus(); }
     });
-    if(search) search.addEventListener('input',()=>render(search.value));
+    if(search) search.addEventListener('input',render);
     list.addEventListener('change',e=>{
       if(e.target.type!=='checkbox') return;
       const v=e.target.value;
       e.target.checked?selected[f.key].add(v):selected[f.key].delete(v);
-      updateBadge(el,f.key); applyFilters();
+      keepScroll=true;
+      applyFilters();
     });
     el.querySelector('.facet-clear').addEventListener('click',()=>{
-      selected[f.key].clear(); render(search?search.value:''); updateBadge(el,f.key); applyFilters();
+      selected[f.key].clear(); if(search) search.value='';
+      applyFilters();
     });
   });
+  facetsReady=true;
   document.addEventListener('click',e=>{
     if(!e.target.closest('.facet')) document.querySelectorAll('.facet.open').forEach(x=>x.classList.remove('open'));
   });
@@ -1066,25 +1108,30 @@ function buildSliders(){
   });
 }
 /* ---------- FILTER + SORT + RENDER ---------- */
+// `skipKey` leaves one facet out, which is how a facet with picks of its own
+// gets its option list counted (see refreshFacetValues).
+function rowMatches(m,q,skipKey){
+  if(q && !m.search.includes(q)) return false;
+  for(const f of FACETS){
+    if(f.key===skipKey) continue;
+    const sel=selected[f.key]; if(!sel.size) continue;
+    const vals=f.csv?m[f.key]:[m[f.key]];
+    if(!vals.some(v=>sel.has(v))) return false;
+  }
+  for(const s of SLIDERS){
+    const r=rangeState[s.key];
+    if(r.lo>s.min || r.hi<s.max){
+      const v=m[s.key];
+      const hi = s.type==='date' ? r.hi+86399999 : r.hi;  // include the whole end day
+      if(v==null || v<r.lo || v>hi) return false;
+    }
+  }
+  return true;
+}
 function applyFilters(){
   const q=$('#searchBox').value.trim().toLowerCase();
-  filtered=movies.filter(m=>{
-    if(q && !m.search.includes(q)) return false;
-    for(const f of FACETS){
-      const sel=selected[f.key]; if(!sel.size) continue;
-      const vals=f.csv?m[f.key]:[m[f.key]];
-      if(!vals.some(v=>sel.has(v))) return false;
-    }
-    for(const s of SLIDERS){
-      const r=rangeState[s.key];
-      if(r.lo>s.min || r.hi<s.max){
-        const v=m[s.key];
-        const hi = s.type==='date' ? r.hi+86399999 : r.hi;  // include the whole end day
-        if(v==null || v<r.lo || v>hi) return false;
-      }
-    }
-    return true;
-  });
+  filtered=movies.filter(m=>rowMatches(m,q,null));
+  refreshFacetsNow();
   sortNow();
   page=0; renderPage();
 }

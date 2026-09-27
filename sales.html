@@ -1342,13 +1342,24 @@ function writeCache(list){
   });
 }
 /* ---------- FACET UI ---------- */
-function buildFacetValues(){
-  FACETS.forEach(f=>{
+/* Option lists are counted off the titles currently on screen, the same rule
+   the Collection page follows: pick a store and every other list shrinks to
+   what that store actually has on sale, so nothing on offer can only ever
+   return zero. A facet with picks of its own is the exception. Counting Studio
+   off a list already narrowed to one studio would leave it as the only choice
+   and no way to tick a second one, so it counts off everything-but-itself. */
+// One reading of a row's values for both counting and matching, so the number
+// beside an option is exactly what ticking it returns. Owned Quality folds
+// every spelling of "unowned" into the UNOWNED it is listed under.
+function facetVals(m,f){
+  const vals=f.csv?m[f.key]:[m[f.key]].filter(Boolean);
+  return f.key==='ownedQ' ? vals.map(v=>/^unowned$/i.test(v)?'UNOWNED':v) : vals;
+}
+function countFacets(rows,list){
+  list.forEach(f=>{
     const counts=new Map();
-    items.forEach(m=>{
-      let vals=f.csv?m[f.key]:[m[f.key]].filter(Boolean);
-      if(f.key==='ownedQ') vals=vals.map(v=>/^unowned$/i.test(v)?'UNOWNED':v);
-      vals.forEach(v=>counts.set(v,(counts.get(v)||0)+1));
+    rows.forEach(m=>{
+      facetVals(m,f).forEach(v=>counts.set(v,(counts.get(v)||0)+1));
     });
     let entries=[...counts.entries()];
     // D2D/MA are "not applicable" for almost every row, so their UNOWNED
@@ -1357,7 +1368,31 @@ function buildFacetValues(){
     facetValues[f.key]=entries.sort((a,b)=>
       f.numeric ? parseFloat(a[0].replace(/[^0-9.]/g,''))-parseFloat(b[0].replace(/[^0-9.]/g,''))
                 : a[0].localeCompare(b[0]));
-    if(!selected[f.key]) selected[f.key]=new Set();
+  });
+}
+// The whole-catalog pass, run before every rebuild: buildFacets() sizes its
+// panels off it, and applyFilters() narrows the lists from there.
+function buildFacetValues(){
+  FACETS.forEach(f=>{ if(!selected[f.key]) selected[f.key]=new Set(); });
+  countFacets(items,FACETS);
+}
+function refreshFacetValues(q){
+  const shared=[], own=[];
+  FACETS.forEach(f=>(selected[f.key].size?own:shared).push(f));
+  countFacets(filtered,shared);
+  own.forEach(f=>countFacets(items.filter(m=>rowMatches(m,q,f.key)),[f]));
+}
+// Set once the sidebar exists. A search or quick filter used while the first
+// tabs are still loading has nothing to count yet.
+let facetsReady=false;
+function refreshFacetsNow(){
+  if(!facetsReady) return;
+  refreshFacetValues($('#searchBox').value.trim().toLowerCase());
+  // Counts and option lists just moved under the sidebar, so every badge and
+  // whichever panel is open both need redoing.
+  document.querySelectorAll('#facets .facet').forEach(el=>{
+    updateBadge(el,el.dataset.key);
+    if(el.classList.contains('open') && el._render) el._render();
   });
 }
 function buildFacets(){
@@ -1386,8 +1421,13 @@ function buildFacets(){
     panel.append(list,clear);
     el.append(btn,panel);
     host.appendChild(el);
-    const render=(q='')=>{
-      const ql=q.toLowerCase();
+    // A re-render starts at the top -- the panel has just been opened, or had
+    // its list recounted underneath it -- except straight after a tick, when
+    // the list barely moves and the next box you want is still under the cursor.
+    let keepScroll=false;
+    const render=()=>{
+      const ql=search?search.value.trim().toLowerCase():'';
+      const prev=list.scrollTop;
       const itemsF=facetValues[f.key].filter(([v])=>!ql||v.toLowerCase().includes(ql));
       const shown=itemsF.slice(0,250);
       list.textContent='';
@@ -1401,6 +1441,12 @@ function buildFacets(){
         label.append(cb,name,cnt);
         frag.appendChild(label);
       });
+      if(!shown.length){
+        const none=document.createElement('div');
+        none.className='opt-more';
+        none.textContent='Nothing left to narrow by.';
+        frag.appendChild(none);
+      }
       if(itemsF.length>250){
         const more=document.createElement('div');
         more.className='opt-more';
@@ -1408,25 +1454,31 @@ function buildFacets(){
         frag.appendChild(more);
       }
       list.appendChild(frag);
+      list.scrollTop = keepScroll ? prev : 0;
+      keepScroll=false;
     };
+    el._render=render;
     btn.addEventListener('click',()=>{
       const was=el.classList.contains('open');
       document.querySelectorAll('.facet.open').forEach(x=>x.classList.remove('open'));
-      if(!was){ el.classList.add('open'); render(search?search.value:''); if(search) search.focus(); }
+      if(!was){ el.classList.add('open'); render(); if(search) search.focus(); }
     });
-    if(search) search.addEventListener('input',()=>render(search.value));
+    if(search) search.addEventListener('input',render);
     list.addEventListener('change',e=>{
       if(e.target.type!=='checkbox') return;
       const v=e.target.value;
       e.target.checked?selected[f.key].add(v):selected[f.key].delete(v);
-      updateBadge(el,f.key); applyFilters();
+      keepScroll=true;
+      applyFilters();
     });
     clear.addEventListener('click',()=>{
-      selected[f.key].clear(); render(search?search.value:''); updateBadge(el,f.key); applyFilters();
+      selected[f.key].clear(); if(search) search.value='';
+      applyFilters();
     });
     updateBadge(el,f.key);
     if(openKey===f.key){ el.classList.add('open'); render(); }
   });
+  facetsReady=true;
 }
 function updateBadge(el,key){
   const b=el.querySelector('.count-badge'), n=selected[key].size;
@@ -1491,26 +1543,30 @@ function buildSliders(){
   });
 }
 /* ---------- FILTER + SORT + RENDER ---------- */
+// `skipKey` leaves one facet out, which is how a facet with picks of its own
+// gets its option list counted (see refreshFacetValues).
+function rowMatches(m,q,skipKey){
+  if(q && !m.search.includes(q)) return false;
+  if(quickTags.size && !m.tags.some(t=>quickTags.has(t))) return false;
+  for(const f of FACETS){
+    if(f.key===skipKey) continue;
+    const sel=selected[f.key]; if(!sel.size) continue;
+    if(!facetVals(m,f).some(v=>sel.has(v))) return false;
+  }
+  for(const s of SLIDERS){
+    const r=rangeState[s.key];
+    if(!r) continue;
+    if(r.lo>s.min || r.hi<s.max){
+      const v=m[s.key];
+      if(v==null || v<r.lo || v>r.hi) return false;
+    }
+  }
+  return true;
+}
 function applyFilters(keepPage){
   const q=$('#searchBox').value.trim().toLowerCase();
-  filtered=items.filter(m=>{
-    if(q && !m.search.includes(q)) return false;
-    if(quickTags.size && !m.tags.some(t=>quickTags.has(t))) return false;
-    for(const f of FACETS){
-      const sel=selected[f.key]; if(!sel.size) continue;
-      const vals=f.csv?m[f.key]:[m[f.key]];
-      if(!vals.some(v=>sel.has(v))) return false;
-    }
-    for(const s of SLIDERS){
-      const r=rangeState[s.key];
-      if(!r) continue;
-      if(r.lo>s.min || r.hi<s.max){
-        const v=m[s.key];
-        if(v==null || v<r.lo || v>r.hi) return false;
-      }
-    }
-    return true;
-  });
+  filtered=items.filter(m=>rowMatches(m,q,null));
+  refreshFacetsNow();
   sortItems();
   if(!keepPage) page=0;
   renderPage();

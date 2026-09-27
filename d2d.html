@@ -712,7 +712,7 @@ const COLMAP = {
 };
 let movies=[], filtered=[], page=0;
 const selected={};           // facetKey -> Set of values
-const facetValues={};        // facetKey -> [ [value,count], ... ] sorted
+const facetValues={};        // facetKey -> [ [value,count], ... ] for the visible titles
 const rangeState={};         // sliderKey -> {lo,hi}
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -930,17 +930,51 @@ function parseGviz(json){
   return out;
 }
 /* ---------- FACET UI ---------- */
-function buildFacetValues(){
-  FACETS.forEach(f=>{
+/* Option lists are counted off the titles currently on screen, the same rule
+   the Collection page follows: pick a studio and every other list shrinks to
+   what that studio actually has, so nothing on offer can only ever return zero.
+   A facet with picks of its own is the exception. Counting Studio off a list
+   already narrowed to one studio would leave it as the only choice and no way
+   to tick a second one, so it counts off everything-but-itself instead. */
+function countFacets(rows,list){
+  list.forEach(f=>{
     const counts=new Map();
-    movies.forEach(m=>{
+    rows.forEach(m=>{
       [m[f.key]].filter(Boolean).forEach(v=>counts.set(v,(counts.get(v)||0)+1));
     });
     facetValues[f.key]=[...counts.entries()].sort((a,b)=>a[0].localeCompare(b[0]));
+  });
+}
+// The whole-catalog pass, run before every build: buildFacets() sizes its
+// panels off it, and a stale selection is checked against it. applyFilters()
+// narrows the lists from there.
+function buildFacetValues(){
+  countFacets(movies,FACETS);
+  FACETS.forEach(f=>{
     if(!selected[f.key]) selected[f.key]=new Set();
     // Drop any selection that no longer exists after a background refresh, so a
     // stale value can't silently filter everything out.
+    const counts=new Map(facetValues[f.key]);
     selected[f.key]=new Set([...selected[f.key]].filter(v=>counts.has(v)));
+  });
+}
+function refreshFacetValues(q){
+  const shared=[], own=[];
+  FACETS.forEach(f=>(selected[f.key].size?own:shared).push(f));
+  countFacets(filtered,shared);
+  own.forEach(f=>countFacets(movies.filter(m=>rowMatches(m,q,f.key)),[f]));
+}
+// Set once the sidebar exists. A search typed while the sheet is still
+// loading has nothing to count yet.
+let facetsReady=false;
+function refreshFacetsNow(){
+  if(!facetsReady) return;
+  refreshFacetValues($('#searchBox').value.trim().toLowerCase());
+  // Counts and option lists just moved under the sidebar, so every badge and
+  // whichever panel is open both need redoing.
+  document.querySelectorAll('#facets .facet').forEach(el=>{
+    updateBadge(el,el.dataset.key);
+    if(el.classList.contains('open') && el._render) el._render();
   });
 }
 function buildFacets(){
@@ -963,32 +997,44 @@ function buildFacets(){
     host.appendChild(el);
     const list=el.querySelector('.opt-list');
     const search=el.querySelector('.opt-search');
-    const render=(q='')=>{
-      const ql=q.toLowerCase();
+    // A re-render starts at the top -- the panel has just been opened, or had
+    // its list recounted underneath it -- except straight after a tick, when
+    // the list barely moves and the next box you want is still under the cursor.
+    let keepScroll=false;
+    const render=()=>{
+      const ql=search?search.value.trim().toLowerCase():'';
+      const prev=list.scrollTop;
       const items=facetValues[f.key].filter(([v])=>!ql||v.toLowerCase().includes(ql));
       const shown=items.slice(0,250);
-      list.innerHTML=shown.map(([v,n])=>`
+      list.innerHTML=(shown.length?shown.map(([v,n])=>`
         <label><input type="checkbox" value="${esc(v)}" ${selected[f.key].has(v)?'checked':''}>
         <span>${esc(v)}</span><span class="n">${n}</span></label>`).join('')
+        :'<div class="opt-more">Nothing left to narrow by.</div>')
         +(items.length>250?`<div class="opt-more">${items.length-250} more — type to narrow down</div>`:'');
+      list.scrollTop = keepScroll ? prev : 0;
+      keepScroll=false;
     };
+    el._render=render;
     el.querySelector('.facet-btn').addEventListener('click',()=>{
       const was=el.classList.contains('open');
       document.querySelectorAll('.facet.open').forEach(x=>x.classList.remove('open'));
-      if(!was){ el.classList.add('open'); render(search?search.value:''); if(search) search.focus(); }
+      if(!was){ el.classList.add('open'); render(); if(search) search.focus(); }
     });
-    if(search) search.addEventListener('input',()=>render(search.value));
+    if(search) search.addEventListener('input',render);
     list.addEventListener('change',e=>{
       if(e.target.type!=='checkbox') return;
       const v=e.target.value;
       e.target.checked?selected[f.key].add(v):selected[f.key].delete(v);
-      updateBadge(el,f.key); applyFilters();
+      keepScroll=true;
+      applyFilters();
     });
     el.querySelector('.facet-clear').addEventListener('click',()=>{
-      selected[f.key].clear(); render(search?search.value:''); updateBadge(el,f.key); applyFilters();
+      selected[f.key].clear(); if(search) search.value='';
+      applyFilters();
     });
     updateBadge(el,f.key);
   });
+  facetsReady=true;
   // Bound once. The old version re-registered this on every rebuild, stacking
   // up a duplicate document listener each time the catalog refreshed.
   if(!buildFacets._outsideBound){
@@ -1069,24 +1115,29 @@ function buildSliders(preserve){
   });
 }
 /* ---------- FILTER + SORT + RENDER ---------- */
+// `skipKey` leaves one facet out, which is how a facet with picks of its own
+// gets its option list counted (see refreshFacetValues).
+function rowMatches(m,q,skipKey){
+  if(q && !m.search.includes(q)) return false;
+  for(const f of FACETS){
+    if(f.key===skipKey) continue;
+    const sel=selected[f.key]; if(!sel.size) continue;
+    if(!sel.has(m[f.key])) return false;
+  }
+  for(const s of SLIDERS){
+    const r=rangeState[s.key];
+    if(!r) continue;
+    if(r.lo>s.min || r.hi<s.max){
+      const v=m[s.key];
+      if(v==null || v<r.lo || v>r.hi) return false;
+    }
+  }
+  return true;
+}
 function applyFilters(keepPage){
   const q=$('#searchBox').value.trim().toLowerCase();
-  filtered=movies.filter(m=>{
-    if(q && !m.search.includes(q)) return false;
-    for(const f of FACETS){
-      const sel=selected[f.key]; if(!sel.size) continue;
-      if(!sel.has(m[f.key])) return false;
-    }
-    for(const s of SLIDERS){
-      const r=rangeState[s.key];
-      if(!r) continue;
-      if(r.lo>s.min || r.hi<s.max){
-        const v=m[s.key];
-        if(v==null || v<r.lo || v>r.hi) return false;
-      }
-    }
-    return true;
-  });
+  filtered=movies.filter(m=>rowMatches(m,q,null));
+  refreshFacetsNow();
   sortNow();
   if(!keepPage) page=0;
   renderPage();
