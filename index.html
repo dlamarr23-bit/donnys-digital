@@ -88,6 +88,63 @@
   }
 })();
 </script>
+<script>
+/* ============ EDGE SHEET CACHE (functions/sheet.js) ============
+   Shared by every page. Same block in each file -- keep them in step.
+
+   Google takes 0.5-14s to answer a sheet request and forbids CDNs from keeping
+   a copy, which is why every page used to show its cached grid and then sit
+   on "Checking for changes..." for several seconds. /sheet keeps that copy at
+   Cloudflare's edge instead.
+
+     __edge.fast(url)     -> the edge's copy, however old, in ~50ms
+     __edge.confirm(url)  -> a copy no older than FRESH_S, waiting on Google
+                             only if the edge has nothing that recent
+     __edge.isOld(r)      -> true when a fast answer still needs confirming
+
+   Each resolves to {res, age, how}: `res` is the fetch Response (body unread,
+   so callers can stream it), `age` its age in seconds, `how` where it came
+   from. The pages paint the fast answer straight away and run the confirm
+   pass silently behind it, so the data is still live -- it just no longer
+   holds anything up.
+
+   If /sheet is missing (local preview, a host without Functions) or fails,
+   this goes straight to Google exactly as the pages always did. */
+(function(){
+  var FRESH_S=60;
+  var off=false;
+  function opts(signal){ var o={credentials:'omit'}; if(signal) o.signal=signal; return o; }
+  function direct(url, signal){
+    return fetch(url,opts(signal)).then(function(r){
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      return {res:r, age:0, how:'DIRECT'};
+    });
+  }
+  function viaEdge(url, fresh, signal){
+    if(off) return direct(url, signal);
+    var u='/sheet?u='+encodeURIComponent(url)+(fresh==null?'':'&fresh='+fresh);
+    return fetch(u,opts(signal)).then(function(r){
+      var how=r.headers.get('X-Sheet-Cache');
+      /* No header means this was not the function answering (a 404 page, a
+         static server) -- stop asking it for the rest of this visit. */
+      if(!how){ off=true; return direct(url, signal); }
+      if(!r.ok) throw new Error('sheet HTTP '+r.status);
+      return {res:r, age:+(r.headers.get('X-Sheet-Age')||0), how:how};
+    }).catch(function(e){
+      if(off || (e && e.name==='AbortError')) throw e;
+      try{ console.warn('[edge] /sheet unavailable, using Google directly:', (e&&e.message)||e); }catch(x){}
+      return direct(url, signal);
+    });
+  }
+  window.__edge={
+    FRESH_S:FRESH_S,
+    fast:function(url,signal){ return viaEdge(url,null,signal); },
+    confirm:function(url,maxAge,signal){ return viaEdge(url, maxAge==null?FRESH_S:maxAge, signal); },
+    isOld:function(r){ return !!r && (r.age>FRESH_S || r.how==='ERROR-STALE'); },
+    text:function(p){ return p.then(function(r){ return r.res.text().then(function(t){ r.text=t; return r; }); }); }
+  };
+})();
+</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <!-- Tells the browser the page is dark BEFORE any CSS is parsed, so the very
@@ -501,9 +558,17 @@ function streamCsv(){
   /* Abortable so that a revalidation which lands AFTER the grace timer has
      already opened the download can still stop it mid-flight instead of
      pulling all 11.1MB it has just proved we don't need. */
-  var fo={credentials:'omit'};
-  try{ csvAbort=new AbortController(); fo.signal=csvAbort.signal; }catch(e){ csvAbort=null; }
-  return fetch(CSV_URL,fo).then(function(r){
+  try{ csvAbort=new AbortController(); }catch(e){ csvAbort=null; }
+  /* Through the edge cache. When the probe has already answered, ask for a
+     copy at least as new as the one the probe saw (window.__csvFresh), so the
+     probe and the download can never disagree about which version this is.
+     With no probe, take the edge's copy as-is; init() confirms it later. */
+  var sig=csvAbort?csvAbort.signal:null;
+  var req=window.__csvFresh==null ? window.__edge.fast(CSV_URL,sig)
+                                  : window.__edge.confirm(CSV_URL,window.__csvFresh,sig);
+  return req.then(function(e){
+    window.__csvMeta=e;
+    var r=e.res;
     if(!r.ok) throw new Error('CSV HTTP '+r.status);
     /* Headers are back and the status is OK: the published link is ALIVE.
        Everything after this point is just transfer speed, which is not the
@@ -664,27 +729,56 @@ try{
   cacheFresh = ct>0 && (Date.now()-ct) < 24*60*60*1000;
 }catch(e){}
 
+/* Shared by the probe below and by init()'s silent confirm pass. */
+function parseProbe(txt){
+  var cs=new CsvStream(); cs.push(txt);
+  var rows=cs.end(), head=rows.shift()||[];
+  for(var i=0;i<PROBE_HEAD.length;i++){
+    if(String(head[i]==null?'':head[i]).trim()!==PROBE_HEAD[i]){
+      throw new Error('probe columns moved (expected "'+PROBE_HEAD.join('", "')
+        +'", got "'+head.join('", "')+'")');
+    }
+  }
+  /* Optional: blank means the sheet has no fingerprint column, which is fine.
+     A DIFFERENT name there means something else moved into Y. */
+  var fpHead=String(head[PROBE_HEAD.length]==null?'':head[PROBE_HEAD.length]).trim();
+  if(fpHead && fpHead!==PROBE_FP_HEAD){
+    throw new Error('probe column Y is "'+fpHead+'", expected "'+PROBE_FP_HEAD+'" or empty');
+  }
+  return rows;
+}
+/* The confirm pass. Runs after the page is finished and on screen, only when
+   the edge's copy was old, and with no status line: if the sheet moved, the
+   grid quietly catches up; if not, nothing visible happens at all. */
+window.__confirmProbe=function(){
+  return window.__edge.confirm(PROBE_URL).then(function(e){
+    if(!e.res.ok) throw new Error('probe HTTP '+e.res.status);
+    return e.res.text();
+  }).then(parseProbe);
+};
+window.__confirmCsv=function(){
+  return window.__edge.confirm(CSV_URL).then(function(e){
+    if(!e.res.ok) throw new Error('CSV HTTP '+e.res.status);
+    return e.res.text();
+  }).then(function(txt){
+    var cs=new CsvStream(); cs.push(txt);
+    var rows=cs.end(), cols=checkCols(rows.shift()||[]);
+    return {cols:cols, rows:rows, src:'csv'};
+  });
+};
+
 window.__probe=null;
 function startProbe(){
   emit({stage:'revalidate'});
-  window.__probe=fetch(PROBE_URL,{credentials:'omit'}).then(function(r){
-    if(!r.ok) throw new Error('probe HTTP '+r.status);
-    return r.text();
+  window.__probe=window.__edge.fast(PROBE_URL).then(function(e){
+    window.__probeMeta=e;
+    /* The download, if one turns out to be needed, must not be OLDER than
+       what the probe just compared against. */
+    window.__csvFresh=Math.ceil(e.age)+5;
+    if(!e.res.ok) throw new Error('probe HTTP '+e.res.status);
+    return e.res.text();
   }).then(function(txt){
-    var cs=new CsvStream(); cs.push(txt);
-    var rows=cs.end(), head=rows.shift()||[];
-    for(var i=0;i<PROBE_HEAD.length;i++){
-      if(String(head[i]==null?'':head[i]).trim()!==PROBE_HEAD[i]){
-        throw new Error('probe columns moved (expected "'+PROBE_HEAD.join('", "')
-          +'", got "'+head.join('", "')+'")');
-      }
-    }
-    /* Optional: blank means the sheet has no fingerprint column, which is fine.
-       A DIFFERENT name there means something else moved into Y. */
-    var fpHead=String(head[PROBE_HEAD.length]==null?'':head[PROBE_HEAD.length]).trim();
-    if(fpHead && fpHead!==PROBE_FP_HEAD){
-      throw new Error('probe column Y is "'+fpHead+'", expected "'+PROBE_FP_HEAD+'" or empty');
-    }
+    var rows=parseProbe(txt);
     /* The probe has answered, so the grace timer has nothing left to guard
        against -- from here the decision belongs to init(), which will call
        either __startCsv() (changed) or __cancelCsv() (unchanged). Leaving it
@@ -722,7 +816,7 @@ if(REVALIDATE && (cacheFresh || window.__SNAP) && CSV_URL){
    before. Any individual cover that still fails walks the same fallback chain.
    Set POSTER_PROBE=false below to switch this off entirely. */
 var POSTER_PROBE=true;
-var PROBE_URL='https://images2.vudu.com/poster2/4517755-l';
+var POSTER_PROBE_URL='https://images2.vudu.com/poster2/4517755-l';
 window.__directOk=new Promise(function(res){
   if(!POSTER_PROBE) return res(false);
   var cached=null; try{ cached=sessionStorage.getItem('dd_direct'); }catch(e){}
@@ -737,7 +831,7 @@ window.__directOk=new Promise(function(res){
   }
   img.onload=function(){ finish(img.naturalWidth>0); };
   img.onerror=function(){ finish(false); };
-  img.src=PROBE_URL;
+  img.src=POSTER_PROBE_URL;
 });
 })();
 </script>
@@ -2432,6 +2526,10 @@ s.step=86400000;
 } else if(mm){
 s.min=Math.floor(Math.min(s.min,mm.mn)); s.max=Math.ceil(Math.max(s.max,mm.mx));
 }
+/* A rebuild after a background refresh must not throw away a range the
+   visitor set -- the grid is still filtered by it. Keep it, clamped to the
+   new bounds. */
+const keep = s._active && rangeState[s.key] ? rangeState[s.key] : null;
 rangeState[s.key]={lo:s.min,hi:s.max};
 /* ---- what the range INPUT counts in ---------------------------------------
    A range input can only sit on min + n*step, so a date slider stepping by
@@ -2510,8 +2608,13 @@ vlo.value=toStr(mn); vhi.value=toStr(mx);
    slider filters anything, so the blue can never disagree with the grid:
    if it is on, rows are being dropped, and if rows are being dropped it is
    on. */
-el.classList.toggle('active', uLo>uMin || uHi<uMax);
+s._active = uLo>uMin || uHi<uMax;
+el.classList.toggle('active', s._active);
 };
+if(keep){
+const c=v=>Math.max(s.min,Math.min(s.max,v));
+lo.value=toUnit(c(keep.lo)); hi.value=toUnit(c(keep.hi));
+}
 paint();
 let t;
 const onInput=()=>{ paint(); clearTimeout(t); t=setTimeout(applyFilters,150); };
@@ -3480,6 +3583,18 @@ revalidated = probeSig===localSig;
 console.info('[collection] revalidation: '+(revalidated?'unchanged':'CHANGED')
   +' (sheet '+probeSig+' vs cached '+localSig+')');
 }
+/* The edge's copy can be OLDER than the cache this browser just painted --
+   the cache was confirmed against Google on the last visit, the edge copy may
+   not have been refreshed since. Downloading it would step the grid BACK to
+   older data, and the confirm pass would then step it forward again. So when
+   the probe's copy predates the cache, it decides nothing: keep the cache on
+   screen and let the confirm pass (which insists on a recent copy) settle it. */
+const pm=window.__probeMeta;
+if(!revalidated && probeRows && rec && cachedT && pm && pm.how!=='DIRECT'
+   && pm.age*1000 > Date.now()-cachedT){
+console.info('[collection] edge copy predates the cache; leaving it to the confirm pass');
+revalidated=true;
+}
 if(!revalidated) window.__startCsv();
 }
 }
@@ -3499,6 +3614,7 @@ barDone(); setStatus(null);
 console.info(`[collection] ${movies.length} titles in ${Math.round(performance.now()-t0)}ms`
   + ` (source: cache + revalidation probe, full download skipped,`
   + ` posters: ${directOk===true?'direct':'proxy '+proxyIdx})`);
+confirmLater(window.__probeMeta);
 return;
 }
 
@@ -3520,7 +3636,36 @@ paint();
 // 3. The whole sheet.
 const d=await window.__allRows;
 setStatus('Indexing '+d.rows.length.toLocaleString()+' rows…');
-const fresh=await parseAllSliced(d.cols, d.rows, (i,n)=>setBar(0.72+0.08*(i/n)));
+const src=await applyFull(d, false);
+barDone(); setStatus(null);
+console.info(`[collection] ${movies.length} titles in ${Math.round(performance.now()-t0)}ms`
++ ` (source: ${d.src}, cache: ${cachedSig?(src.unchanged?'hit':'stale'):'miss'},`
++ ` posters: ${directOk===true?'direct':'proxy '+proxyIdx},`
++ ` urls: ${FIX_POSTER_SUFFIX?'rewritten':'as-stored'})`);
+/* The download came from the edge. If that copy was old, check it once more
+   against Google -- silently, now that everything is on screen. */
+confirmLater(window.__csvMeta);
+}catch(err){
+console.warn('[collection] load failed:', err && (err.stack||err.message||err));
+barDone();
+if(movies.length){
+partialData=false;
+renderPage();
+setStatus('Showing the collection that loaded — refresh failed', false, true);
+}else{
+setStatus('Could not load the sheet.<br><small>'
++'1. Check the published CSV link at the top of this embed is still live:<br>'
++'&nbsp;&nbsp;&nbsp;&nbsp;in the Sheet, File &rarr; Share &rarr; Publish to web &rarr; &ldquo;Movies&rdquo; tab &rarr; CSV.<br>'
++'2. Check the spreadsheet is also shared as &ldquo;Anyone with the link &ndash; Viewer&rdquo;,<br>'
++'&nbsp;&nbsp;&nbsp;&nbsp;which is what the live-sheet fallback needs.<br>'
++'<span style="color:#607d8b">('+esc(err.message)+')</span></small>', false, true);
+}
+}
+
+/* Swap a complete download into the page. Shared by the normal load and the
+   silent confirm pass; `quiet` keeps the status line and bar out of it. */
+async function applyFull(d, quiet){
+const fresh=await parseAllSliced(d.cols, d.rows, quiet?()=>{}:(i,n)=>setBar(0.72+0.08*(i/n)));
 if(!fresh.length) throw new Error('no rows returned');
 const hasDesc = d.src==='csv' || DESCRIPTIONS==='eager';
 partialData=false;
@@ -3548,25 +3693,33 @@ idle(()=>{
 if(freshSig===null) freshSig=signature(movies);
 cacheSet(movies, freshSig, descriptionsLoaded);
 });
-barDone(); setStatus(null);
-console.info(`[collection] ${movies.length} titles in ${Math.round(performance.now()-t0)}ms`
-+ ` (source: ${d.src}, cache: ${cachedSig?(unchanged?'hit':'stale'):'miss'},`
-+ ` posters: ${directOk===true?'direct':'proxy '+proxyIdx},`
-+ ` urls: ${FIX_POSTER_SUFFIX?'rewritten':'as-stored'})`);
-}catch(err){
-barDone();
-if(movies.length){
-partialData=false;
-renderPage();
-setStatus('Showing the collection that loaded — refresh failed', false, true);
-}else{
-setStatus('Could not load the sheet.<br><small>'
-+'1. Check the published CSV link at the top of this embed is still live:<br>'
-+'&nbsp;&nbsp;&nbsp;&nbsp;in the Sheet, File &rarr; Share &rarr; Publish to web &rarr; &ldquo;Movies&rdquo; tab &rarr; CSV.<br>'
-+'2. Check the spreadsheet is also shared as &ldquo;Anyone with the link &ndash; Viewer&rdquo;,<br>'
-+'&nbsp;&nbsp;&nbsp;&nbsp;which is what the live-sheet fallback needs.<br>'
-+'<span style="color:#607d8b">('+esc(err.message)+')</span></small>', false, true);
+cachedSig=freshSig||cachedSig;
+return {unchanged};
 }
+
+/* The confirm pass. `meta` is what the edge said about the copy this visit
+   painted from; when it was fresh enough (or came straight from Google) there
+   is nothing to do. Otherwise ask the probe again, this time insisting on a
+   copy no older than __edge.FRESH_S, and only if THAT disagrees with the grid
+   pull the full sheet and swap it in. No status line either way. */
+var confirming=false;   // var, not let: confirmLater() is called from above this line
+function confirmLater(meta){
+if(confirming || !window.__edge || !window.__edge.isOld(meta)) return;
+confirming=true;
+idle(async()=>{
+try{
+const rows=await window.__confirmProbe();
+if(probeSigFromRows(rows)===probeSigFromMovies(movies)){
+console.info('[collection] confirm pass: unchanged');
+return;
+}
+console.info('[collection] confirm pass: CHANGED, catching up');
+const d=await window.__confirmCsv();
+await applyFull(d, true);
+}catch(e){
+console.warn('[collection] confirm pass failed (keeping what is on screen):', e && e.message);
+}
+});
 }
 })();
 </script>

@@ -88,8 +88,68 @@
   }
 })();
 </script>
+<script>
+/* ============ EDGE SHEET CACHE (functions/sheet.js) ============
+   Shared by every page. Same block in each file -- keep them in step.
+
+   Google takes 0.5-14s to answer a sheet request and forbids CDNs from keeping
+   a copy, which is why every page used to show its cached grid and then sit
+   on "Checking for changes..." for several seconds. /sheet keeps that copy at
+   Cloudflare's edge instead.
+
+     __edge.fast(url)     -> the edge's copy, however old, in ~50ms
+     __edge.confirm(url)  -> a copy no older than FRESH_S, waiting on Google
+                             only if the edge has nothing that recent
+     __edge.isOld(r)      -> true when a fast answer still needs confirming
+
+   Each resolves to {res, age, how}: `res` is the fetch Response (body unread,
+   so callers can stream it), `age` its age in seconds, `how` where it came
+   from. The pages paint the fast answer straight away and run the confirm
+   pass silently behind it, so the data is still live -- it just no longer
+   holds anything up.
+
+   If /sheet is missing (local preview, a host without Functions) or fails,
+   this goes straight to Google exactly as the pages always did. */
+(function(){
+  var FRESH_S=60;
+  var off=false;
+  function opts(signal){ var o={credentials:'omit'}; if(signal) o.signal=signal; return o; }
+  function direct(url, signal){
+    return fetch(url,opts(signal)).then(function(r){
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      return {res:r, age:0, how:'DIRECT'};
+    });
+  }
+  function viaEdge(url, fresh, signal){
+    if(off) return direct(url, signal);
+    var u='/sheet?u='+encodeURIComponent(url)+(fresh==null?'':'&fresh='+fresh);
+    return fetch(u,opts(signal)).then(function(r){
+      var how=r.headers.get('X-Sheet-Cache');
+      /* No header means this was not the function answering (a 404 page, a
+         static server) -- stop asking it for the rest of this visit. */
+      if(!how){ off=true; return direct(url, signal); }
+      if(!r.ok) throw new Error('sheet HTTP '+r.status);
+      return {res:r, age:+(r.headers.get('X-Sheet-Age')||0), how:how};
+    }).catch(function(e){
+      if(off || (e && e.name==='AbortError')) throw e;
+      try{ console.warn('[edge] /sheet unavailable, using Google directly:', (e&&e.message)||e); }catch(x){}
+      return direct(url, signal);
+    });
+  }
+  window.__edge={
+    FRESH_S:FRESH_S,
+    fast:function(url,signal){ return viaEdge(url,null,signal); },
+    confirm:function(url,maxAge,signal){ return viaEdge(url, maxAge==null?FRESH_S:maxAge, signal); },
+    isOld:function(r){ return !!r && (r.age>FRESH_S || r.how==='ERROR-STALE'); },
+    text:function(p){ return p.then(function(r){ return r.res.text().then(function(t){ r.text=t; return r; }); }); }
+  };
+})();
+</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Tells the browser the page is dark BEFORE any CSS is parsed, so the very
+     first frame is dark instead of a white flash that repaints to #171C20. -->
+<meta name="color-scheme" content="dark">
 <title>Donny's Movies Anywhere Compare</title>
 <!-- Warm up every origin the page talks to, so the DNS/TLS handshakes are
      already done by the time the real requests fire. -->
@@ -116,10 +176,12 @@ html,body{margin:0;padding:0;background:#171C20}
   font:700 12.5px 'Poppins','Segoe UI',system-ui,sans-serif;letter-spacing:.5px;color:#cfd8dc;
   box-shadow:0 4px 16px rgba(0,0,0,.55);max-width:min(92vw,520px)}
 #status.hidden{display:none}
-#status.err{background:#b71c1c;color:#fff;border-radius:10px}
+#status.err{background:#b71c1c;color:#fff;border-radius:10px;text-align:left}
+#status small{font-weight:700;line-height:1.6;display:block}
 .spin{width:15px;height:15px;border:2px solid rgba(255,255,255,.22);border-top-color:#fff;
   border-radius:50%;animation:sp .8s linear infinite;flex:none}
 @keyframes sp{to{transform:rotate(360deg)}}
+/* Placeholder tiles, so the grid reads as "filling in" instead of "broken". */
 .skel{border-radius:6px;height:0;padding-bottom:150%;background:#1f262b;
   animation:ddpulse 1.5s ease-in-out infinite}
 @keyframes ddpulse{0%,100%{opacity:.5}50%{opacity:.92}}
@@ -130,11 +192,11 @@ html,body{margin:0;padding:0;background:#171C20}
 </style>
 <script>
 /* ============ EARLY DATA LOADER ============
-   Starts the sheet download before the CSS, the fonts and the main script are
-   even parsed.
+   Starts BOTH sheet downloads before the CSS, the fonts and the main script are
+   even parsed -- the deploy-time mirror and the live sheet, side by side.
    WHY THE PAGE FELT SLOW
    The data here is tiny -- about 11KB gzipped for ~130 titles -- so the wait
-   was never really the download. Two other things caused it:
+   was never really the download. Three other things caused it:
    1. #status was a full-page cover (position:absolute; inset:0 with a solid
       background) sitting on top of everything until the rows landed. The
       sidebar, the pager and the grid all existed the whole time; nobody could
@@ -146,6 +208,14 @@ html,body{margin:0;padding:0;background:#171C20}
       F is the Title column. `select *` (rather than naming columns) is
       deliberate -- the page reads cells BY POSITION, so pruning columns would
       shift every index and break the whole thing.
+   3. The live request used to wait its turn: this block fetched only the
+      mirror, and the gviz request was not sent until the main script had
+      painted that mirror -- so Google's 0.5-14s TTFB was paid strictly AFTER
+      the mirror's, on every visit, cache or no cache. Both now leave here at
+      once, and the live one goes through the edge cache (__edge.fast, defined
+      just above), which normally answers in ~50ms from Cloudflare's copy.
+      The main script races the two for the first paint when it has no local
+      cache, and settles on the live answer either way.
    If the filtered query is ever rejected, it retries unfiltered, so a schema
    change can't take the page down.                                          */
 (function(){
@@ -156,14 +226,9 @@ html,body{margin:0;padding:0;background:#171C20}
   // silently drops the first movie. If you ever add a banner row above the
   // header, bump this back to 2 to match.
   var headers=1;
-  /* OPTIONAL, and the single biggest win left on this page.
-     gviz runs Google's query engine over the whole workbook before it answers,
-     which is most of the wait. A published CSV is a static CDN file with no
-     engine in front of it. To turn it on:
-        File > Share > Publish to web > the "Need to Add" tab > CSV
-     then paste the resulting link (it contains /d/e/2PACX-...&output=csv) here.
-     Leave '' and everything keeps working exactly as it does now via gviz.
-     NOTE: a published CSV can lag live edits by a few minutes. */
+  /* The deploy-time mirror of the "Need to Add" tab. Used ONLY to put
+     something on screen on a first visit (and as the very last fallback when
+     every live route has failed) -- see "THE LIVE SHEET, always" below. */
   var CSV_URL = '/mirror/ma-compare.csv';
 /* Was the published Google CSV below. That endpoint answers
    "Cache-Control: private, max-age=300" and is regenerated per request, so no
@@ -182,13 +247,16 @@ html,body{margin:0;padding:0;background:#171C20}
   emit({stage:'connect'});
   try{ window.__MA_EXP = +(localStorage.getItem('ma_bytes')||0) || 0; }catch(e){ window.__MA_EXP = 0; }
   /* Reads a response as a stream so the bar shows real bytes rather than a
-     guess, then hands back the full text. */
+     guess, then hands back the full text. Only the LIVE request reports
+     progress: with two downloads in flight at once, summing them into one bar
+     would make it jump about, and the live one is what the page settles on. */
   function readWithProgress(res){
     if(!res.body || !res.body.getReader) return res.text();
     var reader=res.body.getReader(), dec=new TextDecoder('utf-8'), out='', bytes=0;
     return (function pump(){
       return reader.read().then(function(r){
         if(r.done){
+          out+=dec.decode();
           try{ localStorage.setItem('ma_bytes', String(bytes)); }catch(e){}
           return out;
         }
@@ -199,39 +267,54 @@ html,body{margin:0;padding:0;background:#171C20}
       });
     })();
   }
-  function get(url){
-    return fetch(url).then(function(r){
-      if(!r.ok) throw new Error('HTTP '+r.status);
-      return readWithProgress(r);
+  /* One live attempt through the edge. Resolves to {text, age, how, url}: the
+     edge's age/how travel with the text so the main script can decide whether
+     a silent confirm pass is owed (__edge.isOld), and `url` so that pass asks
+     for exactly the query that was painted.
+     gviz reports a rejected query with HTTP 200 and status:"error" in the
+     body, so that is checked here too -- otherwise the unfiltered retry below
+     would never fire. The marker sits in the first ~100 bytes. */
+  function live(url){
+    return window.__edge.fast(url).then(function(r){
+      return readWithProgress(r.res).then(function(t){
+        if(/"status"\s*:\s*"error"/.test(t.slice(0,800))) throw new Error('sheet rejected the query');
+        return {text:t, age:r.age, how:r.how, url:url};
+      });
     });
   }
-  var early=null;
+  var early=null, liveP=null;
   try{
+    // The mirror: a single static file, no row filter, no retry ladder.
     if(CSV_URL){
-      // A published CSV is a single static file -- no row filter, no
-      // "unfiltered tab" retry to fall back to. If it fails, the main
-      // script's loadSheet() will still fall back to gviz on its own.
-      early=get(CSV_URL);
-      early.catch(function(){});
-    }else{
-      // Filtered first; if Google rejects the query, fall back to the plain tab.
-      early=get(base+rowFilter+'&tqx=out:json').catch(function(){
-        emit({stage:'retry'});
-        return get(base+'&tqx=out:json');
+      early=fetch(CSV_URL).then(function(r){
+        if(!r.ok) throw new Error('HTTP '+r.status);
+        return r.text();
       });
-      early.catch(function(){});   // swallow here; handled properly later
+      early.catch(function(){});
+    }
+  }catch(e){}
+  try{
+    // The live sheet, in parallel. Filtered first; if Google rejects the
+    // query, fall back to the plain tab (still through the edge).
+    if(window.__edge){
+      liveP=live(base+rowFilter+'&tqx=out:json').catch(function(e){
+        if(e && e.name==='AbortError') throw e;
+        emit({stage:'retry'});
+        return live(base+'&tqx=out:json');
+      });
+      liveP.catch(function(){});   // swallow here; handled properly later
     }
   }catch(e){}
   window.__SHEET={id:id, gid:gid, headers:headers, url:base, urlFiltered:base+rowFilter,
-                  csvUrl:CSV_URL, early:early};
+                  csvUrl:CSV_URL, early:early, live:liveP};
 })();
 </script>
 <!-- PERF: load the webfonts without blocking first paint. media="print"
      makes the stylesheet non-render-blocking; onload flips it live. -->
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@700&display=swap"
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;700&display=swap"
       rel="stylesheet" media="print" onload="this.media='all'">
 <noscript>
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;700&display=swap" rel="stylesheet">
 </noscript>
 <style>
 :root{
@@ -242,6 +325,9 @@ html,body{margin:0;padding:0;background:#171C20}
   --bar:#8a9096;
   --bar-text:#ffffff;
   --accent:#007BC4;
+  /* Same hue, lifted, for the places where --accent has to carry meaning as a
+     thin line or small text on the dark sidebar rather than as a filled pill. */
+  --accent-bright:#3AA0E3;
   --track:#4a565e;
   --track-fill:#eceff1;
 }
@@ -267,12 +353,20 @@ body{
 }
 #sidebar::-webkit-scrollbar{width:6px}
 #sidebar::-webkit-scrollbar-thumb{background:#4a565e;border-radius:3px}
+/* Every colour here is declared outright (same as the Collection page). With
+   color-scheme:dark on the page, a field that leans on the browser's default
+   form-control white gets flipped to a dark grey, leaving dark text and a dark
+   caret on a dark box. Never let a control's legibility depend on a UA default. */
 #searchBox{
-  width:100%;padding:9px 12px;border:none;border-radius:6px;
-  font:700 13.5px 'Poppins',sans-serif;color:var(--pill-text);
+  width:100%;padding:9px 12px;border:1px solid #4a565e;border-radius:6px;
+  background:#263238;
+  font:700 13.5px 'Poppins',sans-serif;color:#ffffff;
+  caret-color:#ffffff;
   margin-bottom:12px;outline:none;
 }
-#searchBox::placeholder{color:#78909c}
+#searchBox::placeholder{color:#90a4ae}
+/* outline:none removes the focus ring, so the field draws its own. */
+#searchBox:focus{border-color:#eceff1}
 .facet{position:relative;margin-bottom:10px}
 .facet-btn{
   width:100%;display:flex;align-items:center;justify-content:space-between;
@@ -295,10 +389,15 @@ body{
   padding:8px;color:var(--pill-text);
 }
 .facet.open .facet-panel{display:block}
+/* On a white panel, so it is pinned to the light scheme and given its colours
+   explicitly -- the inverse of the #searchBox trap above: with color-scheme:dark
+   inherited from the page it would render as a dark box inside a white popover. */
 .facet-panel input.opt-search{
   width:100%;padding:6px 9px;margin-bottom:6px;
   border:1px solid #cfd8dc;border-radius:5px;font:700 12.5px 'Poppins',sans-serif;outline:none;
+  color-scheme:light;background:#ffffff;color:var(--pill-text);
 }
+.facet-panel input.opt-search::placeholder{color:#90a4ae}
 .opt-list{max-height:240px;overflow-y:auto;scrollbar-width:thin}
 .opt-list label{
   display:flex;align-items:center;gap:8px;
@@ -314,12 +413,48 @@ body{
   font:700 11px 'Poppins',sans-serif;letter-spacing:1px;text-transform:uppercase;color:#546e7a;
 }
 .facet-clear:hover{background:#cfd8dc}
-/* sort */
-#sortWrap select{
-  width:100%;background:var(--pill);color:var(--pill-text);
-  border:none;border-radius:8px;padding:10px 12px;cursor:pointer;
-  font:700 12.5px 'Poppins',sans-serif;letter-spacing:1.2px;text-transform:uppercase;
-  margin-bottom:10px;outline:none;
+/* Sidebar controls are inert until the sheet has been indexed -- facets and
+   sliders built off nothing would offer choices that are about to change. */
+#sidebar.pending #facets,#sidebar.pending #sliders{opacity:.45;pointer-events:none}
+/* sort -- the same control as the Collection page.
+   The native <select> is kept for state (and for keyboard/AT users) but is
+   never painted: Chrome on Windows draws a select's dropdown list with the OS
+   menu font, so the options came out in Segoe UI no matter what font-family
+   the select carried. The list below is plain markup, so it honours Poppins. */
+#sortWrap{position:relative;margin-bottom:10px}
+#sortSel{
+  position:absolute;width:1px;height:1px;padding:0;margin:0;border:0;
+  opacity:0;pointer-events:none;clip:rect(0 0 0 0);overflow:hidden;
+}
+#sortBtn{
+  width:100%;display:flex;align-items:center;justify-content:space-between;gap:8px;
+  background:var(--pill);color:var(--pill-text);text-align:left;
+  border:none;border-radius:8px;padding:5px 6px;cursor:pointer;
+  font:700 12.5px 'Poppins','Segoe UI',sans-serif;letter-spacing:1.2px;text-transform:uppercase;
+  outline:none;transition:box-shadow .15s;
+}
+#sortBtn:hover{box-shadow:0 0 0 2px rgba(255,255,255,.25)}
+#sortBtn .icon{font-size:13px;color:#607d8b;transition:transform .2s;flex:none}
+#sortWrap.open #sortBtn .icon{transform:rotate(180deg)}
+#sortLabel{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+#sortPanel{
+  display:none;position:absolute;left:0;right:0;top:calc(100% + 5px);z-index:60;
+  background:#fff;border-radius:8px;box-shadow:0 8px 22px rgba(0,0,0,.45);
+  padding:6px;max-height:340px;overflow-y:auto;scrollbar-width:thin;
+}
+#sortWrap.open #sortPanel{display:block}
+#sortPanel button{
+  display:block;width:100%;text-align:left;background:none;border:none;cursor:pointer;
+  padding:7px 9px;border-radius:5px;color:var(--pill-text);
+  font:700 11.5px 'Poppins','Segoe UI',sans-serif;letter-spacing:.4px;
+  text-transform:uppercase;white-space:nowrap;
+}
+#sortPanel button:hover{background:#eceff1}
+#sortPanel button[aria-selected="true"]{background:var(--accent);color:#fff}
+/* Shown at the top of a facet panel that needs a word of explanation. */
+.facet-hint{
+  font:700 10px 'Poppins','Segoe UI',sans-serif;color:#78909c;
+  letter-spacing:.2px;line-height:1.45;padding:0 2px 7px;
 }
 /* sliders */
 .slider-group{margin:11px 2px 3px;text-align:center}
@@ -353,16 +488,31 @@ body{
   color:#eceff1;font:700 13px 'Poppins',sans-serif;text-align:center;
   width:56px;padding:1px 2px;outline:none;color-scheme:dark;cursor:text;
 }
+/* An adjusted slider goes blue -- title, fill, both thumbs and both value
+   fields -- so which ranges are narrowing the wall is one glance, the way the
+   count badge marks an active facet. --accent-bright rather than --accent: the
+   fill is a 3px line on a #4a565e rail, and #007BC4 is too close to that grey
+   in lightness to read as blue. Same rules as the Collection page. */
+.slider-group.active .sl-title{color:var(--accent-bright)}
+.slider-group.active .fill{background:var(--accent-bright)}
+.slider-group.active input[type=range]::-webkit-slider-thumb{background:var(--accent-bright)}
+.slider-group.active input[type=range]::-moz-range-thumb{background:var(--accent-bright)}
+.slider-group.active .sl-vals input{color:var(--accent-bright);
+  border-bottom-color:var(--accent-bright)}
 .sl-vals input:focus{border-bottom-color:#fff;background:rgba(255,255,255,.08)}
 .sl-vals input::-webkit-outer-spin-button,
 .sl-vals input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
 .sl-vals input[type=number]{-moz-appearance:textfield;appearance:textfield}
+/* #157A60 rather than the lighter #1C9E7D: white on #1C9E7D at 11px bold is
+   3.37:1, under the 4.5:1 normal-size text needs; #157A60 clears it at 5.27:1.
+   Matches the Collection page. */
 #resetAll{
-  margin-top:22px;width:100%;padding:5px;border:1px solid #4a565e;border-radius:8px;
-  background:transparent;color:#b0bec5;cursor:pointer;
+  margin-top:22px;width:100%;padding:5px;border:1px solid #157A60;border-radius:8px;
+  background:#157A60;color:#ffffff;cursor:pointer;
   font:700 11px 'Poppins',sans-serif;letter-spacing:1.5px;text-transform:uppercase;
 }
-#resetAll:hover{border-color:#eceff1;color:#fff}
+#resetAll:hover{background:#168264;border-color:#168264;color:#ffffff;
+  box-shadow:0 0 0 2px rgba(255,255,255,.25)}
 /* collapse control (desktop only) */
 #sbCollapse{
   width:100%;margin-bottom:10px;padding:8px;border:1px solid #4a565e;border-radius:8px;
@@ -402,6 +552,21 @@ body{
   flex:1;text-align:center;
   font:700 34px 'Poppins',sans-serif;letter-spacing:2px;color:var(--bar-text);
 }
+/* Every active facet pick, shown above the wall so it is still obvious what
+   the grid is narrowed to once the facet panel is shut or the whole sidebar is
+   collapsed. Same markup and CSS as the Collection page. */
+#chipRow{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
+#chipRow:empty{display:none}
+#chipRow .chip{display:flex;align-items:center;gap:7px;background:var(--accent);color:#fff;
+  border-radius:16px;padding:5px 12px;font:700 12px 'Poppins',sans-serif;letter-spacing:.5px;
+  max-width:100%}
+#chipRow .chip .k{font-size:10px;text-transform:uppercase;letter-spacing:1px;opacity:.72;
+  flex:0 0 auto}
+#chipRow .chip .v{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+#chipRow .chip button{background:none;border:none;color:#fff;cursor:pointer;font-size:13px;
+  line-height:1;flex:0 0 auto;padding:0;opacity:.85}
+#chipRow .chip button:hover{opacity:1}
 #grid{
   flex:1;min-height:0;overflow-y:auto;
   display:grid;
@@ -612,20 +777,28 @@ body{padding-top:var(--dd-nav-h);box-sizing:border-box}
 <div id="topbar" class="indet"><div id="topfill"></div></div>
 <div id="app">
   <button id="mobileFilterBtn">&#9776; Filters &amp; search</button>
-  <aside id="sidebar">
+  <aside id="sidebar" class="pending">
     <button id="sbCollapse">&#10094; Hide filters</button>
     <input id="searchBox" type="search" placeholder="Title search" autocomplete="off">
     <div id="sortWrap">
+      <!-- No date-added column on this tab, so no Recently/First Added. Every
+           graded sort comes as a high/low pair; data-short is the arrow form the
+           closed button shows (see the sort IIFE in the script). -->
       <select id="sortSel" title="Sort titles">
-        <option value="sortTitle|asc" selected>Sort: Title A → Z</option>
-        <option value="sortTitle|desc">Sort: Title Z → A</option>
-        <option value="price|asc">Sort: Best price (low)</option>
-        <option value="price|desc">Sort: Best price (high)</option>
-        <option value="tomato|desc">Sort: Rotten Tomatoes (high)</option>
-        <option value="imdb|desc">Sort: IMDb (high)</option>
+        <option value="sortTitle|asc" selected>Sort: Title A &rarr; Z</option>
+        <option value="sortTitle|desc">Sort: Title Z &rarr; A</option>
+        <option value="price|asc" data-short="Sort: Best Price &uarr;">Sort: Best Price (low)</option>
+        <option value="price|desc" data-short="Sort: Best Price &darr;">Sort: Best Price (high)</option>
         <option value="year|desc">Sort: Year (newest)</option>
         <option value="year|asc">Sort: Year (oldest)</option>
+        <option value="imdb|desc" data-short="Sort: IMDB Rating &darr;">Sort: IMDB Rating (high)</option>
+        <option value="imdb|asc" data-short="Sort: IMDB Rating &uarr;">Sort: IMDB Rating (low)</option>
+        <option value="tomato|desc" data-short="Sort: Tomato Meter &darr;">Sort: Tomato Meter (high)</option>
+        <option value="tomato|asc" data-short="Sort: Tomato Meter &uarr;">Sort: Tomato Meter (low)</option>
       </select>
+      <button id="sortBtn" type="button" aria-haspopup="listbox" aria-expanded="false"
+              title="Sort titles"><span id="sortLabel">Sort: Title A &rarr; Z</span><span class="icon">&#9662;</span></button>
+      <div id="sortPanel" role="listbox" aria-label="Sort titles"></div>
     </div>
     <div id="facets"></div>
     <div id="sliders"></div>
@@ -638,12 +811,13 @@ body{padding-top:var(--dd-nav-h);box-sizing:border-box}
       <div class="pg-label" id="pgLabel">–</div>
       <button class="pg-arrow" id="nextPg" title="Next page">&#10095;</button>
     </div>
+    <div id="chipRow"></div>
     <div id="grid"></div>
     <script>
     /* Placeholder tiles, written during HTML parse so the grid reads as
        "filling in" rather than as a dead rectangle. The first renderPage()
        replaces them wholesale. */
-    (function(){var g=document.getElementById('grid'),h='',i=0;for(;i<60;i++)h+='<div class="skel"></div>';g.innerHTML=h;})();
+    (function(){var g=document.getElementById('grid'),h='',i=0;for(;i<72;i++)h+='<div class="skel"></div>';g.innerHTML=h;})();
     </script>
 <!-- Second pager, parked at the foot of the wall and revealed once it has been
      scrolled to its end; see #pagerBottom in the CSS above and the
@@ -671,14 +845,26 @@ const GID = window.__SHEET.gid;
 const MA_BASE = 'https://www.moviesanywhere.com';
 // PERF: parsed rows are cached so a revisit renders instantly while a fresh
 // copy downloads in the background; if the data changed, the grid silently
-// updates (keeping your filters, sliders, and page).
+// updates (keeping your filters, sliders, page and scroll).
 //
-// This uses localStorage now rather than sessionStorage. sessionStorage is
-// wiped the moment the tab closes, so it only ever helped a reload -- every
-// real visit was still a cold wait. localStorage survives, which makes coming
-// back to the page instant. ~130 rows is a few tens of KB, well inside quota.
-const CACHE_KEY = 'maCompare:v2:' + SHEET_ID + ':' + GID;
-const CACHE_TTL = 6 * 60 * 60 * 1000;   // 6h; fresh data still loads behind it
+// The cache lives in IndexedDB now, in the same database the Collection page
+// uses ('dd-cache' / store 'kv'), under a key of its own. It used to be
+// localStorage ('maCompare:v2:...', 6h): that is synchronous, so the read and
+// the JSON.stringify of every write ran on the main thread, and its ~5MB quota
+// is shared with every other page on the origin. The old key is still read
+// ONCE as a fallback so nobody's first visit after this change is a cold one,
+// and removed after the first successful IndexedDB write so there are never
+// two copies.
+//
+// TTL for PAINTING from it is a week rather than 6h: the live sheet is always
+// fetched behind it, so an old cache only ever means "the grid you saw last
+// time, for the ~50ms until the edge answers", never "stale data that sticks".
+const IDB_NAME  = 'dd-cache', IDB_STORE = 'kv';
+const IDB_KEY   = 'maCompare:v3:' + SHEET_ID + ':' + GID;
+const LEGACY_CACHE_KEY = 'maCompare:v2:' + SHEET_ID + ':' + GID;
+const CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
+// Sidebar collapsed/expanded, remembered per page (the Collection page uses dd_sb).
+const SB_KEY = 'ma_sb';
 // Fixed column positions (0-based, A=0), confirmed directly against the sheet.
 // Column A is a small Google-cached =IMAGE() thumbnail (not link text), so the
 // outbound link is built from the MA ID page path in column P instead. Columns
@@ -731,6 +917,13 @@ const SLIDERS = [
   {label:'IMDb',           key:'imdb',   min:0, max:10,  step:0.1},
 ];
 const $=s=>document.querySelector(s);
+// One reusable collator for every A -> Z ordering on the page (facet lists,
+// title sorts, tie-breaks). localeCompare inside a sort rebuilds the collation
+// table on every comparison; numeric:true files "2 Fast" before "10 Things".
+const collator = new Intl.Collator(undefined,{sensitivity:'base',numeric:true});
+// Deferred work that must still happen on a page busy streaming posters, which
+// may never go truly idle -- hence the timeout. Same helper as the Collection page.
+const idle = cb => (window.requestIdleCallback||(f=>setTimeout(f,1)))(cb,{timeout:600});
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let items=[], filtered=[], page=0;
 const selected={}, rangeState={}, facetValues={};
@@ -742,13 +935,15 @@ function toast(msg,isErr=false){
 /* ---------- STATUS + TOP PROGRESS BAR ----------
    #status is a chip at the top now, not a full-page cover, so the sidebar,
    pager and grid are visible and usable from the first frame. */
-function setStatus(txt, spinning=true, isErr=false){
+// innerHTML, like the Collection page, so an error can carry a <small> line.
+// Anything from outside (an error message) must go through esc() first.
+function setStatus(html, spinning=true, isErr=false){
   const s=$('#status');
-  if(txt===null){ s.classList.add('hidden'); return; }
+  if(html===null){ s.classList.add('hidden'); return; }
   s.classList.remove('hidden');
   s.classList.toggle('err', isErr);
   s.querySelector('.spin').style.display = spinning ? '' : 'none';
-  $('#statusTxt').textContent = txt;
+  $('#statusTxt').innerHTML = html;
 }
 const topbarEl=$('#topbar'), barFill=$('#topfill');
 let barPct=0;
@@ -762,23 +957,28 @@ function setBar(p){
 }
 function barDone(){ topbarEl.classList.remove('indet'); barFill.style.width='100%'; topbarEl.classList.add('done'); }
 const fmtKB = b => b<1048576 ? Math.round(b/1024)+' KB' : (b/1048576).toFixed(1)+' MB';
+// True from the moment the grid shows real titles (cache, mirror or live).
+// From then on the status chip stays away: the visitor is looking at a full
+// wall, and "Checking for updates..." over it is exactly the visible, slow-
+// feeling refresh this page is trying not to have.
+let painted=false;
 window.__MA_PROG(o=>{
-  if(o.stage==='connect'){ setStatus('Connecting to the sheet…'); setBar(null); }
+  if(o.stage==='connect'){ if(!painted) setStatus('Connecting to the sheet…'); setBar(null); }
   else if(o.stage==='download'){
-    setStatus('Loading titles… '+fmtKB(o.bytes));
+    if(!painted) setStatus('Loading titles… '+fmtKB(o.bytes));
     setBar(o.total ? Math.min(0.75, o.bytes/o.total*0.75) : null);
   }
-  else if(o.stage==='retry'){ setStatus('Retrying without the row filter…'); setBar(null); }
+  else if(o.stage==='retry'){ if(!painted) setStatus('Retrying without the row filter…'); setBar(null); }
 });
 /* ---------- LOAD DATA FROM GOOGLE SHEET ----------
-   The <head> script has (usually) already started this download; fetchGviz
-   consumes that in-flight response first. If a plain fetch is blocked by
-   CORS, we retry as JSONP (a <script> tag with a callback), which works for
-   any public sheet. */
+   The <head> script has already started the live request through the edge
+   cache (window.__SHEET.live); fetchGviz consumes that in-flight answer first.
+   If a plain fetch is blocked by CORS, we retry as JSONP (a <script> tag with
+   a callback), which works for any public sheet but cannot go through /sheet. */
 function gvizUrl(){
   return window.__SHEET.urlFiltered || window.__SHEET.url;
 }
-/* ---------- CSV LOADING (optional fast path) ----------
+/* ---------- CSV LOADING (first-paint seed + last-resort fallback) ----------
    Turns a published-CSV export into the same {table:{rows:[{c:[{v},...]}]}}
    shape gviz returns, so parseRows() below doesn't need to know which
    transport actually fetched the data. */
@@ -811,11 +1011,13 @@ function csvRowsToGvizJson(rows, headerRows){
 async function fetchCsv(){
   const url=window.__SHEET.csvUrl;
   let txt=null;
-  // Reuse the request the <head> kicked off, if it's still available.
+  /* Reuse the mirror request the <head> kicked off. NOT one-shot any more:
+     the first-paint race and the last-resort fallback in loadSheet() can both
+     want it, and a settled promise hands the same text to both for free. A
+     failed one is dropped so the fallback really does try again. */
   const early=window.__SHEET && window.__SHEET.early;
   if(early){
-    window.__SHEET.early=null;           // one-shot; refreshes re-fetch
-    try{ txt=await early; }catch(e){ txt=null; }
+    try{ txt=await early; }catch(e){ txt=null; window.__SHEET.early=null; }
   }
   if(txt==null){
     const res=await fetch(url);
@@ -826,25 +1028,31 @@ async function fetchCsv(){
   if(!json.table.rows.length) throw new Error('CSV had no data rows');
   return json;
 }
-async function fetchGviz(url){
-  let txt=null;
-  /* Reuse the request the <head> kicked off -- but ONLY when it was a gviz
-     request. With a mirror configured it holds CSV text, and JSON.parse would
-     choke on it and burn a fallback rung for nothing. */
-  const early=(window.__SHEET && !window.__SHEET.csvUrl) ? window.__SHEET.early : null;
-  if(early){
-    window.__SHEET.early=null;           // one-shot; refreshes re-fetch
-    try{ txt=await early; }catch(e){ txt=null; }
-  }
-  if(txt==null){
-    const res=await fetch(url+'&tqx=out:json');
-    if(!res.ok) throw new Error('HTTP '+res.status);
-    txt=await res.text();
-  }
+function parseGvizText(txt){
   const json=JSON.parse(txt.substring(txt.indexOf('(')+1, txt.lastIndexOf(')')));
   if(json && json.status==='error')
     throw new Error((json.errors&&json.errors[0]&&json.errors[0].detailed_message)||'sheet error');
+  if(!json || !json.table) throw new Error('sheet answered without a table');
   return json;
+}
+/* -> {json, meta}. meta = {age, how, url}: how old the edge's copy was, where
+   it came from, and the exact URL asked for -- the silent confirm pass needs
+   all three (see confirmLater). */
+async function fetchGviz(url){
+  /* The <head> request already ran the whole edge ladder -- the filtered
+     query, then the plain tab if Google rejected it. If that failed there is
+     no point sending the same two requests again: go straight on to JSONP. */
+  const head=window.__SHEET && window.__SHEET.live;
+  if(head){
+    window.__SHEET.live=null;            // one-shot; refreshes re-fetch
+    const r=await head;
+    return {json:parseGvizText(r.text), meta:r};
+  }
+  const full=url+'&tqx=out:json';
+  const r=window.__edge ? await window.__edge.fast(full)
+                        : await fetch(full).then(res=>{ if(!res.ok) throw new Error('HTTP '+res.status); return {res, age:0, how:'DIRECT'}; });
+  const text=await r.res.text();
+  return {json:parseGvizText(text), meta:{age:r.age, how:r.how, url:full}};
 }
 function jsonpGviz(url){
   return new Promise((resolve,reject)=>{
@@ -868,19 +1076,23 @@ function jsonpGviz(url){
    the page show whatever the sheet said at the last deploy. With deploys being
    manual that could be hours or days stale, which is exactly what it looked
    like. The mirror is still used, but only to put something on screen fast
-   (see the seed in the init below); what the page settles on always comes from
-   the sheet itself. */
+   (see the first-paint race in the boot below); what the page settles on
+   always comes from the sheet itself.
+   Ladder: edge (filtered, then plain -- started in <head>) -> JSONP filtered
+   -> JSONP plain -> the mirror. JSONP answers come straight from Google, so
+   they are as fresh as it gets (age 0, nothing to confirm). */
 async function loadSheet(){
   try{ return await fetchGviz(gvizUrl()); }
   catch(e1){
-    // JSONP on the filtered query, then on the plain tab.
-    try{ return await jsonpGviz(gvizUrl()); }
+    console.warn('[ma] edge/gviz fetch failed, trying JSONP:', e1 && e1.message);
+    try{ return {json:await jsonpGviz(gvizUrl()), meta:{age:0, how:'JSONP'}}; }
     catch(e2){
-      try{ return await jsonpGviz(window.__SHEET.url); }
+      try{ return {json:await jsonpGviz(window.__SHEET.url), meta:{age:0, how:'JSONP'}}; }
       catch(e3){
         /* Every live route failed (offline, sheet unshared, network filter).
-           The mirror is stale by definition, but stale beats an empty page. */
-        if(window.__SHEET.csvUrl) return await fetchCsv();
+           The mirror is stale by definition, but stale beats an empty page.
+           Flagged so the boot does not cache it as if it were live. */
+        if(window.__SHEET.csvUrl) return {json:await fetchCsv(), meta:{age:0, how:'MIRROR', mirror:true}};
         throw e3;
       }
     }
@@ -1002,9 +1214,10 @@ function parseRows(json){
   });
   return out;
 }
+// -> {rows, meta}; meta is what the edge said about the copy (see loadSheet).
 async function loadAll(){
-  const json=await loadSheet();
-  return parseRows(json);
+  const got=await loadSheet();
+  return {rows:parseRows(got.json), meta:got.meta};
 }
 /* ---------- FACET UI ---------- */
 /* Option lists are counted off the titles currently on screen, the same rule
@@ -1025,9 +1238,12 @@ function countFacets(rows,list){
         counts.set(v,(counts.get(v)||0)+1);
       });
     });
+    // Price bands keep their natural $ low -> high order; everything else is
+    // A -> Z through the one shared collator (numeric, case/accent-blind), the
+    // same ordering the Collection page uses.
     facetValues[f.key]=[...counts.entries()].sort(f.numeric
       ? (a,b)=>(parseFloat(a[0].replace(/[^0-9.]/g,''))||0)-(parseFloat(b[0].replace(/[^0-9.]/g,''))||0)
-      : (a,b)=>a[0].localeCompare(b[0]));
+      : (a,b)=>collator.compare(a[0],b[0]));
   });
 }
 // The whole-catalog pass, run before every build: buildFacets() sizes its
@@ -1133,13 +1349,15 @@ function updateBadge(el,key){
   b.style.display=n?'inline-block':'none'; b.textContent=n;
 }
 /* ---------- SLIDERS ---------- */
-// preserve=true keeps the user's current lo/hi (clamped to the possibly
-// new min/max) instead of resetting — used when a background refresh
-// rebuilds the sidebar under the user.
-function buildSliders(preserve){
+/* Every rebuild keeps a range the visitor actually SET (s._active), clamped to
+   the possibly-new min/max; an untouched slider simply takes the new full span.
+   This used to be a `preserve` flag the caller had to remember to pass, and
+   the first-visit mirror -> live swap did not pass it, so a range set during
+   that window snapped back. Same rule as the Collection page's buildSliders. */
+function buildSliders(){
   const host=$('#sliders'); host.innerHTML='';
   SLIDERS.forEach(s=>{
-    const prev=preserve?rangeState[s.key]:null;
+    const prev=s._active && rangeState[s.key] ? rangeState[s.key] : null;
     const vals=items.map(m=>m[s.key]).filter(v=>v!=null);
     if(vals.length){
       s.min=Math.floor(Math.min(s.min,...vals));
@@ -1176,6 +1394,10 @@ function buildSliders(preserve){
       const pct=v=>(v-s.min)/(s.max-s.min)*100;
       fill.style.left=pct(mn)+'%'; fill.style.width=(pct(mx)-pct(mn))+'%';
       vlo.value=mn; vhi.value=mx;
+      /* Deliberately the same test rowMatches() uses to decide whether this
+         slider filters anything, so the blue can never disagree with the grid. */
+      s._active = mn>s.min || mx<s.max;
+      el.classList.toggle('active', s._active);
     };
     paint();
     let t;
@@ -1215,30 +1437,50 @@ function rowMatches(m,q,skipKey){
   }
   return true;
 }
-function applyFilters(){
+/* keepPage: stay on the current page (a background repaint) instead of going
+   back to page 1 (the visitor changed a filter).
+   soft: leave the grid's <img> tags alone if the cards would come out the same
+   (see renderedKey). Both as on the Collection page. */
+function applyFilters(keepPage, soft){
   const q=$('#searchBox').value.trim().toLowerCase();
   filtered=items.filter(m=>rowMatches(m,q,null));
   refreshFacetsNow();
+  renderChips();
   sortItems();
-  page=0;
-  renderPage();
+  if(!keepPage) page=0;
+  renderPage(soft?{ifChanged:true}:null);
 }
+/* Same semantics as the Collection page's sortNow():
+   - direction: only "desc" reverses. This used to read `dir==='asc'?1:-1`, the
+     other way round from every other page, so any value without an explicit
+     direction sorted DESCENDING here and ascending everywhere else;
+   - blanks (no price, no score, no year) go last whichever way you sort;
+   - ties, and rows blank on both sides, fall back to the title A -> Z through
+     the shared collator, so equal prices list in a stable, readable order
+     instead of whatever order the sheet happened to hold them in.
+   Titles compare on sortTitle (leading The/A/An dropped), as this page always
+   has, with the full title as the final tie-break. */
 function sortItems(){
   const [key,dir]=$('#sortSel').value.split('|');
-  const mul=dir==='asc'?1:-1;
+  const mul=dir==='desc'?-1:1;
+  const alphaTitle=(a,b)=>collator.compare(a.sortTitle||a.title||'', b.sortTitle||b.title||'')
+                       || collator.compare(a.title||'', b.title||'');
   filtered.sort((a,b)=>{
-    if(key==='sortTitle'){
-      const x=a.sortTitle,y=b.sortTitle;
-      return mul*(x<y?-1:x>y?1:0);
-    }
+    if(key==='sortTitle') return mul*alphaTitle(a,b);
     const x=a[key], y=b[key];
-    if(x==null&&y==null) return 0;
-    if(x==null) return 1;
+    if(x==null&&y==null) return alphaTitle(a,b);
+    if(x==null) return 1;               // blanks last either direction
     if(y==null) return -1;
+    if(x===y) return alphaTitle(a,b);
     return mul*(x-y);
   });
 }
-function renderPage(){
+// Fingerprint of what is currently in the grid. A background repaint that
+// would produce the same cards is skipped outright -- rewriting innerHTML
+// restarts every <img>, throwing away posters that are already half-loaded.
+// Everything the card markup reads goes into it, and nothing else.
+let renderedKey=null;
+function renderPage(opts){
   const total=filtered.length;
   const pages=Math.max(1,Math.ceil(total/PER_PAGE));
   page=Math.min(page,pages-1);
@@ -1249,10 +1491,16 @@ function renderPage(){
   $('#prevPg').disabled=atFirst;  $('#nextPg').disabled=atLast;
   if(window.syncBottomPager) syncBottomPager(page,pages);
   const grid=$('#grid');
+  const slice=filtered.slice(start,end);
+  let k=page+'|';
+  for(const m of slice) k+=m.url+'\u0001'+m.title+'\u0001'+m.year+'\u0001'+m.img+'\u0001'
+    +m.retailer+'\u0001'+m.price+'\u0001'+m.priceQuality+'\u0002';
+  if(opts && opts.ifChanged && k===renderedKey) return;  // identical -> leave the loading images alone
+  renderedKey=k;
   // The first ~20 covers load eagerly with a high fetch priority so the top of
   // the grid fills straight away; the rest stay lazy. decoding="async" keeps
   // poster decode work off the main thread so scrolling/paging stays smooth.
-  grid.innerHTML=filtered.slice(start,end).map((m,i)=>{
+  grid.innerHTML=slice.map((m,i)=>{
     const tip=`${m.title}${m.year?' ('+m.year+')':''}${m.retailer?' — cheapest at '+m.retailer:''}`;
     return `
     <a class="card" href="${esc(m.url)||'#'}" target="_blank" rel="noopener"
@@ -1344,6 +1592,90 @@ $('#prevPg').addEventListener('click',goPrev);   $('#nextPg').addEventListener('
 let searchTimer;
 $('#searchBox').addEventListener('input',()=>{ clearTimeout(searchTimer); searchTimer=setTimeout(applyFilters,200); });
 $('#sortSel').addEventListener('change',()=>{ sortItems(); page=0; renderPage(); });
+/* The visible sort control -- copied from the Collection page. #sortSel stays
+   the single source of truth: every pick writes to it and fires a real
+   'change', so sortItems() and the listener above need to know nothing about
+   this. It exists because Chrome on Windows draws a <select>'s dropdown list
+   with the OS menu font: the options came out in Segoe UI no matter what
+   font-family the select carried. Plain markup honours Poppins. */
+(function(){
+  const wrap=$('#sortWrap'), sel=$('#sortSel'),
+        btn=$('#sortBtn'), panel=$('#sortPanel'), label=$('#sortLabel');
+  panel.innerHTML=[].map.call(sel.options,o=>
+    `<button type="button" role="option" data-v="${esc(o.value)}"`+
+    ` aria-selected="${o.value===sel.value}">${esc(o.textContent)}</button>`).join('');
+  /* The closed button gives the label about 181px, and the graded sorts run
+     past it with "(high)"/"(low)" spelled out, so they arrived ellipsed with
+     the one word that tells them apart cut off. data-short swaps that suffix
+     for an arrow -- down for highest-first, up for lowest-first. Only the
+     closed button takes it; the panel, the <select> and the tooltip keep the
+     full wording. */
+  const sync=()=>{
+    const cur=sel.options[sel.selectedIndex];
+    label.textContent=cur?(cur.dataset.short||cur.textContent):'';
+    btn.title=cur?cur.textContent:'Sort titles';
+    panel.querySelectorAll('button').forEach(b=>
+      b.setAttribute('aria-selected', String(b.dataset.v===sel.value)));
+  };
+  const close=()=>{ wrap.classList.remove('open'); btn.setAttribute('aria-expanded','false'); };
+  sync();
+  btn.addEventListener('click',e=>{
+    e.stopPropagation();
+    document.querySelectorAll('.facet.open').forEach(x=>x.classList.remove('open'));
+    const open=!wrap.classList.contains('open');
+    wrap.classList.toggle('open',open);
+    btn.setAttribute('aria-expanded',String(open));
+    if(open){ const c=panel.querySelector('[aria-selected="true"]'); if(c) c.scrollIntoView({block:'nearest'}); }
+  });
+  panel.addEventListener('click',e=>{
+    const b=e.target.closest('button[data-v]'); if(!b) return;
+    sel.value=b.dataset.v;
+    sync(); close();
+    sel.dispatchEvent(new Event('change'));
+  });
+  btn.addEventListener('keydown',e=>{ if(e.key==='Escape') close(); });
+  document.addEventListener('keydown',e=>{ if(e.key==='Escape') close(); });
+  document.addEventListener('click',e=>{ if(!e.target.closest('#sortWrap')) close(); });
+  sel.addEventListener('change',sync);
+})();
+/* ---------- ACTIVE-FILTER CHIPS ----------
+   Every facet pick gets a chip above the wall, so what the grid is narrowed to
+   stays obvious with the facet panels shut or the sidebar collapsed. Walks
+   FACETS in order; the facet's name is shown dimmed beside the value so
+   "$9.99" under Vudu Price and "$9.99" under Best Price are told apart. ✕
+   removes just that pick. Same markup and behaviour as the Collection page. */
+function syncFacetUI(key){
+  const el=document.querySelector('.facet[data-key="'+key+'"]');
+  if(!el) return;
+  updateBadge(el,key);
+  el.querySelectorAll('.opt-list input[type=checkbox]').forEach(cb=>{
+    cb.checked=selected[key].has(cb.value);
+  });
+}
+function renderChips(){
+  const row=$('#chipRow');
+  row.innerHTML='';
+  const add=(facet,name)=>{
+    const chip=document.createElement('div');
+    chip.className='chip';
+    chip.innerHTML=`<span class="k">${esc(facet.chip||facet.label)}</span>`
+      +`<span class="v">${esc(name)}</span>`;
+    const x=document.createElement('button');
+    x.type='button';
+    x.title=`Clear ${facet.label}: ${name}`;
+    x.textContent='✕';
+    x.addEventListener('click',()=>{
+      selected[facet.key].delete(name);
+      syncFacetUI(facet.key); applyFilters();     // applyFilters redraws the chips
+    });
+    chip.appendChild(x);
+    row.appendChild(chip);
+  };
+  for(const f of FACETS){
+    const sel=selected[f.key];
+    if(sel) sel.forEach(v=>add(f,v));
+  }
+}
 $('#resetAll').addEventListener('click',()=>{
   $('#searchBox').value='';
   FACETS.forEach(f=>selected[f.key].clear());
@@ -1351,108 +1683,242 @@ $('#resetAll').addEventListener('click',()=>{
   SLIDERS.forEach(s=>s._reset&&s._reset());
   applyFilters();
 });
-$('#mobileFilterBtn').addEventListener('click',()=>document.body.classList.toggle('filtersOpen'));
-$('#sbCollapse').addEventListener('click',()=>{ document.body.classList.add('sbCollapsed'); syncPerPage(); renderPage(); });
-$('#sbExpand').addEventListener('click',()=>{ document.body.classList.remove('sbCollapsed'); syncPerPage(); renderPage(); });
-/* ---------- CACHE ----------
-   localStorage first (survives the tab closing), sessionStorage as a fallback
-   for embeds where localStorage is blocked. */
-function cacheStores(){
+/* Mobile: the label says what the button will do next, as on the Collection page. */
+$('#mobileFilterBtn').addEventListener('click',()=>{
+  const open=document.body.classList.toggle('filtersOpen');
+  $('#mobileFilterBtn').innerHTML = open ? '&#10005; Hide filters' : '&#9776; Filters &amp; search';
+});
+/* Desktop collapse, remembered across visits (SB_KEY). Restored here, before
+   the boot's syncPerPage(), so a collapsed sidebar gets its 180-per-page wall
+   from the very first paint instead of reflowing after it. */
+function setSbCollapsed(v){
+  document.body.classList.toggle('sbCollapsed',v);
+  try{ localStorage.setItem(SB_KEY, v?'1':'0'); }catch(e){}
+  syncPerPage();
+  if(items.length) renderPage();      // filter selections live in memory -- untouched
+}
+$('#sbCollapse').addEventListener('click',()=>setSbCollapsed(true));
+$('#sbExpand').addEventListener('click',()=>setSbCollapsed(false));
+try{ if(localStorage.getItem(SB_KEY)==='1') document.body.classList.add('sbCollapsed'); }catch(e){}
+/* ---------- CACHE (IndexedDB, shared 'dd-cache' database) ----------
+   One connection, opened once and reused for the read and every write. Every
+   failure is swallowed: private mode, a full quota or a blocked database just
+   means no instant paint, never a broken page. */
+let idbConn=null;
+function openIdb(){
+  if(idbConn) return idbConn;
+  idbConn=new Promise((res,rej)=>{
+    const r=indexedDB.open(IDB_NAME,1);
+    r.onupgradeneeded=()=>{ if(!r.result.objectStoreNames.contains(IDB_STORE)) r.result.createObjectStore(IDB_STORE); };
+    r.onsuccess=()=>res(r.result);
+    r.onerror=()=>{ idbConn=null; rej(r.error); };
+  });
+  return idbConn;
+}
+function idbGet(db,key){
+  return new Promise((res,rej)=>{
+    const q=db.transaction(IDB_STORE,'readonly').objectStore(IDB_STORE).get(key);
+    q.onsuccess=()=>res(q.result); q.onerror=()=>rej(q.error);
+  });
+}
+function usable(rec){
+  if(!rec || !Array.isArray(rec.d) || !rec.d.length) return null;
+  if(!(Date.now()-rec.t <= CACHE_TTL)) return null;
+  return rec;
+}
+// The pre-IndexedDB copies: localStorage, or sessionStorage where an embed
+// blocked localStorage. Only ever READ (once, as a fallback) and removed.
+function legacyStores(){
   const out=[];
   try{ if(window.localStorage) out.push(window.localStorage); }catch(e){}
   try{ if(window.sessionStorage) out.push(window.sessionStorage); }catch(e){}
   return out;
 }
-function readCache(){
-  for(const store of cacheStores()){
+async function cacheGet(){
+  try{
+    const rec=usable(await idbGet(await openIdb(), IDB_KEY));
+    if(rec) return rec;
+  }catch(e){ /* no IndexedDB here -- try the old copy */ }
+  for(const store of legacyStores()){
     try{
-      const raw=store.getItem(CACHE_KEY);
+      const raw=store.getItem(LEGACY_CACHE_KEY);
       if(!raw) continue;
-      const c=JSON.parse(raw);
-      if(!c || !Array.isArray(c.d) || !c.d.length) continue;
-      if(Date.now()-c.t > CACHE_TTL) continue;
-      return c.d;
+      const rec=usable(JSON.parse(raw));
+      if(rec) return rec;
     }catch(e){ /* try the next store */ }
   }
   return null;
 }
 function writeCache(list){
-  /* {timeout} matters: requestIdleCallback only fires when the page really
-     goes idle, and a grid still streaming posters may never get there. On
-     /sales the same code left the cache unwritten indefinitely, so every
-     visit was a cold load. The timeout makes the browser run it anyway. */
-  const rIC = window.requestIdleCallback;
-  const idle = rIC ? (cb=>rIC(cb,{timeout:2000})) : (cb=>setTimeout(cb,1));
-  idle(()=>{
-    let payload;
-    try{ payload=JSON.stringify({t:Date.now(), d:list}); }catch(e){ return; }
-    for(const store of cacheStores()){
-      try{ store.setItem(CACHE_KEY, payload); return; }catch(e){}
+  /* Deferred to idle() (with its timeout -- a grid still streaming posters may
+     never go idle; on /sales that once left the cache unwritten indefinitely).
+     IndexedDB stores the array by structured clone, so there is no
+     JSON.stringify of the whole catalog on the main thread any more. */
+  idle(async()=>{
+    try{
+      const db=await openIdb();
+      await new Promise((res,rej)=>{
+        const tx=db.transaction(IDB_STORE,'readwrite');
+        tx.objectStore(IDB_STORE).put({t:Date.now(), d:list}, IDB_KEY);
+        tx.oncomplete=res; tx.onerror=()=>rej(tx.error); tx.onabort=()=>rej(tx.error);
+      });
+      // Written -- so the localStorage copy is now just a second, older copy.
+      for(const store of legacyStores()){ try{ store.removeItem(LEGACY_CACHE_KEY); }catch(e){} }
+    }catch(e){ /* private mode / quota -- caching is optional */ }
+  });
+}
+/* ---------- SOFT REPAINT ----------
+   The ONE way data reaches the screen: the cache, the mirror seed, the live
+   answer and the silent confirm pass all come through here. If the new rows
+   are identical to what is on screen it does nothing at all. Otherwise it
+   swaps them in while keeping everything the visitor has done: page number,
+   facet picks, slider ranges, search text, grid + sidebar scroll, the open
+   facet panel (with its own search text and scroll), and -- through
+   renderPage's renderedKey -- the <img> tags of any card that did not change.
+   Returns true if anything was repainted. */
+let shownSig=null;
+function applyData(list){
+  // ~200 rows stringify in well under a millisecond; a field-by-field diff
+  // would be more code for no measurable gain.
+  const sig=JSON.stringify(list);
+  if(sig===shownSig) return false;
+  const first=!painted;
+  const grid=$('#grid'), side=$('#sidebar');
+  const gridTop=grid.scrollTop, sideTop=side.scrollTop;
+  const openEl=document.querySelector('#facets .facet.open');
+  const openKey=openEl?openEl.dataset.key:null;
+  const openSearch=openEl&&openEl.querySelector('.opt-search');
+  const openQ=openSearch?openSearch.value:'';
+  const openFocus=!!openSearch && document.activeElement===openSearch;
+  const openList=openEl&&openEl.querySelector('.opt-list');
+  const openListTop=openList?openList.scrollTop:0;
+  items=list; shownSig=sig;
+  buildFacetValues(); buildFacets(); buildSliders();
+  let reopened=null;
+  if(openKey){
+    reopened=document.querySelector('#facets .facet[data-key="'+openKey+'"]');
+    if(reopened){
+      reopened.classList.add('open');
+      const s=reopened.querySelector('.opt-search');
+      if(s){ s.value=openQ; if(openFocus) s.focus(); }
+    }
+  }
+  side.classList.remove('pending');
+  applyFilters(!first, !first);       // also re-renders the reopened panel
+  if(!first){
+    grid.scrollTop=gridTop; side.scrollTop=sideTop;
+    const l=reopened&&reopened.querySelector('.opt-list'); if(l) l.scrollTop=openListTop;
+  }
+  painted=true;
+  return true;
+}
+/* Resolves with the first of `promises` to produce a non-empty {rows}, or null
+   if none does. Same idea as the D2D page's firstNonEmpty. */
+function firstNonEmpty(promises){
+  const running=promises.filter(Boolean);
+  if(!running.length) return Promise.resolve(null);
+  return new Promise(resolve=>{
+    let left=running.length;
+    const lose=()=>{ if(--left===0) resolve(null); };
+    running.forEach(p=>p.then(v=>{ if(v && v.rows && v.rows.length) resolve(v); else lose(); }, lose));
+  });
+}
+/* ---------- SILENT CONFIRM PASS ----------
+   `meta` is what the edge said about the copy the page settled on. When it was
+   fresh enough (or came straight from Google) there is nothing to do.
+   Otherwise, once the page is idle, ask for the SAME query again insisting on
+   a copy no older than __edge.FRESH_S, and swap it in only if it differs. No
+   status chip, no bar, no toast either way -- it is a correction, not an event. */
+let confirming=false;
+function confirmLater(meta){
+  if(confirming || !window.__edge || !meta || !meta.url || !window.__edge.isOld(meta)) return;
+  confirming=true;
+  idle(async()=>{
+    try{
+      const r=await window.__edge.confirm(meta.url);
+      const rows=parseRows(parseGvizText(await r.res.text()));
+      if(!rows.length) throw new Error('no rows returned');
+      const changed=applyData(rows);
+      console.info('[ma] confirm pass: '+(changed?'CHANGED, caught up silently':'unchanged'));
+      writeCache(rows);
+    }catch(e){
+      console.warn('[ma] confirm pass failed (keeping what is on screen):', e && e.message);
     }
   });
 }
 /* ---------- BOOT ----------
    Order of operations for the fastest possible first paint:
-   1. If there are cached rows, render them IMMEDIATELY (no network wait) and
-      hide the spinner.
-   2. Await the sheet download (already in flight since <head>).
-   3. First visit: render fresh data as soon as it lands.
-      Revisit: if the fresh data differs from the cache, swap it in silently,
-      preserving the user's filters, sliders, and current page. */
+   1. Start consuming the live answer the <head> already has in flight.
+   2. Cached rows (IndexedDB): paint them IMMEDIATELY, no network wait, and
+      keep the status chip away.
+   3. No cache (first visit, cleared storage, private window): race the
+      deploy-time mirror against the live answer and paint whichever usable
+      one lands first. The live one usually wins now that it comes off the
+      edge; the mirror is the insurance for a cold edge or a slow Google.
+   4. The live answer: soft-repaint if it differs from what is on screen, then
+      cache it.
+   5. If that answer was an old edge copy, the silent confirm pass. */
 (async function(){
   syncPerPage();
-  let cached=readCache();
-  /* No local cache -- first visit, cleared storage, private window. Paint from
-     the deploy-time mirror so the grid is not empty while the live sheet
-     loads (1.3MB, ~9.5s when measured). cached is deliberately left null:
-     this is a placeholder, so the live data below must replace it wholesale
-     rather than being diffed against it. */
-  if(!cached || !cached.length){
-    try{
-      const seed=parseRows(await fetchCsv());
-      if(seed.length){
-        items=seed;
-        buildFacetValues(); buildFacets(); buildSliders();
-        applyFilters();
-        setStatus('Loading the latest sheet data...'); setBar(0.3);
-      }
-    }catch(e){ console.warn('[ma] mirror seed unavailable:', e && e.message); }
-  }
-  if(cached && cached.length){
-    items=cached;
-    buildFacetValues(); buildFacets(); buildSliders();
-    applyFilters();
-    setStatus('Checking for updates…');
-    setBar(0.4);
-  }
-  try{
-    const fresh=await loadAll();
-    if(!fresh.length) throw new Error('No rows found — is the sheet shared as "Anyone with the link"?');
-    setBar(0.9);
-    const freshStr=JSON.stringify(fresh);
-    if(!cached || !cached.length){
-      items=fresh;
-      buildFacetValues(); buildFacets(); buildSliders();
-      applyFilters();
-    }else if(freshStr!==JSON.stringify(items)){
-      const keepPage=page;
-      items=fresh;
-      buildFacetValues(); buildFacets(); buildSliders(true);
-      applyFilters();          // resets to page 0 internally…
-      page=keepPage;           // …so restore it (renderPage clamps if needed)
-      renderPage();
-      toast('Catalog updated with the latest sheet data');
+  const t0=performance.now();
+  const ms=()=>Math.round(performance.now()-t0)+'ms';
+  const liveP=loadAll();
+  liveP.catch(()=>{});                 // handled below
+  const rec=await cacheGet();
+  let firstSrc=null;
+  if(rec && applyData(rec.d)){
+    firstSrc='cache';
+    setStatus(null); setBar(0.4);
+  }else{
+    const fromLive=liveP.then(r=>({rows:r.rows, src:'live'}), ()=>null);
+    const fromMirror=window.__SHEET.csvUrl
+      ? fetchCsv().then(j=>({rows:parseRows(j), src:'mirror'}),
+                        e=>{ console.warn('[ma] mirror seed unavailable:', e && e.message); return null; })
+      : null;
+    const seed=await firstNonEmpty([fromLive, fromMirror]);
+    if(seed && applyData(seed.rows)){
+      firstSrc=seed.src;
+      setStatus(null); setBar(0.5);
     }
-    writeCache(fresh);
+  }
+  if(firstSrc) console.info(`[ma] first paint from ${firstSrc} at ${ms()}`);
+  try{
+    const fresh=await liveP;
+    if(!fresh.rows.length) throw new Error('No rows found — is the sheet shared as "Anyone with the link"?');
+    /* loadSheet() only answers with the mirror when every live route failed.
+       The mirror is a deploy-time copy, so it is no improvement on a cached
+       grid from a previous live load -- treat that as the failure it is
+       rather than swapping older data in under a "Catalog updated" toast. */
+    if(fresh.meta.mirror && firstSrc==='cache') throw new Error('live sheet unreachable');
+    if(fresh.meta.mirror) console.warn('[ma] live sheet unreachable -- showing the deploy-time mirror');
+    /* Don't step BACKWARDS. The cache is written by every live load and every
+       confirm pass, so it can easily be newer than the copy the edge is still
+       holding (it was fetched `age` seconds ago). Swapping that older copy in
+       would undo the last confirm on screen -- with a "Catalog updated" toast
+       -- only for this visit's confirm pass to put it back a moment later. So
+       an edge copy older than the cache is not painted; it just triggers the
+       confirm pass below, which asks Google for a copy newer than both. */
+    const olderThanCache = firstSrc==='cache' && fresh.meta.age>0
+      && rec.t > Date.now()-fresh.meta.age*1000;
+    const changed = olderThanCache ? false : applyData(fresh.rows);
+    if(olderThanCache) console.info('[ma] edge copy is older than the cache -- keeping the cache, confirming');
+    // A cached grid that just changed under the visitor gets the page's usual
+    // quiet note. The first-visit mirror -> live swap does not: that grid was
+    // only ever a placeholder.
+    if(changed && firstSrc==='cache') toast('Catalog updated with the latest sheet data');
+    if(!fresh.meta.mirror && !olderThanCache) writeCache(fresh.rows);
     setBar(1); barDone(); setStatus(null);
-    console.info(`[ma] ${fresh.length} titles`);
+    console.info(`[ma] ${fresh.rows.length} titles, live at ${ms()} (edge: ${fresh.meta.how}, age ${fresh.meta.age}s)`);
+    confirmLater(fresh.meta);
   }catch(err){
     barDone();
-    if(!cached || !cached.length){
-      setStatus('Could not load the sheet: '+err.message, false, true);
-    }else{
+    if(painted){
+      // Something is on screen -- keep it. A quiet warning, plus the page's toast.
       setStatus(null);
-      toast('Could not refresh the sheet — showing cached data', true);
+      console.warn('[ma] refresh failed, keeping what is on screen:', err && err.message);
+      toast('Could not refresh the sheet — showing '+(firstSrc==='cache'?'cached':'saved')+' data', true);
+    }else{
+      setStatus('Could not load the sheet: '+esc(err && err.message), false, true);
     }
   }
 })();

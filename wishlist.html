@@ -88,13 +88,124 @@
   }
 })();
 </script>
+<script>
+/* ============ EDGE SHEET CACHE (functions/sheet.js) ============
+   Shared by every page. Same block in each file -- keep them in step.
+
+   Google takes 0.5-14s to answer a sheet request and forbids CDNs from keeping
+   a copy, which is why every page used to show its cached grid and then sit
+   on "Checking for changes..." for several seconds. /sheet keeps that copy at
+   Cloudflare's edge instead.
+
+     __edge.fast(url)     -> the edge's copy, however old, in ~50ms
+     __edge.confirm(url)  -> a copy no older than FRESH_S, waiting on Google
+                             only if the edge has nothing that recent
+     __edge.isOld(r)      -> true when a fast answer still needs confirming
+
+   Each resolves to {res, age, how}: `res` is the fetch Response (body unread,
+   so callers can stream it), `age` its age in seconds, `how` where it came
+   from. The pages paint the fast answer straight away and run the confirm
+   pass silently behind it, so the data is still live -- it just no longer
+   holds anything up.
+
+   If /sheet is missing (local preview, a host without Functions) or fails,
+   this goes straight to Google exactly as the pages always did. */
+(function(){
+  var FRESH_S=60;
+  var off=false;
+  function opts(signal){ var o={credentials:'omit'}; if(signal) o.signal=signal; return o; }
+  function direct(url, signal){
+    return fetch(url,opts(signal)).then(function(r){
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      return {res:r, age:0, how:'DIRECT'};
+    });
+  }
+  function viaEdge(url, fresh, signal){
+    if(off) return direct(url, signal);
+    var u='/sheet?u='+encodeURIComponent(url)+(fresh==null?'':'&fresh='+fresh);
+    return fetch(u,opts(signal)).then(function(r){
+      var how=r.headers.get('X-Sheet-Cache');
+      /* No header means this was not the function answering (a 404 page, a
+         static server) -- stop asking it for the rest of this visit. */
+      if(!how){ off=true; return direct(url, signal); }
+      if(!r.ok) throw new Error('sheet HTTP '+r.status);
+      return {res:r, age:+(r.headers.get('X-Sheet-Age')||0), how:how};
+    }).catch(function(e){
+      if(off || (e && e.name==='AbortError')) throw e;
+      try{ console.warn('[edge] /sheet unavailable, using Google directly:', (e&&e.message)||e); }catch(x){}
+      return direct(url, signal);
+    });
+  }
+  window.__edge={
+    FRESH_S:FRESH_S,
+    fast:function(url,signal){ return viaEdge(url,null,signal); },
+    confirm:function(url,maxAge,signal){ return viaEdge(url, maxAge==null?FRESH_S:maxAge, signal); },
+    isOld:function(r){ return !!r && (r.age>FRESH_S || r.how==='ERROR-STALE'); },
+    text:function(p){ return p.then(function(r){ return r.res.text().then(function(t){ r.text=t; return r; }); }); }
+  };
+})();
+</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Tells the browser the page is dark BEFORE any CSS is parsed, so the very
+     first frame is dark instead of a white flash that repaints to #171C20. -->
+<meta name="color-scheme" content="dark">
 <title>Donny's Wishlist</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<!-- Only reached when /sheet is unavailable and the page falls back to Google
+     directly, so DNS only. -->
+<link rel="dns-prefetch" href="https://docs.google.com">
 <link rel="dns-prefetch" href="https://i0.wp.com">
 <link rel="dns-prefetch" href="https://i1.wp.com">
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@700&display=swap" rel="stylesheet">
+<style>
+/* ============ CRITICAL CSS ============
+   Same block as the Collection page. Just the loading indicator, inlined
+   ahead of everything else so the bar and the chip are on screen in the very
+   first painted frame -- before the main stylesheet is read, before the
+   fonts, and long before any data arrives.
+   This replaces the old full-page cover, which hid the whole page behind a
+   spinner until Google answered: a returning visitor stared at a blank
+   screen for the 1-2s the sheet took even though their browser already had
+   the wishlist from last time. Now the cached grid paints underneath and the
+   chip only shows while there is genuinely nothing to look at. */
+html,body{margin:0;padding:0;background:#171C20}
+#topbar{position:fixed;top:0;left:0;right:0;height:3px;z-index:200;
+  background:rgba(255,255,255,.09);overflow:hidden}
+#topbar.done{opacity:0;transition:opacity .4s .25s}
+#topfill{height:100%;width:0;background:linear-gradient(90deg,#004A75,#007BC4,#4FA8E0);
+  transition:width .3s ease-out}
+#topbar.indet #topfill{width:38%;animation:ddslide 1.15s ease-in-out infinite}
+@keyframes ddslide{0%{transform:translateX(-110%)}100%{transform:translateX(275%)}}
+#status{position:fixed;top:23px;left:50%;transform:translateX(-50%);z-index:201;
+  display:flex;flex-direction:row;gap:10px;align-items:center;
+  background:#263238;border-radius:20px;padding:8px 17px 8px 13px;
+  font:700 12.5px 'Poppins','Segoe UI',system-ui,sans-serif;letter-spacing:.5px;color:#cfd8dc;
+  box-shadow:0 4px 16px rgba(0,0,0,.55);max-width:min(92vw,520px)}
+#status.hidden{display:none}
+#status.err{background:#b71c1c;color:#fff;border-radius:10px;text-align:left}
+#status small{font-weight:700;line-height:1.6;display:block}
+.spin{width:15px;height:15px;border:2px solid rgba(255,255,255,.22);border-top-color:#fff;
+  border-radius:50%;animation:sp .8s linear infinite;flex:none}
+@keyframes sp{to{transform:rotate(360deg)}}
+/* Placeholder tiles, so the grid reads as "filling in" instead of "broken". */
+.skel{border-radius:6px;height:0;padding-bottom:150%;background:#1f262b;
+  animation:ddpulse 1.5s ease-in-out infinite}
+@keyframes ddpulse{0%,100%{opacity:.5}50%{opacity:.92}}
+@media(prefers-reduced-motion:reduce){
+  .spin,.skel{animation:none}
+  #topbar.indet #topfill{animation:none;width:100%}
+}
+</style>
+<!-- Fonts load without blocking rendering (media=print trick). This used to be
+     a plain render-blocking <link>: nothing at all painted -- not even the
+     dark shell -- until fonts.googleapis.com had answered. Weights match the
+     Collection page so the two pages share one cached font file. -->
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;700&display=swap"
+      rel="stylesheet" media="print" onload="this.media='all'">
+<noscript>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;700&display=swap" rel="stylesheet">
+</noscript>
 <style>
 :root{
   --bg:#171C20;
@@ -104,6 +215,9 @@
   --bar:#8a9096;
   --bar-text:#ffffff;
   --accent:#007BC4;
+  /* Same hue, lifted, for the places where --accent has to carry meaning as a
+     thin line or small text on the dark sidebar rather than as a filled pill. */
+  --accent-bright:#3AA0E3;
   --track:#4a565e;
   --track-fill:#eceff1;
 }
@@ -129,12 +243,21 @@ body{
 }
 #sidebar::-webkit-scrollbar{width:6px}
 #sidebar::-webkit-scrollbar-thumb{background:#4a565e;border-radius:3px}
+/* Every colour here is declared outright, as on the Collection page. This field
+   used to declare no background at all and leaned on the browser's default
+   form-control white -- which the page-level color-scheme:dark flips to a dark
+   grey, leaving dark text and a dark caret on a dark box. Never let a
+   control's legibility depend on a UA default. */
 #searchBox{
-  width:100%;padding:9px 12px;border:none;border-radius:6px;
-  font:700 13.5px 'Poppins',sans-serif;color:var(--pill-text);
+  width:100%;padding:9px 12px;border:1px solid #4a565e;border-radius:6px;
+  background:#263238;
+  font:700 13.5px 'Poppins',sans-serif;color:#ffffff;
+  caret-color:#ffffff;
   margin-bottom:12px;outline:none;
 }
-#searchBox::placeholder{color:#78909c}
+#searchBox::placeholder{color:#90a4ae}
+/* outline:none removes the browser's focus ring, so give the field its own. */
+#searchBox:focus{border-color:#eceff1}
 .facet{position:relative;margin-bottom:10px}
 .facet-btn{
   width:100%;display:flex;align-items:center;justify-content:space-between;
@@ -157,10 +280,16 @@ body{
   padding:8px;color:var(--pill-text);
 }
 .facet.open .facet-panel{display:block}
+/* On a white panel, so it is pinned to the light scheme and given its colours
+   explicitly -- same UA-default trap as #searchBox above, just inverted: with
+   color-scheme:dark inherited from the page it would render as a dark grey box
+   with white text in the middle of a white popover. */
 .facet-panel input.opt-search{
   width:100%;padding:6px 9px;margin-bottom:6px;
   border:1px solid #cfd8dc;border-radius:5px;font:700 12.5px 'Poppins',sans-serif;outline:none;
+  color-scheme:light;background:#ffffff;color:var(--pill-text);
 }
+.facet-panel input.opt-search::placeholder{color:#90a4ae}
 .opt-list{max-height:240px;overflow-y:auto;scrollbar-width:thin}
 .opt-list label{
   display:flex;align-items:center;gap:8px;
@@ -176,12 +305,48 @@ body{
   font:700 11px 'Poppins',sans-serif;letter-spacing:1px;text-transform:uppercase;color:#546e7a;
 }
 .facet-clear:hover{background:#cfd8dc}
-/* sort */
-#sortWrap select{
-  width:100%;background:var(--pill);color:var(--pill-text);
-  border:none;border-radius:8px;padding:10px 12px;cursor:pointer;
-  font:700 12.5px 'Poppins',sans-serif;letter-spacing:1.2px;text-transform:uppercase;
-  margin-bottom:10px;outline:none;
+/* Sidebar controls are inert until the wishlist has been indexed. */
+#sidebar.pending #facets,#sidebar.pending #sliders{opacity:.45;pointer-events:none}
+/* sort -- copied from the Collection page.
+   The native <select> is kept for state (and for keyboard/AT users) but is
+   never painted: Chrome on Windows draws a select's dropdown list with the OS
+   menu font, so the options came out in Segoe UI no matter what font-family
+   the select carried. The list below is plain markup, so it honours Poppins. */
+#sortWrap{position:relative;margin-bottom:10px}
+#sortSel{
+  position:absolute;width:1px;height:1px;padding:0;margin:0;border:0;
+  opacity:0;pointer-events:none;clip:rect(0 0 0 0);overflow:hidden;
+}
+#sortBtn{
+  width:100%;display:flex;align-items:center;justify-content:space-between;gap:8px;
+  background:var(--pill);color:var(--pill-text);text-align:left;
+  border:none;border-radius:8px;padding:5px 6px;cursor:pointer;
+  font:700 12.5px 'Poppins','Segoe UI',sans-serif;letter-spacing:1.2px;text-transform:uppercase;
+  outline:none;transition:box-shadow .15s;
+}
+#sortBtn:hover{box-shadow:0 0 0 2px rgba(255,255,255,.25)}
+#sortBtn .icon{font-size:13px;color:#607d8b;transition:transform .2s;flex:none}
+#sortWrap.open #sortBtn .icon{transform:rotate(180deg)}
+#sortLabel{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+#sortPanel{
+  display:none;position:absolute;left:0;right:0;top:calc(100% + 5px);z-index:60;
+  background:#fff;border-radius:8px;box-shadow:0 8px 22px rgba(0,0,0,.45);
+  padding:6px;max-height:340px;overflow-y:auto;scrollbar-width:thin;
+}
+#sortWrap.open #sortPanel{display:block}
+#sortPanel button{
+  display:block;width:100%;text-align:left;background:none;border:none;cursor:pointer;
+  padding:7px 9px;border-radius:5px;color:var(--pill-text);
+  font:700 11.5px 'Poppins','Segoe UI',sans-serif;letter-spacing:.4px;
+  text-transform:uppercase;white-space:nowrap;
+}
+#sortPanel button:hover{background:#eceff1}
+#sortPanel button[aria-selected="true"]{background:var(--accent);color:#fff}
+/* Shown at the top of a facet panel that needs a word of explanation. Same
+   rule as the Collection page; no Wishlist facet uses it today. */
+.facet-hint{
+  font:700 10px 'Poppins','Segoe UI',sans-serif;color:#78909c;
+  letter-spacing:.2px;line-height:1.45;padding:0 2px 7px;
 }
 /* sliders */
 .slider-group{margin:11px 2px 3px;text-align:center}
@@ -215,17 +380,34 @@ body{
   color:#eceff1;font:700 13px 'Poppins',sans-serif;text-align:center;
   width:56px;padding:1px 2px;outline:none;color-scheme:dark;cursor:text;
 }
+/* A slider that has been pulled off its ends is narrowing the wall, and the two
+   numbers underneath otherwise read as "the range of the data", not as "a
+   filter you set". So an adjusted slider goes blue: title, fill, both thumbs
+   and both value fields -- the Collection page's rule, toggled by the same
+   test the filter itself uses (see paint() in buildSliders).
+   --accent-bright rather than --accent: #007BC4 as a 3px line on the #4a565e
+   rail reads as "slightly different track" rather than as blue. */
+.slider-group.active .sl-title{color:var(--accent-bright)}
+.slider-group.active .fill{background:var(--accent-bright)}
+.slider-group.active input[type=range]::-webkit-slider-thumb{background:var(--accent-bright)}
+.slider-group.active input[type=range]::-moz-range-thumb{background:var(--accent-bright)}
+.slider-group.active .sl-vals input{color:var(--accent-bright);
+  border-bottom-color:var(--accent-bright)}
 .sl-vals input:focus{border-bottom-color:#fff;background:rgba(255,255,255,.08)}
 .sl-vals input.date{width:106px;font-size:12px}
 .sl-vals input::-webkit-outer-spin-button,
 .sl-vals input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
 .sl-vals input[type=number]{-moz-appearance:textfield;appearance:textfield}
+/* Green, as on the Collection page. #157A60 rather than the lighter #1C9E7D: at
+   11px bold, white on #1C9E7D measures 3.37:1, under the 4.5:1 needed for
+   normal-size text; #157A60 clears it at 5.27:1. */
 #resetAll{
-  margin-top:22px;width:100%;padding:5px;border:1px solid #4a565e;border-radius:8px;
-  background:transparent;color:#b0bec5;cursor:pointer;
+  margin-top:22px;width:100%;padding:5px;border:1px solid #157A60;border-radius:8px;
+  background:#157A60;color:#ffffff;cursor:pointer;
   font:700 11px 'Poppins',sans-serif;letter-spacing:1.5px;text-transform:uppercase;
 }
-#resetAll:hover{border-color:#eceff1;color:#fff}
+#resetAll:hover{background:#168264;border-color:#168264;color:#ffffff;
+  box-shadow:0 0 0 2px rgba(255,255,255,.25)}
 /* collapse control (desktop only) */
 #sbCollapse{
   width:100%;margin-bottom:10px;padding:8px;border:1px solid #4a565e;border-radius:8px;
@@ -279,6 +461,9 @@ body{
   background:var(--bg-soft);
   height:0;padding-bottom:150%;   /* 2:3 poster ratio, works in all render modes */
   transition:transform .15s, box-shadow .15s;text-decoration:none;
+  /* Off-screen cards skip layout/paint entirely. The box height comes from
+     padding-bottom rather than content, so nothing shifts. */
+  content-visibility:auto;
 }
 .card:hover{transform:scale(1.045);box-shadow:0 6px 18px rgba(0,0,0,.6);z-index:5}
 .card img{
@@ -308,6 +493,27 @@ body.editing .card .edit-tag{display:flex}
 .card .watch-tag:disabled{opacity:.5;cursor:default}
 body.editing .card .watch-tag{display:flex}
 body.editing .card{outline:2px dashed rgba(255,255,255,.35)}
+@media(prefers-reduced-motion:reduce){ .card{transition:none} }
+/* Every active pick, shown above the wall so it is still obvious what the grid
+   is narrowed to once the facet panel is shut or the whole sidebar is
+   collapsed. Same markup and CSS as the Collection page.
+   The facet name is set smaller and half-transparent rather than given its own
+   colour: at 12px on an accent-blue ground there is no second colour that
+   stays legible, and opacity keeps the value itself the thing you read. */
+#chipRow{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
+#chipRow:empty{display:none}
+#chipRow .chip{display:flex;align-items:center;gap:7px;background:var(--accent);color:#fff;
+  border-radius:16px;padding:5px 12px;font:700 12px 'Poppins',sans-serif;letter-spacing:.5px;
+  max-width:100%}
+#chipRow .chip .k{font-size:10px;text-transform:uppercase;letter-spacing:1px;opacity:.72;
+  flex:0 0 auto}
+/* A long studio name must not push the ✕ off the chip, so the value is the
+   only part allowed to shrink, and it ellipses instead of wrapping. */
+#chipRow .chip .v{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+#chipRow .chip button{background:none;border:none;color:#fff;cursor:pointer;font-size:13px;
+  line-height:1;flex:0 0 auto;padding:0;opacity:.85}
+#chipRow .chip button:hover{opacity:1}
 #toast{
   position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:120;
   background:#263238;color:#eceff1;border-radius:8px;padding:10px 18px;
@@ -332,6 +538,7 @@ body.editing .card{outline:2px dashed rgba(255,255,255,.35)}
 #tokenInput{
   width:100%;border:1px solid #cfd8dc;border-radius:6px;padding:9px 11px;
   font:700 14px 'Poppins',sans-serif;outline:none;margin-bottom:12px;
+  color-scheme:light;background:#ffffff;color:var(--pill-text);
 }
 #tokenInput:focus{border-color:#607d8b}
 #tokenBox .row{display:flex;gap:8px;justify-content:flex-end}
@@ -341,14 +548,11 @@ body.editing .card{outline:2px dashed rgba(255,255,255,.35)}
 }
 #tokenOk{background:var(--accent);color:#fff}
 #tokenCancel{background:#eceff1;color:#546e7a}
-#status{
-  position:absolute;inset:0;display:flex;flex-direction:column;gap:12px;
-  align-items:center;justify-content:center;background:var(--bg);z-index:60;
-  font:700 15px 'Poppins',sans-serif;letter-spacing:1px;color:#b0bec5;
-}
-.spin{width:36px;height:36px;border:3px solid #37474f;border-top-color:#eceff1;
-  border-radius:50%;animation:sp 1s linear infinite}
-@keyframes sp{to{transform:rotate(360deg)}}
+/* The loading readout (#status), the top progress bar (#topbar) and the
+   placeholder tiles (.skel) all live in the CRITICAL CSS block at the top of
+   <head>, so they can paint in the first frame instead of waiting for this
+   stylesheet. Don't re-declare them here -- these rules would win and the
+   chip would turn back into the old full-page cover. */
 /* edit toggle (in sidebar — Google Sites places its own pencil bottom-right) */
 #editToggle{
   margin-top:10px;width:100%;padding:5px;border:none;border-radius:8px;
@@ -553,22 +757,33 @@ body{padding-top:var(--dd-nav-h);box-sizing:border-box}
     <a href="/d2d">D2D</a>
   </div>
 </nav>
+<!-- Paints in the first frame, before any data exists. -->
+<div id="topbar" class="indet"><div id="topfill"></div></div>
 <div id="app">
   <button id="mobileFilterBtn">&#9776; Filters &amp; search</button>
-  <aside id="sidebar">
+  <aside id="sidebar" class="pending">
     <button id="sbCollapse">&#10094; Hide filters</button>
     <input id="searchBox" type="search" placeholder="Text search" autocomplete="off">
+    <!-- Option labels follow the Collection page. Title A -> Z stays this page's
+         default: a wishlist has no date-added column, so there is no
+         "Recently Added" to open on. Price is the one sort the Collection page
+         does not have, because only the wishlist carries Buy Price. -->
     <div id="sortWrap">
-      <select id="sortSel" title="Sort collection">
-        <option value="sortTitle|asc" selected>Sort: Title A → Z</option>
-        <option value="sortTitle|desc">Sort: Title Z → A</option>
+      <select id="sortSel" title="Sort wishlist">
+        <option value="sortTitle|asc" selected>Sort: Title A &rarr; Z</option>
+        <option value="sortTitle|desc">Sort: Title Z &rarr; A</option>
         <option value="year|desc">Sort: Year (newest)</option>
         <option value="year|asc">Sort: Year (oldest)</option>
-        <option value="tomato|desc">Sort: Rotten Tomatoes (high)</option>
-        <option value="tomato|asc">Sort: Rotten Tomatoes (low)</option>
-        <option value="runtime|desc">Sort: Runtime (longest)</option>
-        <option value="runtime|asc">Sort: Runtime (shortest)</option>
+        <option value="tomato|desc" data-short="Sort: Tomato Meter &darr;">Sort: Tomato Meter (high)</option>
+        <option value="tomato|asc" data-short="Sort: Tomato Meter &uarr;">Sort: Tomato Meter (low)</option>
+        <option value="runtime|desc" data-short="Sort: Runtime &#10231;">Sort: Runtime (longest)</option>
+        <option value="runtime|asc" data-short="Sort: Runtime &harr;">Sort: Runtime (shortest)</option>
+        <option value="buy|asc" data-short="Sort: Price &uarr;">Sort: Price (lowest)</option>
+        <option value="buy|desc" data-short="Sort: Price &darr;">Sort: Price (highest)</option>
       </select>
+      <button id="sortBtn" type="button" aria-haspopup="listbox" aria-expanded="false"
+              title="Sort wishlist"><span id="sortLabel">Sort: Title A &rarr; Z</span><span class="icon">&#9662;</span></button>
+      <div id="sortPanel" role="listbox" aria-label="Sort wishlist"></div>
     </div>
     <div id="facets"></div>
     <div id="sliders"></div>
@@ -583,7 +798,13 @@ body{padding-top:var(--dd-nav-h);box-sizing:border-box}
       <div class="pg-label" id="pgLabel">–</div>
       <button class="pg-arrow" id="nextPg" title="Next page">&#10095;</button>
     </div>
+    <div id="chipRow"></div>
     <div id="grid"></div>
+<script>
+/* Placeholder tiles, written during HTML parse so the grid never looks like a
+   dead rectangle. The first real renderPage() replaces them wholesale. */
+(function(){var g=document.getElementById('grid'),h='',i=0;for(;i<72;i++)h+='<div class="skel"></div>';g.innerHTML=h;})();
+</script>
 <!-- Second pager, parked at the foot of the wall and revealed once it has been
      scrolled to its end; see #pagerBottom in the CSS above and the
      bottom-pager block in the script below. -->
@@ -598,7 +819,7 @@ body{padding-top:var(--dd-nav-h);box-sizing:border-box}
 </div>
   </main>
 </div>
-<div id="status"><div class="spin"></div><div id="statusTxt">Loading collection…</div></div>
+<div id="status"><div class="spin"></div><div id="statusTxt">Loading wishlist&hellip;</div></div>
 <div id="toast"></div>
 <div id="tokenWrap">
   <div id="tokenBox">
@@ -647,7 +868,7 @@ const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw_nZsplHbJL2lL
 // The edit token is NOT stored in this code. When you turn on edit mode,
 // the site asks for it and remembers it for the current browser session only.
 // Published CSV link (File > Share > Publish to web > select the wishlist
-// tab > CSV). This is the PRIMARY data source when set -- see loadData()
+// tab > CSV). This is the PRIMARY data source when set -- see loadLive()
 // below for why: the gviz JSON path defaults to the sheet's first tab
 // (SHEET_NAME is blank), so if the wishlist lives on a different tab, gviz
 // quietly comes back with zero matching rows instead of failing loudly.
@@ -655,18 +876,18 @@ const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw_nZsplHbJL2lL
 // reads the right data.
 /* THE LIVE SHEET. This briefly pointed at /mirror/wishlist.csv, which is
    written at deploy time -- so the page showed whatever the sheet said at the
-   last deploy rather than what it says now. At 48KB / ~1.8s this one is cheap
-   enough to just read live every time; the mirror stays below as a fallback
-   for when Google is unreachable. */
+   last deploy rather than what it says now. It is read live on every visit,
+   but through __edge (functions/sheet.js) rather than straight from Google:
+   the edge hands back its copy in ~50ms and a silent confirm pass catches up
+   with Google afterwards, so the 1-2s Google takes no longer holds up the
+   grid. See loadLive() and confirmLater() below. */
 const PUBLISHED_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRoppbitXf4M7TtjyYx2pnmqX0YV4MaWWclDBBYVBsymbdUrKCcJsKZLRYuUmLC7LiHmVp_fqqfq032/pub?gid=424360819&single=true&output=csv';
+/* The deploy-time mirror: same bytes as the CSV above, served by Cloudflare
+   with Brotli. Never the source of truth (it is only as new as the last
+   deploy). It is used for exactly two things: a first-visit SEED raced against
+   the edge so something paints quickly when this browser has no cache yet,
+   and a fallback when the live sheet cannot be reached at all. */
 const MIRROR_CSV_URL = '/mirror/wishlist.csv';
-/* Was the published Google CSV below. That endpoint answers
-   "Cache-Control: private, max-age=300" and is regenerated per request, so no
-   CDN could hold it and every visit paid for the whole file again. The mirror
-   is the same bytes, rebuilt at deploy time and served by Cloudflare with Brotli
-   and a real revalidate. If it is ever missing, this page still falls back to
-   the live sheet on its own, exactly as it did before.
-   Original: https://docs.google.com/spreadsheets/d/e/2PACX-1vRoppbitXf4M7TtjyYx2pnmqX0YV4MaWWclDBBYVBsymbdUrKCcJsKZLRYuUmLC7LiHmVp_fqqfq032/pub?gid=424360819&single=true&output=csv */
 /* ================================================= */
 // ---- Price buckets (checkbox facet) --------------------------------------
 // Titles with no Buy Price fall into UNAVAILABLE. The order below is the exact
@@ -715,6 +936,40 @@ const rangeState={};         // sliderKey -> {lo,hi}
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const splitCsv=s=>String(s??'').split(',').map(x=>x.trim()).filter(Boolean);
+const idle = cb => (window.requestIdleCallback||(f=>setTimeout(f,1)))(cb,{timeout:600});
+// One reusable collator, as on the Collection page. localeCompare inside a
+// sort rebuilds the collation table on every comparison; numeric:true also
+// files "9 to 5" before "10 Things", and sensitivity:'base' ignores case and
+// accents, so "Amélie" sits with the A's.
+const collator = new Intl.Collator(undefined,{sensitivity:'base',numeric:true});
+/* ---------- STATUS CHIP + TOP BAR (copied from the Collection page) ----------
+   The chip is only for when there is NOTHING on screen yet (or a hard error
+   with nothing to show). Background refreshes and the confirm pass never
+   touch it -- a grid that is already up does not need a "checking..." badge
+   floating over it. */
+function setStatus(html, spinning=true, isErr=false){
+  const s=$('#status');
+  if(html===null){ s.classList.add('hidden'); return; }
+  s.classList.remove('hidden');
+  s.classList.toggle('err', isErr);
+  s.querySelector('.spin').style.display = spinning ? '' : 'none';
+  $('#statusTxt').innerHTML = html;
+}
+const topbarEl=$('#topbar'), barFill=$('#topfill');
+let barPct=0;
+function setBar(p){
+  if(p==null){ topbarEl.classList.add('indet'); return; }
+  p=Math.max(0,Math.min(1,p));
+  if(p<barPct) return;              // never let the bar run backwards
+  barPct=p;
+  topbarEl.classList.remove('indet');
+  barFill.style.width=(p*100).toFixed(1)+'%';
+}
+function barDone(){
+  topbarEl.classList.remove('indet');
+  barFill.style.width='100%';
+  topbarEl.classList.add('done');
+}
 // ---- POSTER PROXYING ----
 // Posters come from images2.vudu.com, which some networks block outright, so
 // for Vudu URLs we walk a list of routes and the first that answers wins.
@@ -755,22 +1010,41 @@ function posterError(img){
   if(step < chain.length){ img.setAttribute('data-try', step); img.src = chain[step]; return; }
   const p = img.parentNode, t = (img.alt || '').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
   img.remove();
-  p.insertAdjacentHTML('afterbegin', '<div class="ph">' + t + '</div>');
+  if(p) p.insertAdjacentHTML('afterbegin', '<div class="ph">' + t + '</div>');
 }
+/* Delegated from #grid in the CAPTURE phase -- error does not bubble, but it
+   does capture. Every cover used to carry an inline onerror="posterError(this)":
+   an extra handler function compiled per image on every render, and inline
+   handlers are exactly what a Content-Security-Policy without 'unsafe-inline'
+   refuses. One listener for the life of the page does the same job. */
+document.getElementById('grid').addEventListener('error',e=>{
+  if(e.target.tagName==='IMG') posterError(e.target);
+}, true);
 /* ---------- LOAD DATA FROM GOOGLE SHEET ----------
-   Strategies, tried in order:
-   1. Published-CSV URL, if PUBLISHED_CSV_URL is set above -- tried FIRST
-      because it bakes in the exact tab (via its gid), so it is the only
-      source guaranteed to read the right data. The gviz JSON path below
-      defaults to the sheet's first tab whenever SHEET_NAME is blank, so if
-      the real data lives on a different tab, gviz doesn't error -- it just
-      quietly returns zero matching rows, which looks like "nothing is
-      showing up" with no error message at all.
-   2. Direct fetch of the gviz JSON endpoint (fastest of the two remaining
-      fallbacks, but Google doesn't always send CORS headers, so it can
-      throw "Failed to fetch").
-   3. JSONP: load the same endpoint as a <script> tag with a
-      responseHandler callback — no CORS involved, works everywhere.     */
+   Sources, in the order they can put something on screen:
+   0. This browser's own copy from the last visit (IndexedDB, see CACHE
+      below). Paints before any network at all.
+   1. Published-CSV URL, through __edge.fast -- the LIVE source, and the only
+      one guaranteed to read the right tab, because it bakes in the exact tab
+      (via its gid). The gviz JSON path below defaults to the sheet's first
+      tab whenever SHEET_NAME is blank, so if the real data lives on a
+      different tab, gviz doesn't error -- it just quietly returns zero
+      matching rows, which looks like "nothing is showing up" with no error
+      message at all.
+      On a first visit (no cache) this is RACED against the mirror and
+      whichever usable answer lands first paints; the other is ignored, or
+      soft-repaints over it if it is the live one.
+   Last resorts, only when 1 failed and nothing is on screen:
+   2. The deploy-time mirror (already in flight from the race, if it ran).
+   3. gviz JSON via __edge.fast (which itself falls back to Google directly;
+      Google doesn't always send CORS headers, so that can throw
+      "Failed to fetch").
+   4. JSONP: load the same gviz endpoint as a <script> tag with a
+      responseHandler callback -- no CORS involved, works everywhere. It
+      cannot go through /sheet, so it stays direct.
+   These used to be tried strictly one after another with nothing painted
+   until the first succeeded, which is why the page sat behind a full-screen
+   spinner for as long as Google took to answer. */
 const GVIZ_BASE=`https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?headers=1`
   +(SHEET_NAME?`&sheet=${encodeURIComponent(SHEET_NAME)}`:'');
 // A source that "succeeds" with zero movies (e.g. gviz quietly reading the
@@ -784,36 +1058,117 @@ function requireRows(movies, hint){
   if(!movies.length) throw new Error('loaded but 0 rows matched a Title column — '+hint);
   return movies;
 }
-async function loadData(){
-  const errors=[];
-  // 1) published CSV
-  if(PUBLISHED_CSV_URL){
-    try{
-      const txt=await (await fetch(PUBLISHED_CSV_URL)).text();
-      return requireRows(parseGviz(parseCsvData(txt)), 'check the CSV\'s header row against COLMAP at the top of this embed code');
-    }catch(e){ errors.push('csv: '+e.message); }
-  }
-  // 1b) the deploy-time mirror. Stale by definition, but it bakes in the same
-  //     gid as the live CSV, so it reads the right tab -- unlike gviz below.
-  if(MIRROR_CSV_URL){
-    try{
-      const txt=await (await fetch(MIRROR_CSV_URL)).text();
-      return requireRows(parseGviz(parseCsvData(txt)), 'mirror had no usable rows');
-    }catch(e){ errors.push('mirror: '+e.message); }
-  }
-  // 2) direct fetch
-  try{ return requireRows(parseGviz(await fetchGviz()), 'gviz may be reading the wrong tab (SHEET_NAME is blank, so it defaults to the sheet\'s first tab) — set SHEET_NAME to your wishlist tab\'s name'); }
+const CSV_HINT='check the CSV\'s header row against COLMAP at the top of this embed code';
+const GVIZ_HINT='gviz may be reading the wrong tab (SHEET_NAME is blank, so it defaults to the sheet\'s first tab) — set SHEET_NAME to your wishlist tab\'s name';
+const parseCsvRows=(txt,hint)=>requireRows(parseGviz(parseCsvData(txt)), hint);
+/* The live CSV through the edge. Resolves to {rows, meta}: `meta` is what the
+   edge said about its copy ({age, how}), which decides whether the silent
+   confirm pass has anything to do. `mode` is 'fast' (the edge's copy, however
+   old) or 'confirm' (no older than __edge.FRESH_S, waiting on Google if it
+   must). Falls back to a plain fetch if __edge is somehow missing. */
+async function loadLive(mode){
+  if(!PUBLISHED_CSV_URL) throw new Error('no PUBLISHED_CSV_URL');
+  const E=window.__edge;
+  const r = E ? await (mode==='confirm' ? E.confirm(PUBLISHED_CSV_URL) : E.fast(PUBLISHED_CSV_URL))
+              : await fetch(PUBLISHED_CSV_URL).then(res=>{ if(!res.ok) throw new Error('HTTP '+res.status); return {res,age:0,how:'DIRECT'}; });
+  const txt=await r.res.text();
+  return {rows:parseCsvRows(txt, CSV_HINT), meta:{age:r.age, how:r.how}};
+}
+// The deploy-time mirror. Stale by definition, but it bakes in the same gid as
+// the live CSV, so it reads the right tab -- unlike gviz below.
+async function loadMirror(){
+  if(!MIRROR_CSV_URL) throw new Error('no mirror');
+  const res=await fetch(MIRROR_CSV_URL);
+  if(!res.ok) throw new Error('HTTP '+res.status);
+  return parseCsvRows(await res.text(), 'mirror had no usable rows');
+}
+/* Last-resort chain, run only when the live CSV failed and nothing is on
+   screen. `mirrorP` is the mirror request already in flight from the
+   first-visit race, so it is not fetched twice. */
+async function loadFallbacks(mirrorP, errors){
+  try{ return await (mirrorP || loadMirror()); }
+  catch(e){ errors.push('mirror: '+e.message); }
+  try{ return requireRows(parseGviz(await fetchGviz()), GVIZ_HINT); }
   catch(e){ errors.push('fetch: '+e.message); }
-  // 3) JSONP
-  try{ return requireRows(parseGviz(await jsonpGviz()), 'gviz may be reading the wrong tab (SHEET_NAME is blank, so it defaults to the sheet\'s first tab) — set SHEET_NAME to your wishlist tab\'s name'); }
+  try{ return requireRows(parseGviz(await jsonpGviz()), GVIZ_HINT); }
   catch(e){ errors.push('jsonp: '+e.message); }
   throw new Error(errors.join(' | '));
 }
 async function fetchGviz(){
-  const res=await fetch(GVIZ_BASE+'&tqx=out:json');
-  if(!res.ok) throw new Error('HTTP '+res.status);
-  const txt=await res.text();
+  const url=GVIZ_BASE+'&tqx=out:json';
+  const r = window.__edge ? await window.__edge.fast(url) : {res:await fetch(url)};
+  if(!r.res.ok) throw new Error('HTTP '+r.res.status);
+  const txt=await r.res.text();
   return JSON.parse(txt.substring(txt.indexOf('(')+1, txt.lastIndexOf(')')));
+}
+/* First usable answer wins (same helper as the D2D page). A source that fails
+   or comes back empty just drops out of the race; null only when all have. */
+function firstNonEmpty(promises){
+  const running=promises.filter(Boolean);
+  if(!running.length) return Promise.resolve(null);
+  return new Promise(resolve=>{
+    let left=running.length;
+    const lose=()=>{ if(--left===0) resolve(null); };
+    running.forEach(p=>p.then(v=>{ if(v && v.length) resolve(v); else lose(); }, lose));
+  });
+}
+/* ---------- LOCAL CACHE (IndexedDB) ----------
+   The last visit's wishlist, so a returning visitor sees their grid in the
+   first few frames instead of waiting on any network at all. Shares the
+   Collection page's database ('dd-cache' v1, store 'kv') under its own key;
+   onupgradeneeded is the same as index.html's openIdb(), so whichever page
+   opens it first creates the store and the other just uses it.
+   The paint TTL is long (7 days) because a paint from the cache is never the
+   last word -- the edge answer always follows and repaints if it differs.
+   `asOf` is when the DATA was current (now minus the edge's reported age),
+   which is not the same as when it was written: see the stale-edge guard in
+   init. Every failure (private mode, quota, blocked storage) is swallowed --
+   the cache is an accelerator, never a requirement. */
+const IDB_NAME='dd-cache', IDB_STORE='kv', IDB_KEY='wishlist:v1';
+const CACHE_TTL=7*24*3600*1000;
+let idbConn=null;
+function openIdb(){
+  if(idbConn) return idbConn;
+  idbConn=new Promise((res,rej)=>{
+    const r=indexedDB.open(IDB_NAME,1);
+    r.onupgradeneeded=()=>{ if(!r.result.objectStoreNames.contains(IDB_STORE)) r.result.createObjectStore(IDB_STORE); };
+    r.onsuccess=()=>res(r.result);
+    r.onerror=()=>{ idbConn=null; rej(r.error); };
+  });
+  return idbConn;
+}
+async function cacheGet(){
+  try{
+    const db=await openIdb();
+    const rec=await new Promise((res,rej)=>{
+      const q=db.transaction(IDB_STORE,'readonly').objectStore(IDB_STORE).get(IDB_KEY);
+      q.onsuccess=()=>res(q.result); q.onerror=()=>rej(q.error);
+    });
+    if(!rec || !Array.isArray(rec.d) || !rec.d.length) return null;
+    if(Date.now()-rec.t > CACHE_TTL) return null;
+    return rec;
+  }catch(e){ return null; }
+}
+async function cacheSet(list, asOf){
+  try{
+    const db=await openIdb();
+    await new Promise((res,rej)=>{
+      const tx=db.transaction(IDB_STORE,'readwrite');
+      tx.objectStore(IDB_STORE).put({t:Date.now(), asOf:asOf||Date.now(), sig:signature(list), d:list}, IDB_KEY);
+      tx.oncomplete=res; tx.onerror=()=>rej(tx.error);
+    });
+  }catch(e){ /* private mode / quota -- caching is optional */ }
+}
+/* What a repaint compares. Every sheet-backed field, in sheet order, so two
+   loads of the same sheet give the same string whichever source they came
+   from (CSV, mirror, cache). Derived fields (search, genre[], priceBucket...)
+   follow from these and are left out. */
+const SIG_FIELDS=['sheetRow','title','desc','genreRaw','langRaw','mpaa','studio','runtime','year',
+  'tomatoRaw','myRating','buy','buyQuality','own','contentId'];
+function signature(list){
+  let s='';
+  for(const m of list){ for(const k of SIG_FIELDS) s+=(m[k]==null?'':m[k])+'\u0001'; s+='\u0002'; }
+  return s;
 }
 function jsonpGviz(){
   return new Promise((resolve,reject)=>{
@@ -936,8 +1291,11 @@ function countFacets(rows,list){
       const vals=f.csv?m[f.key]:[m[f.key]].filter(Boolean);
       vals.forEach(v=>counts.set(v,(counts.get(v)||0)+1));
     });
+    // A -> Z with the shared collator, as on the Collection page -- except a
+    // facet with a natural order of its own (Price runs cheapest to dearest,
+    // then UNAVAILABLE), which keeps it.
     facetValues[f.key]=[...counts.entries()].sort((a,b)=>
-      f.order ? f.order.indexOf(a[0])-f.order.indexOf(b[0]) : a[0].localeCompare(b[0]));
+      f.order ? f.order.indexOf(a[0])-f.order.indexOf(b[0]) : collator.compare(a[0],b[0]));
   });
 }
 // The whole-wishlist pass. buildFacets() sizes its panels off it, so it runs
@@ -1015,11 +1373,11 @@ function buildFacets(){
       const v=e.target.value;
       e.target.checked?selected[f.key].add(v):selected[f.key].delete(v);
       keepScroll=true;
-      applyFilters();
+      renderChips(); applyFilters();
     });
     el.querySelector('.facet-clear').addEventListener('click',()=>{
       selected[f.key].clear(); if(search) search.value='';
-      applyFilters();
+      renderChips(); applyFilters();
     });
   });
   facetsReady=true;
@@ -1031,27 +1389,103 @@ function updateBadge(el,key){
   const b=el.querySelector('.count-badge'), n=selected[key].size;
   b.style.display=n?'inline-block':'none'; b.textContent=n;
 }
-/* ---------- SLIDERS ---------- */
+/* buildFacets() renders the whole sidebar and would close whatever panel is
+   open, so a chip's ✕ updates only the one facet it touched. */
+function syncFacetUI(key){
+  const el=document.querySelector('.facet[data-key="'+key+'"]');
+  if(!el) return;
+  updateBadge(el,key);
+  el.querySelectorAll('.opt-list input[type=checkbox]').forEach(cb=>{
+    cb.checked=selected[key].has(cb.value);
+  });
+}
+/* Every pick, from every facet, gets a chip above the wall -- the Collection
+   page's row, same markup and behaviour. Once a facet panel is shut the only
+   other trace of a pick is a small count badge on a collapsed row, and with
+   the sidebar itself collapsed there is not even that. Each chip carries its
+   facet's name, dimmed, so "Drama" (Genre) and "R" (Rating) are told apart
+   at a glance. */
+function renderChips(){
+  const row=$('#chipRow');
+  row.innerHTML='';
+  const add=(facet,name)=>{
+    const chip=document.createElement('div');
+    chip.className='chip';
+    chip.innerHTML=`<span class="k">${esc(facet.chip||facet.label)}</span>`
+      +`<span class="v">${esc(name)}</span>`;
+    const x=document.createElement('button');
+    x.type='button';
+    x.title=`Clear ${facet.label}: ${name}`;
+    x.textContent='✕';
+    x.addEventListener('click',()=>{
+      selected[facet.key].delete(name);
+      syncFacetUI(facet.key); renderChips(); applyFilters();
+    });
+    chip.appendChild(x);
+    row.appendChild(chip);
+  };
+  for(const f of FACETS){
+    const sel=selected[f.key];
+    if(sel) sel.forEach(v=>add(f,v));
+  }
+}
+/* ---------- SLIDERS ----------
+   Ported from the Collection page's buildSliders(). Three things changed here:
+   * The typed-value boxes carried max="${s.step}" -- i.e. max="1" -- so the
+     browser flagged every typed year or runtime as out of range. They now get
+     the real min/max/step.
+   * A rebuild (the background refresh, the confirm pass) keeps a range the
+     visitor set instead of snapping every slider back to its ends while the
+     grid underneath was still filtered by it.
+   * An adjusted slider turns blue (.slider-group.active), using the same test
+     the filter uses, so the colour can never disagree with the grid.
+   Date sliders count DAY INDICES rather than milliseconds, so a 23- or 25-hour
+   DST day cannot leave a handle an hour short of its bound. No wishlist slider
+   is a date today; the path is kept so one can be added the same way as on
+   the Collection page. */
+function minMax(list,key){
+  let mn=Infinity, mx=-Infinity, any=false;
+  for(const m of list){ const v=m[key]; if(v==null) continue; any=true; if(v<mn)mn=v; if(v>mx)mx=v; }
+  return any?{mn,mx}:null;
+}
 function buildSliders(){
   const host=$('#sliders'); host.innerHTML='';
   SLIDERS.forEach(s=>{
     const isDate=s.type==='date';
-    const vals=movies.map(m=>m[s.key]).filter(v=>v!=null);
+    // Bounds start from the configured ones every build, widened to the data,
+    // so a rebuild cannot ratchet them outward on its own.
+    if(s.min0==null){ s.min0=s.min; s.max0=s.max; }
+    const mm=minMax(movies,s.key);
     if(isDate){
-      const DAY=86400000;
       const now=new Date();
       const todayLocal=new Date(now.getFullYear(),now.getMonth(),now.getDate()).getTime();
-      s.min=vals.length?Math.min(...vals):todayLocal-365*DAY;
-      s.max=Math.max(vals.length?Math.max(...vals):todayLocal, todayLocal);
-      s.step=DAY;
-    } else if(vals.length){
-      s.min=Math.floor(Math.min(s.min,...vals)); s.max=Math.ceil(Math.max(s.max,...vals));
+      s.min=mm?mm.mn:new Date(now.getFullYear(),now.getMonth(),now.getDate()-365).getTime();
+      s.max=Math.max(mm?mm.mx:todayLocal, todayLocal);
+      s.step=86400000;
+    } else {
+      s.min=s.min0; s.max=s.max0;
+      if(mm){ s.min=Math.floor(Math.min(s.min,mm.mn)); s.max=Math.ceil(Math.max(s.max,mm.mx)); }
     }
+    const keep = s._active && rangeState[s.key] ? rangeState[s.key] : null;
     rangeState[s.key]={lo:s.min,hi:s.max};
-    // value <-> text (dates shown/entered as a calendar picker, local time)
+    const baseD=new Date(s.min);
+    const dateFromIdx=i=>new Date(baseD.getFullYear(),baseD.getMonth(),baseD.getDate()+i).getTime();
+    const idxFromTime=t=>{
+      let i=Math.round((t-s.min)/86400000);
+      while(dateFromIdx(i)>t) i--;
+      while(dateFromIdx(i+1)<=t) i++;
+      return i;
+    };
+    const toVal  = isDate ? dateFromIdx : (u=>u);
+    const toUnit = isDate ? idxFromTime : (v=>v);
+    const uStep = isDate ? 1 : s.step;
+    const uMin  = isDate ? 0 : s.min;
+    const uMax  = isDate ? idxFromTime(s.max) : s.max;
+    const uSpan = (uMax-uMin)||1;   // one value in the whole column: no divide by 0
+    // value <-> text (dates shown/entered as YYYY-MM-DD, local time)
     const pad=n=>String(n).padStart(2,'0');
     const toStr=v=>{ if(!isDate) return String(v);
-      const d=new Date(v); return `${pad(d.getMonth()+1)}-${pad(d.getDate())}`; };
+      const d=new Date(v); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; };
     const fromStr=str=>{
       if(isDate){
         const p=String(str).split('-').map(Number);
@@ -1066,28 +1500,38 @@ function buildSliders(){
       <div class="sl-title">${esc(s.label)}</div>
       <div class="range-wrap">
         <div class="rail"></div><div class="fill"></div>
-        <input type="range" class="lo" min="${s.min}" max="${s.max}" step="${s.step}" value="${s.min}">
-        <input type="range" class="hi" min="${s.min}" max="${s.max}" step="${s.step}" value="${s.max}">
+        <input type="range" class="lo" min="${uMin}" max="${uMax}" step="${uStep}" value="${uMin}">
+        <input type="range" class="hi" min="${uMin}" max="${uMax}" step="${uStep}" value="${uMax}">
       </div>
       <div class="sl-vals">
         <input class="v-lo ${isDate?'date':'number'}"
-               ${isDate?'':`min="${s.min}" max="${s.step}"`} title="Type a value">
+               ${isDate?'':`min="${s.min}" max="${s.max}" step="${s.step}"`} title="Type a value">
         <input class="v-hi ${isDate?'date':'number'}"
-               ${isDate?'':`min="${s.min}" max="${s.step}"`} title="Type a value">
+               ${isDate?'':`min="${s.min}" max="${s.max}" step="${s.step}"`} title="Type a value">
       </div>`;
     host.appendChild(el);
     const lo=el.querySelector('.lo'), hi=el.querySelector('.hi'),
           fill=el.querySelector('.fill'), vlo=el.querySelector('.v-lo'), vhi=el.querySelector('.v-hi');
     const paint=()=>{
       const a=+lo.value,b=+hi.value;
-      let mn=Math.min(a,b),mx=Math.max(a,b);
-      if(mn < s.min + s.step/2) mn = s.min;   // treat end positions as exact bounds
-      if(mx > s.max - s.step/2) mx = s.max;   // (step snapping + DST can leave them ~1h short)
+      let uLo=Math.min(a,b), uHi=Math.max(a,b);
+      // A handle that cannot move any further out is sitting ON the bound.
+      if(uLo-uMin < uStep) uLo=uMin;
+      if(uMax-uHi < uStep) uHi=uMax;
+      const mn=toVal(uLo), mx=toVal(uHi);
       rangeState[s.key]={lo:mn,hi:mx};
-      const pct=v=>(v-s.min)/(s.max-s.min)*100;
-      fill.style.left=pct(mn)+'%'; fill.style.width=(pct(mx)-pct(mn))+'%';
+      const pct=u=>(u-uMin)/uSpan*100;
+      fill.style.left=pct(uLo)+'%'; fill.style.width=(pct(uHi)-pct(uLo))+'%';
       vlo.value=toStr(mn); vhi.value=toStr(mx);
+      // The same test rowMatches() uses to decide whether this slider filters
+      // anything: if it is blue, rows are being dropped, and vice versa.
+      s._active = uLo>uMin || uHi<uMax;
+      el.classList.toggle('active', s._active);
     };
+    if(keep){
+      const c=v=>Math.max(s.min,Math.min(s.max,v));
+      lo.value=toUnit(c(keep.lo)); hi.value=toUnit(c(keep.hi));
+    }
     paint();
     let t;
     const onInput=()=>{ paint(); clearTimeout(t); t=setTimeout(applyFilters,150); };
@@ -1097,14 +1541,14 @@ function buildSliders(){
       let v=fromStr(inputEl.value);
       if(v==null){ paint(); return; }        // bad entry: snap back
       v=Math.max(s.min,Math.min(s.max,v));
-      rangeEl.value=v;
+      rangeEl.value=toUnit(v);
       paint(); applyFilters();
     };
     vlo.addEventListener('change',()=>manual(vlo,lo));
     vhi.addEventListener('change',()=>manual(vhi,hi));
     vlo.addEventListener('keydown',e=>{ if(e.key==='Enter') vlo.blur(); });
     vhi.addEventListener('keydown',e=>{ if(e.key==='Enter') vhi.blur(); });
-    s._reset=()=>{ lo.value=s.min; hi.value=s.max; paint(); };
+    s._reset=()=>{ lo.value=uMin; hi.value=uMax; paint(); };
   });
 }
 /* ---------- FILTER + SORT + RENDER ---------- */
@@ -1114,12 +1558,13 @@ function rowMatches(m,q,skipKey){
   if(q && !m.search.includes(q)) return false;
   for(const f of FACETS){
     if(f.key===skipKey) continue;
-    const sel=selected[f.key]; if(!sel.size) continue;
+    const sel=selected[f.key]; if(!sel || !sel.size) continue;
     const vals=f.csv?m[f.key]:[m[f.key]];
     if(!vals.some(v=>sel.has(v))) return false;
   }
   for(const s of SLIDERS){
     const r=rangeState[s.key];
+    if(!r) continue;                              // sliders not built yet
     if(r.lo>s.min || r.hi<s.max){
       const v=m[s.key];
       const hi = s.type==='date' ? r.hi+86399999 : r.hi;  // include the whole end day
@@ -1128,29 +1573,67 @@ function rowMatches(m,q,skipKey){
   }
   return true;
 }
-function applyFilters(){
+/* keepPage: stay on the current page (a background repaint) instead of going
+   back to page 1 (a filter the visitor just changed).
+   soft: only touch cards that actually changed -- see renderPage. */
+function applyFilters(keepPage, soft){
   const q=$('#searchBox').value.trim().toLowerCase();
   filtered=movies.filter(m=>rowMatches(m,q,null));
   refreshFacetsNow();
   sortNow();
-  page=0; renderPage();
+  if(!keepPage) page=0;
+  renderPage(soft?{ifChanged:true}:null);
 }
+/* Same semantics as the Collection page's sortNow(): blanks always last
+   whichever way the sort runs, and ties broken A -> Z by title with the
+   shared collator, so equal years or prices come out in a stable, readable
+   order instead of whatever order the sheet happened to hold them in.
+   sortTitle is the title with a leading The/A/An dropped, so "The Matrix"
+   files under M. */
 function sortNow(){
   const [key,dir]=$('#sortSel').value.split('|');
   const mul=dir==='desc'?-1:1;
+  const alphaTitle=(a,b)=>collator.compare(a.sortTitle||a.title||'', b.sortTitle||b.title||'');
   filtered.sort((a,b)=>{
-    if(key==='sortTitle'){
-      const x=(a.sortTitle||'').toLowerCase(), y=(b.sortTitle||'').toLowerCase();
-      return mul*(x<y?-1:x>y?1:0);
-    }
+    if(key==='sortTitle') return mul*alphaTitle(a,b) || (a.sheetRow-b.sheetRow);
     const x=a[key], y=b[key];
-    if(x==null&&y==null) return 0;
+    if(x==null&&y==null) return alphaTitle(a,b);
     if(x==null) return 1;   // blanks last either direction
     if(y==null) return -1;
+    if(x===y) return alphaTitle(a,b);
     return mul*(x-y);
   });
 }
-function renderPage(){
+/* Everything a card shows, as one string. Two cards with the same key render
+   byte-identical markup, so an existing card element can be reused as is. */
+function cardKey(m){
+  return m.sheetRow+'\u0001'+m.title+'\u0001'+(m.year??'')+'\u0001'+m.img+'\u0001'+m.link
+    +'\u0001'+m.color+'\u0001'+(m.buy??'')+'\u0001'+m.buyQuality;
+}
+function cardHtml(m,i){
+  // First ~2 rows load eagerly so the fold fills at once; the rest lazy-load
+  // as you scroll. decoding=async keeps poster decode off the main thread, and
+  // the width/height give the browser the aspect ratio before a byte arrives.
+  return `<a class="card" href="${esc(m.link)||'#'}" target="_blank" rel="noopener"
+       data-row="${m.sheetRow}" title="${esc(m.title)}${m.year?' ('+m.year+')':''}"
+       style="background:${esc(m.color)||'var(--bg-soft)'}">
+      ${m.img?`<img loading="${i<20?'eager':'lazy'}" ${i<10?'fetchpriority="high"':''} decoding="async"
+        width="250" height="375" src="${esc(firstSrc(m.img))}" data-src="${esc(m.img)}"
+        alt="${esc(m.title)}">`
+        :`<div class="ph">${esc(m.title)}</div>`}
+      <span class="edit-tag" title="Edit details">&#9998;</span>
+      ${m.buy!=null?`<span class="price-tag">$${m.buy}${m.buyQuality?' '+m.buyQuality:''}</span>`:''}
+    </a>`;
+}
+/* Fingerprint of what is in the grid, plus the card elements behind it.
+   A soft render ({ifChanged:true}) -- the background refresh and the confirm
+   pass -- does nothing at all when the page would come out identical, and
+   when it would not, it keeps every card element whose key is unchanged and
+   only builds the ones that differ. Rewriting innerHTML restarts every <img>,
+   so a one-price change used to re-request all 150 posters on the page. */
+let renderedKey=null, cardEls=new Map();
+const cardTpl=document.createElement('template');
+function renderPage(opts){
   const total=filtered.length;
   const pages=Math.max(1,Math.ceil(total/PER_PAGE));
   page=Math.min(page,pages-1);
@@ -1161,16 +1644,29 @@ function renderPage(){
   $('#prevPg').disabled=atFirst;  $('#nextPg').disabled=atLast;
   if(window.syncBottomPager) syncBottomPager(page,pages);
   const grid=$('#grid');
-  grid.innerHTML=filtered.slice(start,end).map(m=>`
-    <a class="card" href="${esc(m.link)||'#'}" target="_blank" rel="noopener"
-       data-row="${m.sheetRow}" title="${esc(m.title)}${m.year?' ('+m.year+')':''}"
-       style="background:${esc(m.color)||'var(--bg-soft)'}">
-      ${m.img?`<img loading="lazy" decoding="async" src="${esc(firstSrc(m.img))}" data-src="${esc(m.img)}"
-        alt="${esc(m.title)}" onerror="posterError(this)">`
-        :`<div class="ph">${esc(m.title)}</div>`}
-      <span class="edit-tag" title="Edit details">&#9998;</span>
-      ${m.buy!=null?`<span class="price-tag">$${m.buy}${m.buyQuality?' '+m.buyQuality:''}</span>`:''}
-    </a>`).join('');
+  const slice=filtered.slice(start,end);
+  const keys=slice.map(cardKey);
+  const k=page+'|'+keys.join('\u0002');
+  const soft=!!(opts && opts.ifChanged);
+  if(soft && k===renderedKey) return;   // identical -> leave the loading images alone
+  renderedKey=k;
+  const next=new Map();
+  if(soft && cardEls.size){
+    const keepScroll=grid.scrollTop;
+    const nodes=slice.map((m,i)=>{
+      let el=cardEls.get(keys[i]);
+      if(!el){ cardTpl.innerHTML=cardHtml(m,i); el=cardTpl.content.firstElementChild; }
+      next.set(keys[i],el);
+      return el;
+    });
+    grid.replaceChildren(...nodes);
+    grid.scrollTop=keepScroll;
+  }else{
+    grid.innerHTML=slice.map(cardHtml).join('');
+    const els=grid.children;
+    for(let i=0;i<els.length;i++) next.set(keys[i],els[i]);
+  }
+  cardEls=next;
 }
 function toTop(){
   $('#grid').scrollTop=0;                              // reset the wall's inner scroll
@@ -1252,6 +1748,48 @@ $('#nextPg').addEventListener('click',goNext);
 })();
 let st; $('#searchBox').addEventListener('input',()=>{clearTimeout(st);st=setTimeout(applyFilters,220);});
 $('#sortSel').addEventListener('change',()=>{sortNow();page=0;renderPage();});
+/* The visible sort control, copied from the Collection page. #sortSel stays
+   the single source of truth -- every pick writes to it and fires a real
+   'change', so sortNow() and the listener above need to know nothing about
+   this. It exists because Chrome on Windows draws a <select>'s dropdown list
+   with the OS menu font: the options came out in Segoe UI no matter what
+   font-family the select carried. Plain markup honours Poppins.
+   data-short swaps a "(high)"/"(longest)" suffix for an arrow on the closed
+   button only, where the label has ~180px and would otherwise ellipse off
+   the one word that tells the pair apart. */
+(function(){
+  const wrap=$('#sortWrap'), sel=$('#sortSel'),
+        btn=$('#sortBtn'), panel=$('#sortPanel'), label=$('#sortLabel');
+  panel.innerHTML=[].map.call(sel.options,o=>
+    `<button type="button" role="option" data-v="${esc(o.value)}"`+
+    ` aria-selected="${o.value===sel.value}">${esc(o.textContent)}</button>`).join('');
+  const sync=()=>{
+    const cur=sel.options[sel.selectedIndex];
+    label.textContent=cur?(cur.dataset.short||cur.textContent):'';
+    btn.title=cur?cur.textContent:'Sort wishlist';
+    panel.querySelectorAll('button').forEach(b=>
+      b.setAttribute('aria-selected', String(b.dataset.v===sel.value)));
+  };
+  const close=()=>{ wrap.classList.remove('open'); btn.setAttribute('aria-expanded','false'); };
+  sync();
+  btn.addEventListener('click',e=>{
+    e.stopPropagation();
+    document.querySelectorAll('.facet.open').forEach(x=>x.classList.remove('open'));
+    const open=!wrap.classList.contains('open');
+    wrap.classList.toggle('open',open);
+    btn.setAttribute('aria-expanded',String(open));
+    if(open){ const c=panel.querySelector('[aria-selected="true"]'); if(c) c.scrollIntoView({block:'nearest'}); }
+  });
+  panel.addEventListener('click',e=>{
+    const b=e.target.closest('button[data-v]'); if(!b) return;
+    sel.value=b.dataset.v;
+    sync(); close();
+    sel.dispatchEvent(new Event('change'));
+  });
+  btn.addEventListener('keydown',e=>{ if(e.key==='Escape') close(); });
+  document.addEventListener('click',e=>{ if(!e.target.closest('#sortWrap')) close(); });
+  sel.addEventListener('change',sync);
+})();
 function setSbCollapsed(v){
   document.body.classList.toggle('sbCollapsed',v);
   try{ localStorage.setItem('wl_sb', v?'1':'0'); }catch(e){}
@@ -1269,11 +1807,18 @@ $('#resetAll').addEventListener('click',()=>{
   $('#searchBox').value='';
   FACETS.forEach(f=>selected[f.key].clear());
   document.querySelectorAll('.facet').forEach(el=>updateBadge(el,el.dataset.key));
+  document.querySelectorAll('.facet .opt-list input[type=checkbox]').forEach(cb=>{cb.checked=false;});
+  document.querySelectorAll('.facet .opt-search').forEach(s=>{s.value='';});
   SLIDERS.forEach(s=>s._reset&&s._reset());
+  renderChips();
   applyFilters();
 });
 /* ---------- EDIT MODE ---------- */
-let sessionToken = sessionStorage.getItem('wl_token') || '';
+/* Wrapped, as on the Collection page. Unguarded, a browser with site data
+   blocked throws here at parse-run time and takes the whole rest of the
+   script with it -- including the grid -- over a token only the owner uses. */
+let sessionToken='';
+try{ sessionToken = sessionStorage.getItem('wl_token') || ''; }catch(e){}
 /* Save to the Apps Script. Tries a normal POST first; if the Google Sites
    sandbox blocks it ("Failed to fetch"), falls back to a JSONP request,
    which loads as a script tag and cannot be blocked by CORS. */
@@ -1313,7 +1858,7 @@ function askToken(){                       // in-page dialog: window.prompt() is
 function finishToken(ok){
   const v = ok ? $('#tokenInput').value.trim() : '';
   $('#tokenWrap').classList.remove('open');
-  if(v){ sessionToken=v; sessionStorage.setItem('wl_token',v); }
+  if(v){ sessionToken=v; try{ sessionStorage.setItem('wl_token',v); }catch(e){} }
   const r=tokenResolve; tokenResolve=null; if(r) r(v);
 }
 $('#tokenOk').addEventListener('click',()=>finishToken(true));
@@ -1324,7 +1869,7 @@ async function getToken(){
   if(sessionToken) return sessionToken;
   return await askToken();
 }
-function dropToken(){ sessionToken=''; sessionStorage.removeItem('wl_token'); }
+function dropToken(){ sessionToken=''; try{ sessionStorage.removeItem('wl_token'); }catch(e){} }
 // Google Sites can swallow bubbling clicks inside embeds — bind at the
 // document capture phase so the toggle always sees them. Bind ONCE — adding a
 // listener on the button itself too fires this handler twice per click, which
@@ -1376,7 +1921,8 @@ $('#priceBtn').addEventListener('click',async()=>{
     }
     toast('Prices updated: '+saved+' of '+targets.length+' titles');
     buildFacetValues();   // refresh Price bucket counts
-    applyFilters();       // re-evaluate in case a Price filter is active
+    applyFilters(true, true);  // re-evaluate in case a Price filter is active; stay on this page
+    noteLocalEdit();      // the screen is now newer than the cached copy
   }catch(err){
     if(/token/i.test(err.message||'')) dropToken();   // bad token — re-prompt next click
     const hint=/unknown action/i.test(err.message)
@@ -1461,31 +2007,162 @@ $('#saveBtn').addEventListener('click',async()=>{
     m.priceBucket=priceBucket(m.buy);   // in case Buy Price ever becomes editable
     m.search=[m.title,m.desc,m.year,m.genreRaw,m.studio,m.mpaa].join(' ').toLowerCase();
     buildFacetValues();
+    noteLocalEdit();
     msg.textContent='Saved ✓'; msg.className='msg ok';
-    setTimeout(()=>{ closeEditor(); applyFilters(); },600);
+    setTimeout(()=>{ closeEditor(); applyFilters(true); },600);   // stay on this page
   }catch(err){
     msg.textContent='Could not save: '+err.message; msg.className='msg err';
   }finally{
     $('#saveBtn').disabled=false;
   }
 });
-/* ---------- INIT ---------- */
+/* ---------- SHOW / REPAINT ----------
+   The single way data reaches the screen, for every source: cache, mirror
+   seed, edge answer, confirm pass. It compares the new rows with what is on
+   screen first and does NOTHING when they match -- which is the normal case
+   for every answer after the first. When they differ it swaps the data in
+   under the visitor rather than starting the page over: page number, facet
+   picks, the open facet panel and its search text, slider ranges (rebuilt
+   with keep, see buildSliders), the search box, sort and the wall's scroll
+   position all survive, and cards that did not change keep their <img>
+   (renderPage's soft path). Returns true when it repainted. */
+let shownSig=null;
+const busy=()=>$('#priceBtn').disabled;   // a price refresh is writing into `movies`
+function show(list){
+  const sig=signature(list);
+  if(sig===shownSig) return false;
+  if(busy()) return false;               // don't swap objects out from under it
+  const first=!movies.length;
+  movies=list; shownSig=sig;
+  // An editor left open across a repaint keeps editing the same sheet row,
+  // now through the new object, so a save still reflects on screen.
+  if(currentEdit) currentEdit=movies.find(m=>m.sheetRow===currentEdit.sheetRow)||currentEdit;
+  if(first) syncPerPage();
+  buildFacetValues();
+  // The facet DOM is built once. Rebuilding it would close the open panel and
+  // wipe its search box; the counts and the open list are redone in place by
+  // applyFilters -> refreshFacetsNow instead.
+  if(!facetsReady) buildFacets();
+  buildSliders();
+  applyFilters(!first, !first);
+  renderChips();
+  $('#sidebar').classList.remove('pending');
+  return true;
+}
+/* An edit or a price refresh just changed `movies` in place: the screen is now
+   the newest copy there is, so it becomes both the repaint baseline and the
+   cached copy. Without the cache write, the next visit would paint the
+   pre-edit wishlist from IndexedDB until the edge answered. */
+function noteLocalEdit(){
+  shownSig=signature(movies);
+  idle(()=>cacheSet(movies));
+}
+/* ---------- INIT ----------
+   Staged, so that something useful is on screen at every point:
+     0 ms    static shell + top bar + placeholder tiles (needs no JS)
+     ~30 ms  this browser's cached wishlist, if it has one -> full grid
+     ~50 ms  the edge's copy of the live sheet -> repaint only if different
+             (first visit: raced against the deploy-time mirror, first
+             usable answer paints)
+     idle    if the edge's copy was old, a silent confirm pass against Google
+             -> repaint only if different
+   The old version had one stage: walk the sources one after another behind a
+   full-page cover and paint nothing until Google answered. */
 (async function init(){
-  try{
-    movies=await loadData();
-    syncPerPage();
-    buildFacetValues(); buildFacets(); buildSliders();
-    $('#status').style.display='none';
-    applyFilters();
-  }catch(err){
-    $('#statusTxt').innerHTML='Could not load the sheet.<br><small style="font-weight:700;line-height:1.6">'
-      +'1. Check the spreadsheet is shared as “Anyone with the link – Viewer”.<br>'
-      +'2. If it still fails, in the Sheet use File → Share → Publish to web → your wishlist tab → CSV,<br>'
-      +'&nbsp;&nbsp;&nbsp;&nbsp;then paste that link into PUBLISHED_CSV_URL at the top of this embed code.<br>'
-      +'<span style="color:#607d8b">('+esc(err.message)+')</span></small>';
-    document.querySelector('#status .spin').style.display='none';
+  const t0=performance.now();
+  const ms=()=>Math.round(performance.now()-t0)+'ms';
+  let painted=false, from='';
+  const paint=(list,src)=>{
+    const changed=show(list);
+    if(!painted){
+      painted=true; from=src;
+      setStatus(null);
+      console.info(`[wishlist] first paint from ${src} at ${ms()} (${list.length} titles)`);
+    }else if(changed){
+      console.info(`[wishlist] repainted from ${src} at ${ms()}`);
+    }
+    return changed;
+  };
+  syncPerPage();
+  // On the wire before IndexedDB is even opened.
+  const liveP=loadLive('fast');
+  liveP.catch(()=>{});                   // handled below; keeps the console clean
+  // 0. Last visit's copy.
+  const cached=await cacheGet();
+  if(cached){ paint(cached.d,'cache'); setBar(0.6); }
+  // 1. First visit: race the live edge answer against the mirror seed.
+  let mirrorP=null;
+  if(!painted){
+    setStatus('Loading wishlist&hellip;');
+    mirrorP=loadMirror();
+    mirrorP.catch(()=>{});
+    const seed=await firstNonEmpty([liveP.then(r=>r.rows), mirrorP]);
+    if(seed) paint(seed, 'race');
   }
+  // 2. The live sheet, through the edge.
+  let meta=null;
+  try{
+    const live=await liveP;
+    meta=live.meta;
+    const asOf=Date.now()-(meta.age||0)*1000;
+    /* Stale-edge guard. The edge's fast copy can be OLDER than what this
+       browser already has -- the last visit's confirm pass may have fetched a
+       newer one from Google than the edge has caught up to. Painting it would
+       briefly roll the wishlist back, and the confirm pass would then roll it
+       forward again: two visible flips for no reason. So an old edge copy
+       that predates the cache is not painted; the confirm pass decides. */
+    if(cached && asOf < (cached.asOf||cached.t) && window.__edge && window.__edge.isOld(meta)){
+      console.info('[wishlist] edge copy predates this browser\'s cache; keeping the cache until the confirm pass');
+    }else{
+      paint(live.rows, 'edge '+meta.how+' age '+meta.age+'s');
+      idle(()=>cacheSet(live.rows, asOf));
+    }
+  }catch(err){
+    if(!painted){
+      // 3. Nothing on screen and no live sheet: the old fallback chain.
+      try{
+        paint(await loadFallbacks(mirrorP, ['csv: '+err.message]), 'fallback');
+      }catch(e2){
+        barDone();
+        setStatus('Could not load the sheet.<br><small>'
+          +'1. Check the spreadsheet is shared as &ldquo;Anyone with the link &ndash; Viewer&rdquo;.<br>'
+          +'2. If it still fails, in the Sheet use File &rarr; Share &rarr; Publish to web &rarr; your wishlist tab &rarr; CSV,<br>'
+          +'&nbsp;&nbsp;&nbsp;&nbsp;then paste that link into PUBLISHED_CSV_URL at the top of this embed code.<br>'
+          +'<span style="color:#607d8b">('+esc(e2.message)+')</span></small>', false, true);
+        return;
+      }
+    }else{
+      // Something is already on screen: keep it, say so quietly.
+      console.warn('[wishlist] live sheet unavailable, keeping what is on screen ('+from+'):', err && err.message);
+      toast('Couldn’t reach the sheet — showing the last loaded wishlist');
+    }
+  }
+  barDone(); setStatus(null);
+  console.info(`[wishlist] ${movies.length} titles settled at ${ms()} (first paint: ${from})`);
+  confirmLater(meta);
 })();
+/* The confirm pass. `meta` is what the edge said about the copy this visit
+   used; when it was fresh enough (or came straight from Google) there is
+   nothing to do. Otherwise, once the page is idle, ask again insisting on a
+   copy no older than __edge.FRESH_S, and repaint only if THAT differs from
+   the grid. No status chip, no bar, no toast -- the visitor already has a
+   working page, and the only visible sign is the grid quietly catching up. */
+let confirming=false;
+function confirmLater(meta){
+  if(confirming || !window.__edge || !window.__edge.isOld(meta)) return;
+  confirming=true;
+  idle(async()=>{
+    try{
+      const r=await loadLive('confirm');
+      if(busy()){ console.info('[wishlist] confirm pass: skipped, a price refresh is running'); return; }
+      const changed=show(r.rows);
+      console.info('[wishlist] confirm pass: '+(changed?'CHANGED, caught up':'unchanged'));
+      cacheSet(r.rows, Date.now()-(r.meta.age||0)*1000);
+    }catch(e){
+      console.warn('[wishlist] confirm pass failed (keeping what is on screen):', e && e.message);
+    }
+  });
+}
 </script>
 </body>
 </html>

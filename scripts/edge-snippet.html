@@ -1,0 +1,57 @@
+<script>
+/* ============ EDGE SHEET CACHE (functions/sheet.js) ============
+   Shared by every page. Same block in each file -- keep them in step.
+
+   Google takes 0.5-14s to answer a sheet request and forbids CDNs from keeping
+   a copy, which is why every page used to show its cached grid and then sit
+   on "Checking for changes..." for several seconds. /sheet keeps that copy at
+   Cloudflare's edge instead.
+
+     __edge.fast(url)     -> the edge's copy, however old, in ~50ms
+     __edge.confirm(url)  -> a copy no older than FRESH_S, waiting on Google
+                             only if the edge has nothing that recent
+     __edge.isOld(r)      -> true when a fast answer still needs confirming
+
+   Each resolves to {res, age, how}: `res` is the fetch Response (body unread,
+   so callers can stream it), `age` its age in seconds, `how` where it came
+   from. The pages paint the fast answer straight away and run the confirm
+   pass silently behind it, so the data is still live -- it just no longer
+   holds anything up.
+
+   If /sheet is missing (local preview, a host without Functions) or fails,
+   this goes straight to Google exactly as the pages always did. */
+(function(){
+  var FRESH_S=60;
+  var off=false;
+  function opts(signal){ var o={credentials:'omit'}; if(signal) o.signal=signal; return o; }
+  function direct(url, signal){
+    return fetch(url,opts(signal)).then(function(r){
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      return {res:r, age:0, how:'DIRECT'};
+    });
+  }
+  function viaEdge(url, fresh, signal){
+    if(off) return direct(url, signal);
+    var u='/sheet?u='+encodeURIComponent(url)+(fresh==null?'':'&fresh='+fresh);
+    return fetch(u,opts(signal)).then(function(r){
+      var how=r.headers.get('X-Sheet-Cache');
+      /* No header means this was not the function answering (a 404 page, a
+         static server) -- stop asking it for the rest of this visit. */
+      if(!how){ off=true; return direct(url, signal); }
+      if(!r.ok) throw new Error('sheet HTTP '+r.status);
+      return {res:r, age:+(r.headers.get('X-Sheet-Age')||0), how:how};
+    }).catch(function(e){
+      if(off || (e && e.name==='AbortError')) throw e;
+      try{ console.warn('[edge] /sheet unavailable, using Google directly:', (e&&e.message)||e); }catch(x){}
+      return direct(url, signal);
+    });
+  }
+  window.__edge={
+    FRESH_S:FRESH_S,
+    fast:function(url,signal){ return viaEdge(url,null,signal); },
+    confirm:function(url,maxAge,signal){ return viaEdge(url, maxAge==null?FRESH_S:maxAge, signal); },
+    isOld:function(r){ return !!r && (r.age>FRESH_S || r.how==='ERROR-STALE'); },
+    text:function(p){ return p.then(function(r){ return r.res.text().then(function(t){ r.text=t; return r; }); }); }
+  };
+})();
+</script>

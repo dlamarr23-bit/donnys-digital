@@ -168,6 +168,41 @@ Genre and Studio roughly doubled that to ~2.3MB (~400KB gzipped), and column Y
 adds a rounding error on top. Still far under the 11.1MB it avoids, but a real
 data column is not free — prefer the fingerprint.
 
+## The edge sheet cache (`/sheet`)
+
+Every page paints from this browser's last visit (IndexedDB, shared database
+`dd-cache`, one key per page) or, on a first visit, from the deploy-time
+snapshot/mirror -- and then checks the live sheet. That check used to go
+straight to Google, which answers in 0.5-14s, so every page sat on "Checking
+for changes..." and then visibly updated several seconds later.
+
+`functions/sheet.js` (served at `/sheet?u=<google url>`) is a Cloudflare edge
+cache in front of the sheets:
+
+| Request | Answer |
+|---|---|
+| `/sheet?u=…` (fast) | whatever copy the edge has, in ~50ms, however old; refreshes it from Google in the background if it is over 15s old |
+| `/sheet?u=…&fresh=60` (confirm) | a copy at most 60s old, waiting for Google only if the edge has nothing that recent |
+
+Each page asks the fast way, paints, and -- only if that copy was more than
+60s old -- runs a **silent confirm pass** once everything is on screen: no
+status chip, and the grid only changes if the sheet really did. A repaint keeps
+the page number, filters, slider ranges, search text and scroll position, and
+does not reload posters that did not change. An edge copy that is older than
+the browser's own cache is never painted (it would step the grid backwards);
+the confirm pass settles it instead.
+
+The shared client is the `EDGE SHEET CACHE` block near the top of every page
+(canonical copy: `scripts/edge-snippet.html`; keep the six in step). If
+`/sheet` is missing or failing, it goes straight to Google exactly as before.
+
+Only the spreadsheet ids listed in `SHEETS` in `functions/sheet.js` can be
+fetched. **Add a sheet's id there before pointing a page at it**, and do not
+loosen the check -- it is what stops the function being an open proxy.
+
+The edge cache is per Cloudflare data centre, so the first visitor through a
+given region pays Google's latency once; everyone after them does not.
+
 ## Deploying
 
 A push to the GitHub repo is the whole deploy. Cloudflare Pages watches the
@@ -291,9 +326,11 @@ _headers            caching headers            <- LIVE (Cloudflare reads this)
 _redirects          /movies -> index.html      <- LIVE
 functions/
   img.js            same-origin poster proxy, served at /img
+  sheet.js          edge cache in front of the Google Sheets, served at /sheet
 scripts/
   build-data.mjs    fetches the sheet, writes the snapshots and mirrors
   sheet-rebuild-trigger.gs  Apps Script that pokes the deploy hook
+  edge-snippet.html canonical copy of the EDGE SHEET CACHE block in every page
 assets/             brand mark + favicons (the avatar)
 snapshots/          generated: content-hashed, cached forever
 mirror/             generated: stable names, revalidated
