@@ -1366,6 +1366,19 @@ body.filtersOpen #mobileFilterBtn{background:var(--accent);color:#fff}
 @media(max-width:900px){
 #grid{grid-template-columns:repeat(4,1fr);gap:7px}
 }
+/* Big casts (layoutPeople() in the script). When the row would overflow,
+   every tile is given one shared width (--tw) small enough that the whole
+   cast fits with no slider, faces scaling with it (--fw). If even that is
+   too cramped, the Director strip shrinks to a single tile's width and
+   slides on its own, and the cast gets the rest of the row. */
+#infoPeople.sized #dirBlock{flex:0 0 auto;max-width:none}
+#infoPeople.sized.oneDir #dirBlock{flex:0 0 var(--tw);width:var(--tw)}
+#infoPeople.sized #castBlock{flex:1 1 0;min-width:0}
+#infoPeople.oneDir #dirBlock h4{white-space:nowrap;letter-spacing:.3px;font-size:10px}
+#infoPeople.sized .brow,#infoPeople.sized #dirBlock .brow{flex:0 0 var(--tw);min-width:0;max-width:none;padding:8px 2px 6px;gap:6px}
+#infoPeople.sized .brow .face{width:var(--fw);height:var(--fw);min-width:var(--fw);font-size:calc(var(--fw) * .26)}
+#infoPeople.sized.dense .brow .who{font-size:11.5px}
+#infoPeople.sized.dense .brow .n{font-size:10px}
 /* Mid-size windows: the title line wraps and two-line names make the tiles
    taller, so the faces step down a size to keep everything inside the bar. */
 @media(min-width:761px) and (max-width:1300px){
@@ -1398,8 +1411,9 @@ body.filtersOpen #sidebar{display:block}
 #infoDesc{overflow:visible;max-height:none}
 #infoPeople{flex:0 0 auto}
 .people{gap:8px}
-.brow,#dirBlock .brow{flex:0 0 auto;width:84px;min-width:0;max-width:none;padding:8px 5px 7px;gap:5px;border-radius:10px}
-.brow .face{width:46px;height:46px;min-width:46px;font-size:14px}
+#infoPeople.sized #dirBlock{width:auto}
+#infoPeople.sized .brow,.brow,#dirBlock .brow{flex:0 0 auto;width:84px;min-width:0;max-width:none;padding:8px 5px 7px;gap:5px;border-radius:10px}
+#infoPeople.sized .brow .face,.brow .face{width:46px;height:46px;min-width:46px;font-size:14px}
 .brow .who{font-size:11px}
 .brow .n{font-size:10px}
 }
@@ -3211,6 +3225,37 @@ title="Show ${esc(name)}&#39;s titles">
 <div class="n">${n.toLocaleString()} title${n===1?'':'s'}</div></div>`;
 }
 
+/* Desktop only. Leaves the normal layout alone when it already fits; otherwise
+   picks one tile width for everybody (see #infoPeople.sized in the CSS). */
+function layoutPeople(){
+const box=$('#infoPeople');
+box.classList.remove('sized','oneDir','dense');
+box.style.removeProperty('--tw'); box.style.removeProperty('--fw');
+if(window.innerWidth<=760 || !$('#infoBar').classList.contains('open')) return;
+const GAP=10, MIN=84;
+const d=$('#dirPeople').children.length, c=$('#castPeople').children.length;
+const shown=(d?1:0)+(c?1:0);
+const W=box.clientWidth - (shown>1?GAP:0);   // the gap between the two blocks
+const row=(n,t)=>n? n*t+(n-1)*GAP : 0;
+if(row(d,140)+row(c,110) <= W) return;      // already fits as designed
+const N=d+c;
+let tw=(W-GAP*(N-(shown)))/N, one=false;
+if(tw<MIN && d>1){                          // all of them won't fit: one director
+  one=true;
+  const n=c+1;
+  tw=(W-GAP*(n-shown))/n;
+}
+tw=Math.max(MIN, Math.min(170, Math.floor(tw)));
+const faceMax=window.innerWidth<=1300?62:80;
+box.style.setProperty('--tw',tw+'px');
+box.style.setProperty('--fw',Math.max(40,Math.min(faceMax,tw-16))+'px');
+box.classList.add('sized');
+if(one) box.classList.add('oneDir');
+if(tw<110) box.classList.add('dense');
+}
+let _lpRaf=0;
+window.addEventListener('resize',()=>{cancelAnimationFrame(_lpRaf);_lpRaf=requestAnimationFrame(layoutPeople);});
+
 async function openInfo(sheetRow){
 const m=rowIndex.get(sheetRow); if(!m) return;
 infoRow=sheetRow;
@@ -3233,11 +3278,14 @@ $('#infoMeta').innerHTML=bits.map(b=>`<span>${esc(b)}</span>`).join('');
 $('#infoDesc').textContent = descriptionsLoaded ? (m.desc||'No description available.') : 'Loading description…';
 const dirs=peopleOf(m,'director'), cast=peopleOf(m,'actors');
 $('#dirBlock').style.display=dirs.length?'':'none';
+$('#dirBlock h4').textContent = dirs.length>1 ? `Directors (${dirs.length})` : 'Director';
+$('#dirPeople').scrollLeft=0; $('#castPeople').scrollLeft=0;
 $('#castBlock').style.display=cast.length?'':'none';
 $('#dirPeople').innerHTML=dirs.map(n=>personTile(n,'director')).join('');
 $('#castPeople').innerHTML=cast.map(n=>personTile(n,'actors')).join('');
 $('#infoBar').classList.add('open');
 $('#infoInner').scrollTop=0;
+layoutPeople();
 document.querySelectorAll('.card').forEach(c=>c.classList.toggle('infoOpen', +c.dataset.row===sheetRow));
 resolveHeads([...dirs,...cast]);
 if(!descriptionsLoaded){
@@ -3255,6 +3303,16 @@ $('#closeInfo').addEventListener('click',closeInfo);
    nothing and the wall read as frozen. Scroll the bar only while the bar
    itself has somewhere left to go; otherwise hand the wheel to the grid. */
 $('#infoBar').addEventListener('wheel',e=>{
+// Over a face strip that slides sideways (e.g. one director showing of
+// several), an ordinary wheel turn walks through the strip.
+const strip=e.target.closest('.people');
+if(strip && !e.shiftKey && Math.abs(e.deltaY)>Math.abs(e.deltaX)
+   && strip.scrollWidth>strip.clientWidth+1){
+  const max=strip.scrollWidth-strip.clientWidth;
+  if((e.deltaY>0 && strip.scrollLeft<max-1) || (e.deltaY<0 && strip.scrollLeft>0)){
+    strip.scrollLeft+=e.deltaY; e.preventDefault(); return;
+  }
+}
 const inner=$('#infoInner');
 const room = e.deltaY<0 ? inner.scrollTop>0
                         : inner.scrollTop+inner.clientHeight < inner.scrollHeight-1;
