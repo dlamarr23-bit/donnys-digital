@@ -1169,22 +1169,32 @@ display:none;
    900px-tall window it has to leave two or three rows of posters showing, or
    clicking a face to "see their titles" hands you a single row of them and
    the wall reads as stuck. Anything that doesn't fit scrolls inside the bar. */
+/* Fixed height on desktop (the old bar's natural height). The poster fills it
+   top to bottom, the people row sits on the floor, and the description takes
+   whatever is left between them -- scrolling on its own if a long one needs
+   more -- so the bar never grows to fit content. */
 #infoInner{
-display:flex;gap:16px;padding:14px 16px;
-max-height:min(46vh,340px);overflow-y:auto;
+display:flex;gap:18px;padding:14px 16px;
+height:296px;max-height:min(46vh,340px);min-height:240px;overflow-y:auto;
 scrollbar-width:thin;scrollbar-color:#4a565e transparent;
 }
 #infoInner::-webkit-scrollbar{width:6px}
 #infoInner::-webkit-scrollbar-thumb{background:#4a565e;border-radius:3px}
-#infoPoster{width:80px;min-width:80px;height:120px;border-radius:6px;object-fit:cover;
+#infoPoster{height:100%;width:auto;aspect-ratio:2/3;flex:0 0 auto;border-radius:6px;object-fit:cover;
 background:#263238;display:block}
-#infoMain{flex:1;min-width:0}
-#infoHead{display:flex;align-items:flex-start;gap:14px}
-#infoTitle{font:700 22px 'Poppins',sans-serif;letter-spacing:.6px;line-height:1.15;flex:1;min-width:0}
-#infoMeta{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 9px}
+#infoMain{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column}
+/* Title and badges share one line to buy the height the bigger faces need. */
+#infoHead{display:flex;align-items:center;flex-wrap:wrap;gap:6px 14px;flex:0 0 auto}
+#infoTitle{font:700 22px 'Poppins',sans-serif;letter-spacing:.6px;line-height:1.15;flex:0 1 auto;min-width:0}
+#infoMeta{display:flex;flex-wrap:wrap;gap:6px;margin:0;flex:1 1 auto}
 #infoMeta span{background:#2b343b;color:#b0bec5;border-radius:11px;padding:3px 10px;
 font:700 11px 'Poppins',sans-serif;letter-spacing:.6px}
-#infoDesc{font:400 14px 'Poppins',sans-serif;line-height:1.6;color:#cfd8dc;max-width:115ch;white-space:pre-wrap}
+#infoDesc{font:400 14px 'Poppins',sans-serif;line-height:1.6;color:#cfd8dc;white-space:pre-wrap;
+margin-top:8px;flex:1 1 auto;min-height:22px;overflow-y:auto;
+scrollbar-width:thin;scrollbar-color:#4a565e transparent}
+#infoDesc::-webkit-scrollbar{width:6px}
+#infoDesc::-webkit-scrollbar-thumb{background:#4a565e;border-radius:3px}
+#closeInfo{margin-left:auto}
 #closeInfo{background:none;border:none;color:#90a4ae;font-size:22px;line-height:1;cursor:pointer;
 padding:2px 7px;border-radius:6px;flex:0 0 auto}
 #closeInfo:hover{color:#fff;background:#2b343b}
@@ -1195,28 +1205,32 @@ padding:2px 7px;border-radius:6px;flex:0 0 auto}
    scrolls sideways instead of wrapping. A wide screen has horizontal room to
    spare and no vertical room at all -- stacked, two rows of tiles cost ~240px
    of poster wall to show a director and six actors. */
-#infoPeople{display:flex;gap:20px;align-items:flex-start;margin-top:12px}
+#infoPeople{display:flex;gap:14px;align-items:flex-start;margin-top:10px;flex:0 0 auto}
 .people-block{min-width:0}
 #dirBlock{flex:0 0 auto;max-width:45%}
-#castBlock{flex:1 1 auto}
+#castBlock{flex:1 1 auto;border-left:1px solid #2c353c;padding-left:14px}
 .people-block h4{font:700 10.5px 'Poppins',sans-serif;letter-spacing:1.8px;text-transform:uppercase;
 color:#90a4ae;margin-bottom:7px}
-.people{display:flex;flex-wrap:nowrap;gap:8px;overflow-x:auto;padding-bottom:4px;
+.people{display:flex;flex-wrap:nowrap;gap:10px;overflow-x:auto;padding-bottom:4px;
 scrollbar-width:thin;scrollbar-color:#4a565e transparent}
 .people::-webkit-scrollbar{height:6px}
 .people::-webkit-scrollbar-thumb{background:#4a565e;border-radius:3px}
-.brow{display:flex;flex-direction:column;align-items:center;gap:5px;width:84px;flex:0 0 auto;
-background:#242c32;border-radius:10px;padding:8px 5px 7px;cursor:pointer;
+/* Tiles stretch to share the row's width (110-170px each) and the strip only
+   scrolls once a big cast pushes them below the minimum. */
+.brow{display:flex;flex-direction:column;align-items:center;gap:7px;flex:1 1 0;min-width:110px;max-width:170px;
+background:#242c32;border-radius:12px;padding:12px 6px 10px;cursor:pointer;
 transition:background .15s,transform .12s;text-align:center}
 .brow:hover{background:#2a333a;transform:translateY(-2px)}
 .brow.active{outline:2px solid var(--accent);outline-offset:-2px}
-.brow .face{width:46px;height:46px;min-width:46px;border-radius:50%;overflow:hidden;background:#37474f;
+#dirBlock .brow{flex:0 0 140px;background:#26313a;box-shadow:inset 0 0 0 1px #34505f}
+#dirBlock .brow:hover{background:#2c3944}
+.brow .face{width:80px;height:80px;min-width:80px;border-radius:50%;overflow:hidden;background:#37474f;
 display:flex;align-items:center;justify-content:center;color:#eceff1;
-font:700 14px 'Poppins',sans-serif;letter-spacing:1px}
+font:700 20px 'Poppins',sans-serif;letter-spacing:1px}
 .brow .face img{width:100%;height:100%;object-fit:cover}
-.brow .who{width:100%;font:700 11px 'Poppins',sans-serif;line-height:1.2;overflow:hidden;
+.brow .who{width:100%;font:700 13px 'Poppins',sans-serif;line-height:1.2;overflow:hidden;
 display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
-.brow .n{font:700 10px 'Poppins',sans-serif;color:#90a4ae;letter-spacing:.5px}
+.brow .n{font:700 10.5px 'Poppins',sans-serif;color:#90a4ae;letter-spacing:.5px}
 /* Every active pick, shown above the wall so it is still obvious what the grid
    is narrowed to once the info bar is closed, the facet panel is shut, or the
    whole sidebar is collapsed.
@@ -1348,6 +1362,14 @@ body.filtersOpen #mobileFilterBtn{background:var(--accent);color:#fff}
 @media(max-width:900px){
 #grid{grid-template-columns:repeat(4,1fr);gap:7px}
 }
+/* Mid-size windows: the title line wraps and two-line names make the tiles
+   taller, so the faces step down a size to keep everything inside the bar. */
+@media(min-width:761px) and (max-width:1300px){
+.brow{min-width:96px;padding:10px 5px 8px;gap:6px}
+#dirBlock .brow{flex:0 0 112px}
+.brow .face{width:62px;height:62px;min-width:62px;font-size:17px}
+.brow .who{font-size:12px}
+}
 @media(max-width:760px){
 #app{flex-direction:column;align-items:stretch}
 #mobileFilterBtn{display:block;flex:none}
@@ -1365,6 +1387,17 @@ body.filtersOpen #sidebar{display:block}
    stacked -- but each strip still scrolls sideways rather than wrapping. */
 #infoPeople{flex-direction:column;gap:10px}
 #dirBlock{max-width:100%}
+#castBlock{border-left:none;padding-left:0}
+#infoInner{height:auto;min-height:0}
+#infoMain{display:block}
+#infoHead{align-items:flex-start}
+#infoMeta{flex-basis:100%;order:3}
+#infoDesc{overflow:visible}
+.people{gap:8px}
+.brow,#dirBlock .brow{flex:0 0 auto;width:84px;min-width:0;max-width:none;padding:8px 5px 7px;gap:5px;border-radius:10px}
+.brow .face{width:46px;height:46px;min-width:46px;font-size:14px}
+.brow .who{font-size:11px}
+.brow .n{font-size:10px}
 }
 /* ---------- PAGER -----------------------------------------------------------
    Phone sizing first. The bar was drawn at desktop scale everywhere, and 34px
@@ -1539,9 +1572,9 @@ title="Sort collection"><span id="sortLabel">Sort: Recently Added</span><span cl
 <div id="infoMain">
 <div id="infoHead">
 <h2 id="infoTitle"></h2>
+<div id="infoMeta"></div>
 <button id="closeInfo" title="Close (Esc)">&#10005;</button>
 </div>
-<div id="infoMeta"></div>
 <p id="infoDesc"></p>
 <div id="infoPeople">
 <div class="people-block" id="dirBlock"><h4>Director</h4><div class="people" id="dirPeople"></div></div>
