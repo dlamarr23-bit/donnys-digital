@@ -1190,7 +1190,8 @@ background:#263238;display:block}
 #infoMeta span{background:#2b343b;color:#b0bec5;border-radius:11px;padding:3px 10px;
 font:700 11px 'Poppins',sans-serif;letter-spacing:.6px}
 #infoDesc{font:400 14px 'Poppins',sans-serif;line-height:1.6;color:#cfd8dc;white-space:pre-wrap;
-margin-top:8px;flex:1 1 auto;min-height:22px;overflow-y:auto;
+margin-top:6px;padding-bottom:6px;border-bottom:1px solid #2c353c;
+flex:0 1 auto;max-height:calc(1.6em * 3 + 6px);min-height:0;overflow-y:auto;
 scrollbar-width:thin;scrollbar-color:#4a565e transparent}
 #infoDesc::-webkit-scrollbar{width:6px}
 #infoDesc::-webkit-scrollbar-thumb{background:#4a565e;border-radius:3px}
@@ -1205,10 +1206,13 @@ padding:2px 7px;border-radius:6px;flex:0 0 auto}
    scrolls sideways instead of wrapping. A wide screen has horizontal room to
    spare and no vertical room at all -- stacked, two rows of tiles cost ~240px
    of poster wall to show a director and six actors. */
-#infoPeople{display:flex;gap:14px;align-items:flex-start;margin-top:10px;flex:0 0 auto}
+/* Fills everything under the summary's rule, and the tiles stretch to match. */
+#infoPeople{display:flex;gap:10px;align-items:stretch;margin-top:8px;flex:1 0 auto}
+.people-block{display:flex;flex-direction:column}
+.people{flex:1 1 auto;align-items:stretch}
 .people-block{min-width:0}
 #dirBlock{flex:0 0 auto;max-width:45%}
-#castBlock{flex:1 1 auto;border-left:1px solid #2c353c;padding-left:14px}
+#castBlock{flex:1 1 auto}
 .people-block h4{font:700 10.5px 'Poppins',sans-serif;letter-spacing:1.8px;text-transform:uppercase;
 color:#90a4ae;margin-bottom:7px}
 .people{display:flex;flex-wrap:nowrap;gap:10px;overflow-x:auto;padding-bottom:4px;
@@ -1218,7 +1222,7 @@ scrollbar-width:thin;scrollbar-color:#4a565e transparent}
 /* Tiles stretch to share the row's width (110-170px each) and the strip only
    scrolls once a big cast pushes them below the minimum. */
 .brow{display:flex;flex-direction:column;align-items:center;gap:7px;flex:1 1 0;min-width:110px;max-width:170px;
-background:#242c32;border-radius:12px;padding:12px 6px 10px;cursor:pointer;
+background:#242c32;border-radius:12px;padding:10px 2px 8px;justify-content:center;cursor:pointer;
 transition:background .15s,transform .12s;text-align:center}
 .brow:hover{background:#2a333a;transform:translateY(-2px)}
 .brow.active{outline:2px solid var(--accent);outline-offset:-2px}
@@ -1365,7 +1369,7 @@ body.filtersOpen #mobileFilterBtn{background:var(--accent);color:#fff}
 /* Mid-size windows: the title line wraps and two-line names make the tiles
    taller, so the faces step down a size to keep everything inside the bar. */
 @media(min-width:761px) and (max-width:1300px){
-.brow{min-width:96px;padding:10px 5px 8px;gap:6px}
+.brow{min-width:96px;padding:8px 2px 6px;gap:6px}
 #dirBlock .brow{flex:0 0 112px}
 .brow .face{width:62px;height:62px;min-width:62px;font-size:17px}
 .brow .who{font-size:12px}
@@ -1387,12 +1391,12 @@ body.filtersOpen #sidebar{display:block}
    stacked -- but each strip still scrolls sideways rather than wrapping. */
 #infoPeople{flex-direction:column;gap:10px}
 #dirBlock{max-width:100%}
-#castBlock{border-left:none;padding-left:0}
 #infoInner{height:auto;min-height:0}
 #infoMain{display:block}
 #infoHead{align-items:flex-start}
 #infoMeta{flex-basis:100%;order:3}
-#infoDesc{overflow:visible}
+#infoDesc{overflow:visible;max-height:none}
+#infoPeople{flex:0 0 auto}
 .people{gap:8px}
 .brow,#dirBlock .brow{flex:0 0 auto;width:84px;min-width:0;max-width:none;padding:8px 5px 7px;gap:5px;border-radius:10px}
 .brow .face{width:46px;height:46px;min-width:46px;font-size:14px}
