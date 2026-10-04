@@ -248,16 +248,19 @@ body{
    form-control white -- which the page-level color-scheme:dark flips to a dark
    grey, leaving dark text and a dark caret on a dark box. Never let a
    control's legibility depend on a UA default. */
+/* Same white pill as the facet buttons below it, pinned to the light scheme
+   with its colours set explicitly. */
 #searchBox{
-  width:100%;padding:9px 12px;border:1px solid #4a565e;border-radius:6px;
-  background:#263238;
-  font:700 13.5px 'Poppins',sans-serif;color:#ffffff;
-  caret-color:#ffffff;
-  margin-bottom:12px;outline:none;
+  width:100%;padding:5px 9px;border:none;border-radius:8px;
+  background:var(--pill);color:var(--pill-text);color-scheme:light;
+  font:700 12.5px 'Poppins',sans-serif;letter-spacing:.6px;
+  caret-color:var(--pill-text);
+  margin-bottom:12px;outline:none;transition:box-shadow .15s;
 }
-#searchBox::placeholder{color:#90a4ae}
+#searchBox::placeholder{color:#78909c;text-transform:uppercase;letter-spacing:1.2px}
+#searchBox:hover{box-shadow:0 0 0 2px rgba(255,255,255,.25)}
 /* outline:none removes the browser's focus ring, so give the field its own. */
-#searchBox:focus{border-color:#eceff1}
+#searchBox:focus{box-shadow:0 0 0 2px var(--accent)}
 .facet{position:relative;margin-bottom:10px}
 .facet-btn{
   width:100%;display:flex;align-items:center;justify-content:space-between;
@@ -409,18 +412,19 @@ body{
 #resetAll:hover{background:#168264;border-color:#168264;color:#ffffff;
   box-shadow:0 0 0 2px rgba(255,255,255,.25)}
 /* collapse control (desktop only) */
+/* Every button that talks about filters is the Reset-all green. */
 #sbCollapse{
-  width:100%;margin-bottom:10px;padding:8px;border:1px solid #4a565e;border-radius:8px;
-  background:transparent;color:#b0bec5;cursor:pointer;
+  width:100%;margin-bottom:10px;padding:8px;border:1px solid #157A60;border-radius:8px;
+  background:#157A60;color:#ffffff;cursor:pointer;
   font:700 11px 'Poppins',sans-serif;letter-spacing:1.5px;text-transform:uppercase;
 }
-#sbCollapse:hover{border-color:#eceff1;color:#fff}
+#sbCollapse:hover{background:#168264;border-color:#168264;color:#fff;box-shadow:0 0 0 2px rgba(255,255,255,.25)}
 #sbExpand{
   display:none;width:34px;min-width:34px;height:100%;
-  background:var(--bg-soft);border:none;cursor:pointer;color:#b0bec5;font-size:17px;
+  background:#157A60;border:none;cursor:pointer;color:#ffffff;font-size:17px;
   align-items:center;justify-content:center;
 }
-#sbExpand:hover{background:#28313a;color:#fff}
+#sbExpand:hover{background:#168264;color:#fff}
 @media(min-width:761px){
   body.sbCollapsed #sidebar{display:none}
   body.sbCollapsed #sbExpand{display:flex}
@@ -442,7 +446,10 @@ body{
   width:132px;height:100%;display:flex;align-items:center;justify-content:center;
   background:transparent;border:none;color:#fff;font-size:39px;cursor:pointer;border-radius:6px;
 }
-.pagerBar .pg-arrow:hover:not(:disabled){background:rgba(255,255,255,.18)}
+/* Hover makes the arrow itself bigger instead of lighting a box behind it;
+   the button keeps its size, so the bar never moves. */
+.pagerBar .pg-arrow{transition:font-size .12s ease}
+.pagerBar .pg-arrow:hover:not(:disabled){font-size:56px}
 .pagerBar .pg-arrow:disabled{opacity:.35;cursor:default}
 .pagerBar .pg-label{
   flex:1;text-align:center;
@@ -617,10 +624,10 @@ body.editing #editToggle{background:var(--accent);color:#fff}
 #cancelBtn{background:#eceff1;color:#546e7a}
 #mobileFilterBtn{
   display:none;margin:12px 12px 0;padding:12px;border:none;border-radius:8px;
-  background:var(--pill);color:var(--pill-text);cursor:pointer;
+  background:#157A60;color:#ffffff;cursor:pointer;
   font:700 13px 'Poppins',sans-serif;letter-spacing:1.2px;text-transform:uppercase;
 }
-body.filtersOpen #mobileFilterBtn{background:var(--accent);color:#fff}
+body.filtersOpen #mobileFilterBtn{background:#157A60;color:#fff}
 @media(max-width:900px){
   #grid{grid-template-columns:repeat(4,1fr);gap:7px}
 }
@@ -647,18 +654,14 @@ body.filtersOpen #mobileFilterBtn{background:var(--accent);color:#fff}
    than fixed to the window, so it tracks the sidebar for free -- no
    left-offset maths, and collapsing the sidebar widens it on its own.
    -------------------------------------------------------------------------- */
-#pagerBottom{
-  position:absolute;left:4px;right:10px;bottom:14px;z-index:40;
-  box-shadow:0 6px 20px rgba(0,0,0,.6);
-  opacity:0;transform:translateY(140%);pointer-events:none;
-  transition:opacity .18s ease,transform .18s ease;
-}
-/* Shown at the end of the wall's own scroll, and only when there is somewhere
-   else to go -- a single page of results needs no pager. */
-body.atEnd.multiPage #pagerBottom{opacity:1;transform:none;pointer-events:auto}
-/* Blank strip at the foot of the wall for the bar to sit over, so the last row
-   of covers is never hidden behind it. */
-#grid{padding-bottom:70px}
+/* Static: it lives inside #grid as the last item, spanning every column, so
+   it simply scrolls into view after the last row of covers and never floats
+   over them. The bottom-pager script keeps it parked at the end of the grid
+   through every repaint. Outside the grid and on a single page it is hidden. */
+#pagerBottom{display:none}
+#grid > #pagerBottom{display:flex;grid-column:1 / -1;margin-top:6px}
+body:not(.multiPage) #grid > #pagerBottom{display:none}
+#grid{padding-bottom:4px}
 /* The jump control. This was a <select>, which on a 19,000-title collection
    meant scrolling a 127-item menu to reach page 67 -- a list, not a jump. It
    is now the page number itself: click it and it turns into a field you type
@@ -682,17 +685,15 @@ body.atEnd.multiPage #pagerBottom{opacity:1;transform:none;pointer-events:auto}
   color:#fff;caret-color:#fff;outline:none;color-scheme:dark;
 }
 #pgJumpOf{color:var(--bar-text)}
-@media(prefers-reduced-motion:reduce){#pagerBottom{transition:none}}
 @media(max-width:760px){
   .pagerBar{height:46px}
   .pagerBar .pg-arrow{width:62px;font-size:30px}
+  .pagerBar .pg-arrow:hover:not(:disabled){font-size:42px}
   .pagerBar .pg-label{font:700 20px 'Poppins',sans-serif;letter-spacing:.5px;white-space:nowrap}
   /* The drawer is a tool for the wall, not a replacement for it, so it has to
      leave posters on screen: this caps it at the search box, the sort and six
      facets. The seventh row peeks out under the cap to say the list scrolls. */
   #sidebar{max-height:min(55%,340px)}
-  #grid{padding-bottom:58px}
-  #pagerBottom{left:8px;right:8px;bottom:8px}
   #pgJump,#pgJumpIn,#pgJumpOf{font:700 19px 'Poppins',sans-serif;letter-spacing:.5px}
   #pgJumpForm{gap:7px}
 }
@@ -1676,6 +1677,13 @@ function toTop(){
   // bringing the top pager bar back into view after a page flip
   $('#pagerTop').scrollIntoView({behavior:'smooth', block:'start'});
 }
+function pinDocTop(){
+  if(document.scrollingElement && document.scrollingElement.scrollTop) document.scrollingElement.scrollTop=0;
+  if(document.body.scrollTop) document.body.scrollTop=0;
+}
+// Anything else that nudges the document gets put straight back, so the top
+// pager bar is always on screen.
+window.addEventListener('scroll',pinDocTop,{passive:true});
 function goPrev(){ if(page>0){ page--; renderPage(); toTop(); } }
 function goNext(){ page++; renderPage(); toTop(); }
 $('#prevPg').addEventListener('click',goPrev);
@@ -1697,6 +1705,12 @@ $('#nextPg').addEventListener('click',goNext);
         label=document.getElementById('pgJump'), form=document.getElementById('pgJumpForm'),
         field=document.getElementById('pgJumpIn'), ofTxt=document.getElementById('pgJumpOf');
   let cur=0, pageCount=1;
+  // Park the bottom pager as the last item of the wall and keep it there:
+  // every repaint rewrites the grid's children, which drops it off the end.
+  const pagerB=document.getElementById('pagerBottom');
+  const parkPager=function(){ if(grid.lastElementChild!==pagerB) grid.appendChild(pagerB); };
+  new MutationObserver(parkPager).observe(grid,{childList:true});
+  parkPager();
   function openJump(){
     field.value=String(cur+1);
     label.hidden=true; form.hidden=false;
