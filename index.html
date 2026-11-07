@@ -1287,17 +1287,25 @@ scrollbar-width:thin;scrollbar-color:#4a565e transparent}
 .people::-webkit-scrollbar-thumb{background:#4a565e;border-radius:3px}
 /* Tiles stretch to share the row's width (110-170px each) and the strip only
    scrolls once a big cast pushes them below the minimum. */
-.brow{display:flex;flex-direction:column;align-items:center;gap:7px;flex:1 1 0;min-width:110px;max-width:170px;
-background:#242c32;border-radius:12px;padding:10px 2px 8px;justify-content:center;cursor:pointer;
+.brow{display:flex;flex-direction:column;align-items:center;gap:4px;flex:1 1 0;min-width:110px;max-width:170px;
+background:#242c32;border-radius:12px;padding:6px 4px;justify-content:center;cursor:pointer;
 transition:background .15s,transform .12s;text-align:center}
 .brow:hover{background:#2a333a;transform:translateY(-2px)}
 .brow.active{outline:2px solid var(--accent);outline-offset:-2px}
 #dirBlock .brow{flex:0 0 140px;background:#26313a;box-shadow:inset 0 0 0 1px #34505f}
 #dirBlock .brow:hover{background:#2c3944}
-.brow .face{width:80px;height:80px;min-width:80px;border-radius:50%;overflow:hidden;background:#37474f;
+/* --fw is set by growFaces() in the script: the face takes all the height the
+   tile has spare (tiles are as tall as the bar leaves them), so it is no longer
+   a fixed 80px circle floating in ~45px of empty tile. 80px is the fallback. */
+.brow .face{width:var(--fw,80px);height:var(--fw,80px);min-width:var(--fw,80px);border-radius:50%;overflow:hidden;background:#37474f;
 display:flex;align-items:center;justify-content:center;color:#eceff1;
-font:700 20px 'Poppins',sans-serif;letter-spacing:1px}
-.brow .face img{width:100%;height:100%;object-fit:cover}
+font:700 20px 'Poppins',sans-serif;font-size:calc(var(--fw,80px) * .26);letter-spacing:1px}
+/* Wikipedia portraits are mostly tall half-body shots, so a plain centred
+   cover crop showed a whole torso with the face ~30px across. Crop high and
+   zoom a little so the head fills the circle. Sources are 330px wide, which
+   stays sharp at these sizes. */
+.brow .face img{width:100%;height:100%;object-fit:cover;object-position:50% 15%;
+transform:scale(1.18);transform-origin:50% 25%}
 .brow .who{width:100%;font:700 13px 'Poppins',sans-serif;line-height:1.2;overflow:hidden;
 display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 .brow .n{font:700 10.5px 'Poppins',sans-serif;color:#90a4ae;letter-spacing:.5px}
@@ -1441,16 +1449,16 @@ body.filtersOpen #mobileFilterBtn{background:#157A60;color:#fff}
 #infoPeople.sized.oneDir #dirBlock{flex:0 0 var(--tw);width:var(--tw)}
 #infoPeople.sized #castBlock{flex:1 1 0;min-width:0}
 #infoPeople.oneDir #dirBlock h4{white-space:nowrap;letter-spacing:.3px;font-size:10px}
-#infoPeople.sized .brow,#infoPeople.sized #dirBlock .brow{flex:0 0 var(--tw);min-width:0;max-width:none;padding:8px 2px 6px;gap:6px}
+#infoPeople.sized .brow,#infoPeople.sized #dirBlock .brow{flex:0 0 var(--tw);min-width:0;max-width:none;padding:6px 3px;gap:4px}
 #infoPeople.sized .brow .face{width:var(--fw);height:var(--fw);min-width:var(--fw);font-size:calc(var(--fw) * .26)}
 #infoPeople.sized.dense .brow .who{font-size:11.5px}
 #infoPeople.sized.dense .brow .n{font-size:10px}
 /* Mid-size windows: the title line wraps and two-line names make the tiles
    taller, so the faces step down a size to keep everything inside the bar. */
 @media(min-width:761px) and (max-width:1300px){
-.brow{min-width:96px;padding:8px 2px 6px;gap:6px}
+.brow{min-width:96px;padding:6px 3px;gap:4px}
 #dirBlock .brow{flex:0 0 112px}
-.brow .face{width:62px;height:62px;min-width:62px;font-size:17px}
+.brow .face{width:var(--fw,62px);height:var(--fw,62px);min-width:var(--fw,62px);font-size:calc(var(--fw,62px) * .26)}
 .brow .who{font-size:12px}
 }
 @media(max-width:760px){
@@ -1478,8 +1486,8 @@ body.filtersOpen #sidebar{display:block}
 #infoPeople{flex:0 0 auto}
 .people{gap:8px}
 #infoPeople.sized #dirBlock{width:auto}
-#infoPeople.sized .brow,.brow,#dirBlock .brow{flex:0 0 auto;width:84px;min-width:0;max-width:none;padding:8px 5px 7px;gap:5px;border-radius:10px}
-#infoPeople.sized .brow .face,.brow .face{width:46px;height:46px;min-width:46px;font-size:14px}
+#infoPeople.sized .brow,.brow,#dirBlock .brow{flex:0 0 auto;width:84px;min-width:0;max-width:none;padding:6px 4px;gap:4px;border-radius:10px}
+#infoPeople.sized .brow .face,.brow .face{width:60px;height:60px;min-width:60px;font-size:15px}
 .brow .who{font-size:11px}
 .brow .n{font-size:10px}
 }
@@ -3354,6 +3362,32 @@ const box=$('#infoPeople');
 box.classList.remove('sized','oneDir','dense');
 box.style.removeProperty('--tw'); box.style.removeProperty('--fw');
 if(window.innerWidth<=760 || !$('#infoBar').classList.contains('open')) return;
+sizeTiles(box);
+growFaces(box);
+}
+/* The tiles are as tall as the bar leaves them (the people row stretches to
+   fill it), but the face sat at a fixed 62/80px with ~45px of empty tile
+   around it. Measure the room every tile has spare -- the one with the
+   tallest name decides -- and hand it all to the face, capped by the tile's
+   width and by FACE_MAX. Never shrinks a face below its CSS size. */
+const FACE_MAX=140;
+function growFaces(box){
+const tiles=box.querySelectorAll('.brow');
+if(!tiles.length) return;
+let free=Infinity, wide=Infinity, cur=0;
+for(const t of tiles){
+const cs=getComputedStyle(t);
+let used=parseFloat(cs.paddingTop)+parseFloat(cs.paddingBottom)
+  +(parseFloat(cs.rowGap)||0)*Math.max(0,t.children.length-1);
+for(const c of t.children) used+=c.offsetHeight;
+free=Math.min(free, t.clientHeight-used);
+wide=Math.min(wide, t.clientWidth-parseFloat(cs.paddingLeft)-parseFloat(cs.paddingRight));
+cur=t.querySelector('.face').offsetHeight;
+}
+const fw=Math.floor(Math.min(cur+Math.max(0,free), wide, FACE_MAX));
+if(fw>cur) box.style.setProperty('--fw',fw+'px');
+}
+function sizeTiles(box){
 const GAP=10, MIN=84;
 const d=$('#dirPeople').children.length, c=$('#castPeople').children.length;
 const shown=(d?1:0)+(c?1:0);
@@ -3414,7 +3448,10 @@ if(!descriptionsLoaded){
 await loadDescriptions();
 // The bar may have moved on to another title, or been closed, by the time
 // the (slower, lazy) description fetch resolves.
-if(infoRow===sheetRow) $('#infoDesc').textContent = m.desc || 'No description available.';
+if(infoRow===sheetRow){
+$('#infoDesc').textContent = m.desc || 'No description available.';
+layoutPeople();   // a longer summary leaves the tiles less height
+}
 }
 }
 $('#closeInfo').addEventListener('click',closeInfo);
