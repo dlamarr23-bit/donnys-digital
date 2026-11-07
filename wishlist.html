@@ -2,13 +2,23 @@
 <html lang="en">
 <head>
      <!-- Google tag (gtag.js) -->
-<script async src="https://www.googletagmanager.com/gtag/js?id=G-QZY8D0SP6C"></script>
 <script>
   window.dataLayer = window.dataLayer || [];
   function gtag(){dataLayer.push(arguments);}
   gtag('js', new Date());
 
   gtag('config', 'G-QZY8D0SP6C');
+  // gtag.js itself (~180KB gzip, ~535KB of JS) is fetched only after the
+  // page has loaded, so it never competes with the data or the first
+  // posters. GA replays the commands queued above, with the original
+  // timestamp, when it arrives.
+  addEventListener('load', function(){
+    (window.requestIdleCallback || function(f){ setTimeout(f, 200); })(function(){
+      var s = document.createElement('script'); s.async = true;
+      s.src = 'https://www.googletagmanager.com/gtag/js?id=G-QZY8D0SP6C';
+      document.head.appendChild(s);
+    }, {timeout: 2000});
+  });
 </script>
 <!-- ===================================================================
      POSTER ROUTING -- runs before anything else in the page.
@@ -30,8 +40,9 @@
      2. Resizing: this USED to also re-encode, when the proxy was Netlify's
         Image CDN -- a poster arrived as ~10KB of webp instead of ~40KB of
         source jpeg. On Cloudflare Pages there is no image-processing step,
-        so the &w= and &fm= below are sent and ignored, and posters arrive
-        at their original size and format. See README.md "Posters".
+        so &fm= is ignored. For Vudu covers img.js relays through Photon,
+        which does resize: &w= (one of BUCKETS below) is passed through.
+        Other hosts arrive at their original size. See README.md "Posters".
 
      The host allowlist lives in functions/img.js -- a URL whose host is not
      on that list is refused, so add the host there before pointing anything
@@ -43,8 +54,30 @@
   var PROXY  = "/img";
   var WIDTH  = 300;      // poster cards render ~150px wide; 300 covers retina
   var FORMAT = "webp";   // smaller than the source jpg
+  // Covers in the #grid wall are asked for at the size they are drawn:
+  // column width x screen pixel ratio, rounded UP to one of these. A 300px
+  // poster in a 65px card was ~27KB where ~5KB looks the same. img.js only
+  // honours these exact values (anything else gets 300), which keeps the
+  // number of cached copies per poster small. Everything else stays 300.
+  var BUCKETS = [100, 150, 200, 250, 300];
+  var gridW = null;      // one measurement per batch of mutations
+  function coverWidth(el) {
+    var g = el && el.closest ? el.closest("#grid") : null;
+    if (!g) return WIDTH;
+    if (gridW === null) {
+      gridW = WIDTH;
+      var col = parseFloat(getComputedStyle(g).gridTemplateColumns);
+      if (col > 0) {
+        var need = col * (window.devicePixelRatio || 1);
+        for (var i = 0; i < BUCKETS.length; i++) {
+          if (BUCKETS[i] >= need) { gridW = BUCKETS[i]; break; }
+        }
+      }
+    }
+    return gridW;
+  }
 
-  function proxied(u) {
+  function proxied(u, el) {
     if (!u) return u;
     u = String(u).trim();
     if (!/^(https?:)?\/\//i.test(u)) return u;              // relative -> leave alone
@@ -52,17 +85,18 @@
     if (u.indexOf("//" + location.host) !== -1) return u;   // same-site -> leave alone
     if (u.slice(0, 2) === "//") u = "https:" + u;
     else if (u.slice(0, 5).toLowerCase() === "http:") u = "https:" + u.slice(5);
-    return PROXY + "?url=" + encodeURIComponent(u) + "&w=" + WIDTH + "&fm=" + FORMAT;
+    return PROXY + "?url=" + encodeURIComponent(u) + "&w=" + coverWidth(el) + "&fm=" + FORMAT;
   }
 
   function fix(el) {
     if (!el || el.tagName !== "IMG") return;
     var src = el.getAttribute("src");
-    var next = proxied(src);
+    var next = proxied(src, el);
     if (next && next !== src) el.setAttribute("src", next);
   }
 
   function scan(root) {
+    gridW = null;
     if (!root || root.nodeType !== 1) return;
     fix(root);
     if (root.querySelectorAll) {
@@ -72,6 +106,7 @@
   }
 
   new MutationObserver(function (mutations) {
+    gridW = null;
     for (var i = 0; i < mutations.length; i++) {
       var m = mutations[i];
       if (m.type === "attributes") fix(m.target);
@@ -430,6 +465,13 @@ body{
   body.sbCollapsed #sbExpand{display:flex}
   body.sbCollapsed #grid{grid-template-columns:repeat(12,1fr)}
 }
+/* 761-900px: the narrow-screen rule below makes the open grid 4 columns,
+   but the 12-column rule above outranks it (higher specificity), which
+   shrank posters to ~55px. 5 columns is always a bit wider than the
+   sidebar-open 4, and the 180-cover wide page is exactly 36 rows. */
+@media(min-width:761px) and (max-width:900px){
+  body.sbCollapsed #grid{grid-template-columns:repeat(5,1fr)}
+}
 @media(max-width:760px){
   #sbCollapse,#sbExpand{display:none !important}
 }
@@ -737,12 +779,28 @@ body:not(.multiPage) #grid > #pagerBottom{display:none}
 body{padding-top:var(--dd-nav-h);box-sizing:border-box}
 /* The loading toast is fixed near the top and would sit under the bar. */
 #status{top:calc(var(--dd-nav-h) + 20px)!important}
+/* The full-size bar needs ~1020px; below that the last links were cut off
+   inside a scroll strip with no visible scrollbar. */
+@media(min-width:761px) and (max-width:1040px){
+  .dd-nav{padding:0 12px}
+  .dd-brand{margin-right:12px;font-size:20px}
+  .dd-brand-img{width:42px;height:42px}
+  .dd-links a{font-size:17px;padding:3px 7px}
+}
 @media(max-width:760px){
   :root{--dd-nav-h:45px}
   .dd-nav{padding:0 10px}
-  .dd-brand{margin-right:12px;font-size:21px}
+  /* Phones: logo only, so the six links get the width. The name is still
+     the link's text, so screen readers announce it. */
+  .dd-brand{margin-right:6px;font-size:0;gap:0}
   .dd-brand-img{width:40.5px;height:40.5px}
-  .dd-links a{font-size:20.25px;padding:3px 9px}
+  .dd-links a{font-size:15px;padding:3px 7px}
+}
+/* Six links need ~460px even with the logo alone, so on narrow phones they
+   wrap to a second row rather than hide off-screen. */
+@media(max-width:560px){
+  :root{--dd-nav-h:64px}
+  .dd-links{flex-wrap:wrap;row-gap:2px;overflow:visible}
 }
 </style><nav class="dd-nav">
   <a class="dd-brand" href="/">
@@ -1984,6 +2042,11 @@ function openEditor(sheetRow){
               :`<input data-h="${esc(f.h)}" value="${esc(v)}">`}
     </div>`;
   }).join('');
+  // What each field held when the editor opened, read back from the element
+  // (so the browser's own value normalisation is already applied). Save sends
+  // only the fields that differ, so a stale copy on screen can never write
+  // over a newer edit made in the Sheet.
+  body.querySelectorAll('[data-h]').forEach(el=>{ el.dataset.orig=el.value; });
   $('#modalWrap').classList.add('open');
 }
 function closeEditor(){ $('#modalWrap').classList.remove('open'); currentEdit=null; }
@@ -1992,21 +2055,27 @@ $('#cancelBtn').addEventListener('click',closeEditor);
 $('#modalWrap').addEventListener('click',e=>{ if(e.target.id==='modalWrap') closeEditor(); });
 $('#saveBtn').addEventListener('click',async()=>{
   if(!currentEdit||!APPS_SCRIPT_URL) return;
-  const token=await getToken();
-  if(!token){ $('#modalMsg').textContent='A token is required to save changes.'; $('#modalMsg').className='msg err'; return; }
+  // Held for the whole save: closing the editor (or opening another title)
+  // while the request is in flight nulls/replaces currentEdit.
+  const m=currentEdit;
   const updates={};
-  document.querySelectorAll('#modalBody [data-h]').forEach(el=>{ updates[el.dataset.h]=el.value; });
-  const msg=$('#modalMsg'); msg.textContent='Saving…'; msg.className='msg';
+  document.querySelectorAll('#modalBody [data-h]').forEach(el=>{
+    if(el.value!==el.dataset.orig) updates[el.dataset.h]=el.value;   // changed fields only
+  });
+  const msg=$('#modalMsg');
+  if(!Object.keys(updates).length){ msg.textContent='No changes to save.'; msg.className='msg'; return; }
+  const token=await getToken();
+  if(!token){ msg.textContent='A token is required to save changes.'; msg.className='msg err'; return; }
+  msg.textContent='Saving…'; msg.className='msg';
   $('#saveBtn').disabled=true;
   try{
-    const data=await saveToSheet({token,action:'update',sheetRow:currentEdit.sheetRow,
-        key:{ContentID:currentEdit.contentId,Title:currentEdit.title},updates});
+    const data=await saveToSheet({token,action:'update',sheetRow:m.sheetRow,
+        key:{ContentID:m.contentId,Title:m.title},updates});
     if(!data.ok){
       if(/token/i.test(data.error||'')) dropToken();
       throw new Error(data.error||'Save failed');
     }
     // reflect changes locally without a full reload
-    const m=currentEdit;
     for(const [h,v] of Object.entries(updates)){
       const key=COLMAP[h]; if(!key) continue;
       if(['year','runtime','myRating'].includes(key)){ const n=parseFloat(v); m[key]=isNaN(n)?null:n; }
@@ -2025,7 +2094,7 @@ $('#saveBtn').addEventListener('click',async()=>{
     buildFacetValues();
     noteLocalEdit();
     msg.textContent='Saved ✓'; msg.className='msg ok';
-    setTimeout(()=>{ closeEditor(); applyFilters(true); },600);   // stay on this page
+    setTimeout(()=>{ if(currentEdit===m) closeEditor(); applyFilters(true); },600);   // stay on this page
   }catch(err){
     msg.textContent='Could not save: '+err.message; msg.className='msg err';
   }finally{

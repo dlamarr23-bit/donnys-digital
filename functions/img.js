@@ -86,12 +86,20 @@ export async function onRequestGet(context) {
   // through Photon instead of hitting Vudu directly. Bonus: Photon also
   // resizes, so this recovers some of the payload savings the old Netlify
   // Image CDN provided for Vudu posters specifically.
+  //
+  // Width: the pages ask for the size a cover is actually drawn (&w=, see
+  // BUCKETS in each page's poster-routing script). Only these exact values
+  // are honoured, so each poster has at most five cached copies and nobody
+  // can make the edge store arbitrary sizes; anything else gets 300.
   const isVudu = /(^|\.)vudu\.com$/i.test(parsed.hostname);
+  const W_OK = [100, 150, 200, 250, 300];
+  const wq = parseInt(reqUrl.searchParams.get("w"), 10);
+  const w = W_OK.includes(wq) ? wq : 300;
   const fetchTarget = isVudu
     ? "https://i0.wp.com/" +
       parsed.host +
       parsed.pathname +
-      (parsed.search ? parsed.search + "&w=300" : "?w=300")
+      (parsed.search ? parsed.search + "&w=" + w : "?w=" + w)
     : parsed.toString();
 
   let upstream;

@@ -2,13 +2,23 @@
 <html lang="en">
 <head>
      <!-- Google tag (gtag.js) -->
-<script async src="https://www.googletagmanager.com/gtag/js?id=G-QZY8D0SP6C"></script>
 <script>
   window.dataLayer = window.dataLayer || [];
   function gtag(){dataLayer.push(arguments);}
   gtag('js', new Date());
 
   gtag('config', 'G-QZY8D0SP6C');
+  // gtag.js itself (~180KB gzip, ~535KB of JS) is fetched only after the
+  // page has loaded, so it never competes with the data or the first
+  // posters. GA replays the commands queued above, with the original
+  // timestamp, when it arrives.
+  addEventListener('load', function(){
+    (window.requestIdleCallback || function(f){ setTimeout(f, 200); })(function(){
+      var s = document.createElement('script'); s.async = true;
+      s.src = 'https://www.googletagmanager.com/gtag/js?id=G-QZY8D0SP6C';
+      document.head.appendChild(s);
+    }, {timeout: 2000});
+  });
 </script>
 <!-- ===================================================================
      POSTER ROUTING -- runs before anything else in the page.
@@ -30,8 +40,9 @@
      2. Resizing: this USED to also re-encode, when the proxy was Netlify's
         Image CDN -- a poster arrived as ~10KB of webp instead of ~40KB of
         source jpeg. On Cloudflare Pages there is no image-processing step,
-        so the &w= and &fm= below are sent and ignored, and posters arrive
-        at their original size and format. See README.md "Posters".
+        so &fm= is ignored. For Vudu covers img.js relays through Photon,
+        which does resize: &w= (one of BUCKETS below) is passed through.
+        Other hosts arrive at their original size. See README.md "Posters".
 
      The host allowlist lives in functions/img.js -- a URL whose host is not
      on that list is refused, so add the host there before pointing anything
@@ -43,8 +54,30 @@
   var PROXY  = "/img";
   var WIDTH  = 300;      // poster cards render ~150px wide; 300 covers retina
   var FORMAT = "webp";   // smaller than the source jpg
+  // Covers in the #grid wall are asked for at the size they are drawn:
+  // column width x screen pixel ratio, rounded UP to one of these. A 300px
+  // poster in a 65px card was ~27KB where ~5KB looks the same. img.js only
+  // honours these exact values (anything else gets 300), which keeps the
+  // number of cached copies per poster small. Everything else stays 300.
+  var BUCKETS = [100, 150, 200, 250, 300];
+  var gridW = null;      // one measurement per batch of mutations
+  function coverWidth(el) {
+    var g = el && el.closest ? el.closest("#grid") : null;
+    if (!g) return WIDTH;
+    if (gridW === null) {
+      gridW = WIDTH;
+      var col = parseFloat(getComputedStyle(g).gridTemplateColumns);
+      if (col > 0) {
+        var need = col * (window.devicePixelRatio || 1);
+        for (var i = 0; i < BUCKETS.length; i++) {
+          if (BUCKETS[i] >= need) { gridW = BUCKETS[i]; break; }
+        }
+      }
+    }
+    return gridW;
+  }
 
-  function proxied(u) {
+  function proxied(u, el) {
     if (!u) return u;
     u = String(u).trim();
     if (!/^(https?:)?\/\//i.test(u)) return u;              // relative -> leave alone
@@ -52,17 +85,18 @@
     if (u.indexOf("//" + location.host) !== -1) return u;   // same-site -> leave alone
     if (u.slice(0, 2) === "//") u = "https:" + u;
     else if (u.slice(0, 5).toLowerCase() === "http:") u = "https:" + u.slice(5);
-    return PROXY + "?url=" + encodeURIComponent(u) + "&w=" + WIDTH + "&fm=" + FORMAT;
+    return PROXY + "?url=" + encodeURIComponent(u) + "&w=" + coverWidth(el) + "&fm=" + FORMAT;
   }
 
   function fix(el) {
     if (!el || el.tagName !== "IMG") return;
     var src = el.getAttribute("src");
-    var next = proxied(src);
+    var next = proxied(src, el);
     if (next && next !== src) el.setAttribute("src", next);
   }
 
   function scan(root) {
+    gridW = null;
     if (!root || root.nodeType !== 1) return;
     fix(root);
     if (root.querySelectorAll) {
@@ -72,6 +106,7 @@
   }
 
   new MutationObserver(function (mutations) {
+    gridW = null;
     for (var i = 0; i < mutations.length; i++) {
       var m = mutations[i];
       if (m.type === "attributes") fix(m.target);
@@ -151,26 +186,14 @@
      first frame is dark instead of a white flash that repaints to #171C20. -->
 <meta name="color-scheme" content="dark">
 <title>Donny's Digital</title>
-<!-- Warm up every third-party connection before it's needed -->
-<link rel="preconnect" href="https://docs.google.com">
+<!-- Warm up only the third-party connections the page really makes. Every
+     poster (Vudu, staticflickr, ...) loads same-origin through /img, so the
+     image hosts and proxies need no hint -- the old ones opened TLS sessions
+     that were never used, during the window the data wants the bandwidth.
+     docs.google.com is only reached by the last-resort JSONP path: DNS only. -->
 <link rel="dns-prefetch" href="https://docs.google.com">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="preconnect" href="https://cdn.statically.io" crossorigin>
-<link rel="preconnect" href="https://images2.vudu.com" crossorigin>
-<!-- 2nd/3rd-choice poster proxies. They are only ever reached if
-     statically.io fails, so a full preconnect opens two TLS sessions that are
-     almost never used -- and it opens them during the window where the sheet
-     download wants every byte of bandwidth. DNS only: the lookup is the slow
-     part on the rare occasion they are needed. -->
-<link rel="dns-prefetch" href="https://i0.wp.com">
-<link rel="dns-prefetch" href="https://wsrv.nl">
-<!-- Not every poster in the sheet is a Vudu one, and non-Vudu URLs are always
-     loaded direct from their own host (see firstSrc). Counted over the whole
-     collection: vudu 18,479, staticflickr 444, moviesanywhere 41, amazon 7.
-     staticflickr is a real second host that had no hint at all, so its covers
-     paid a full cold DNS lookup every time one landed on a page. -->
-<link rel="dns-prefetch" href="https://live.staticflickr.com">
 <style>
 /* ============ CRITICAL CSS ============
    Just the loading indicator, inlined ahead of everything else so the bar and
@@ -326,8 +349,37 @@ function decodeFacets(p){
   return out;
 }
 
-window.__snapCore   = tier('core').then(decodeCore);
-window.__snapFacets = tier('facets').then(decodeFacets);
+/* Core and facets are only READ when IndexedDB has no usable record (init()
+   step 1b-bis). On a warm visit -- cacheSet() left a timestamp under 24h old
+   in localStorage, the same hint the loader below uses -- they are not
+   fetched or decoded up front: that was up to 1.4MB br after every rebuild,
+   plus ~4.6MB of JSON decoded on EVERY visit, for data that was then thrown
+   away. Reading window.__snapCore starts them, so if the hint is wrong
+   (IndexedDB cleared, localStorage kept) the snapshot just starts a few ms
+   later, right after init() finds no record. */
+var coreP=null, facP=null;
+function startTiers(){
+  if(coreP) return;
+  coreP=tier('core').then(decodeCore);
+  facP=tier('facets').then(decodeFacets);
+  /* A missing or broken snapshot must never be fatal -- the live sheet is
+     still there. Handlers go on now so a failure cannot surface as an
+     unhandled rejection while init() is still deciding what to do. */
+  coreP.catch(function(e){
+    try{ console.warn('[snapshot] core unavailable:', (e&&e.message)||e); }catch(x){}
+  });
+  facP.catch(function(e){
+    try{ console.warn('[snapshot] facets unavailable:', (e&&e.message)||e); }catch(x){}
+  });
+}
+Object.defineProperty(window,'__snapCore',  {configurable:true, get:function(){ startTiers(); return coreP; }});
+Object.defineProperty(window,'__snapFacets',{configurable:true, get:function(){ startTiers(); return facP; }});
+var warm=false;
+try{
+  var ct=+(localStorage.getItem('dd_cache_t')||0);
+  warm = ct>0 && (Date.now()-ct) < 24*60*60*1000;
+}catch(e){}
+if(!warm) startTiers();
 /* Descriptions are only wanted for search enrichment and the detail view, so
    this tier is not requested until something actually asks. */
 var descP=null;
@@ -335,15 +387,6 @@ window.__snapDesc=function(){
   if(!descP) descP=tier('desc').then(function(p){ return p.rows; });
   return descP;
 };
-/* A missing or broken snapshot must never be fatal -- the live sheet is still
-   there. Attach handlers now so a failure cannot surface as an unhandled
-   rejection while init() is still deciding what to do. */
-window.__snapCore.catch(function(e){
-  try{ console.warn('[snapshot] core unavailable:', (e&&e.message)||e); }catch(x){}
-});
-window.__snapFacets.catch(function(e){
-  try{ console.warn('[snapshot] facets unavailable:', (e&&e.message)||e); }catch(x){}
-});
 })();
 </script>
 <script>
@@ -814,8 +857,12 @@ if(REVALIDATE && (cacheFresh || window.__SNAP) && CSV_URL){
    only used if that probe positively succeeds -- if it fails, or hasn't
    answered by the time the grid renders, the proxy chain is used exactly as
    before. Any individual cover that still fails walks the same fallback chain.
-   Set POSTER_PROBE=false below to switch this off entirely. */
-var POSTER_PROBE=true;
+   Set POSTER_PROBE=false below to switch this off entirely.
+   OFF since Oct 2026: every cover goes same-origin through /img anyway (the
+   poster-routing script rewrites even "direct" URLs), so the probe only cost
+   a 46KB cross-origin image per session -- and one missing poster flipped
+   the whole tab onto a proxy chain that was dead (statically.io 403). */
+var POSTER_PROBE=false;
 var POSTER_PROBE_URL='https://images2.vudu.com/poster2/4517755-l';
 window.__directOk=new Promise(function(res){
   if(!POSTER_PROBE) return res(false);
@@ -1074,6 +1121,13 @@ body.sbCollapsed #sidebar{display:none}
 body.sbCollapsed #sbExpand{display:flex}
 body.sbCollapsed #grid{grid-template-columns:repeat(12,1fr)}
 }
+/* 761-900px: the narrow-screen rule below makes the open grid 4 columns,
+   but the 12-column rule above outranks it (higher specificity), which
+   shrank posters to ~55px. 5 columns is always a bit wider than the
+   sidebar-open 4, and the 180-cover wide page is exactly 36 rows. */
+@media(min-width:761px) and (max-width:900px){
+  body.sbCollapsed #grid{grid-template-columns:repeat(5,1fr)}
+}
 @media(max-width:760px){
 #sbCollapse,#sbExpand{display:none !important}
 }
@@ -1197,9 +1251,13 @@ background:#263238;display:block}
 #infoMeta{display:flex;flex-wrap:wrap;gap:6px;margin:0;flex:1 1 auto}
 #infoMeta span{background:#2b343b;color:#b0bec5;border-radius:11px;padding:3px 10px;
 font:700 11px 'Poppins',sans-serif;letter-spacing:.6px}
+/* flex-shrink 0: with a big cast the people row (flex:1 0 auto) took all of
+   the fixed-height bar and squeezed the summary to a ~7px sliver. Now the
+   summary keeps its own height, up to three lines (longer ones scroll here),
+   and if that leaves too little room the whole bar scrolls instead. */
 #infoDesc{font:400 14px 'Poppins',sans-serif;line-height:1.6;color:#cfd8dc;white-space:pre-wrap;
 margin-top:6px;padding-bottom:6px;border-bottom:1px solid #2c353c;
-flex:0 1 auto;max-height:calc(1.6em * 3 + 6px);min-height:0;overflow-y:auto;
+flex:0 0 auto;max-height:calc(1.6em * 3 + 6px);min-height:0;overflow-y:auto;
 scrollbar-width:thin;scrollbar-color:#4a565e transparent}
 #infoDesc::-webkit-scrollbar{width:6px}
 #infoDesc::-webkit-scrollbar-thumb{background:#4a565e;border-radius:3px}
@@ -1523,12 +1581,28 @@ body:not(.multiPage) #grid > #pagerBottom{display:none}
 body{padding-top:var(--dd-nav-h);box-sizing:border-box}
 /* The loading toast is fixed near the top and would sit under the bar. */
 #status{top:calc(var(--dd-nav-h) + 20px)!important}
+/* The full-size bar needs ~1020px; below that the last links were cut off
+   inside a scroll strip with no visible scrollbar. */
+@media(min-width:761px) and (max-width:1040px){
+  .dd-nav{padding:0 12px}
+  .dd-brand{margin-right:12px;font-size:20px}
+  .dd-brand-img{width:42px;height:42px}
+  .dd-links a{font-size:17px;padding:3px 7px}
+}
 @media(max-width:760px){
   :root{--dd-nav-h:45px}
   .dd-nav{padding:0 10px}
-  .dd-brand{margin-right:12px;font-size:21px}
+  /* Phones: logo only, so the six links get the width. The name is still
+     the link's text, so screen readers announce it. */
+  .dd-brand{margin-right:6px;font-size:0;gap:0}
   .dd-brand-img{width:40.5px;height:40.5px}
-  .dd-links a{font-size:20.25px;padding:3px 9px}
+  .dd-links a{font-size:15px;padding:3px 7px}
+}
+/* Six links need ~460px even with the logo alone, so on narrow phones they
+   wrap to a second row rather than hide off-screen. */
+@media(max-width:560px){
+  :root{--dd-nav-h:64px}
+  .dd-links{flex-wrap:wrap;row-gap:2px;overflow:visible}
 }
 </style><nav class="dd-nav">
   <a class="dd-brand" href="/">
@@ -1774,6 +1848,9 @@ const EDIT_FIELDS = [
 ];
 let movies=[], filtered=[], page=0, editMode=false, currentEdit=null;
 let enriched=false, descriptionsLoaded=(DESCRIPTIONS==='never');
+// Set when an in-page edit lands, so the quiet "nothing changed" path in
+// init() still re-saves the cache instead of skipping the rewrite.
+let cacheDirty=false;
 let rowIndex=new Map(); // sheetRow -> movie
 const selected={}; // facetKey -> Set of values
 const facetValues={}; // facetKey -> [ [value,count], ... ] for the visible rows
@@ -1964,7 +2041,10 @@ return h ? (r? h+'h '+r+'m' : h+'h') : r+'m';
 // padded sort key ("00028 Days Later"), which is what used to show up here.
 // Same source the info bar already uses, so hover and the ⓘ bar now agree.
 function tooltip(m){
-const lines=[ (m.sortTitle||m.title) + (m.year?' ('+m.year+')':'') ];
+// Some Sort Titles already end in their year ("Nobody's Fool (2018)"), so
+// only add it when it is not there already.
+const name=m.sortTitle||m.title, yr=m.year?' ('+m.year+')':'';
+const lines=[ yr && String(name).trim().endsWith(yr.trim()) ? name : name + yr ];
 if(m.runtime!=null) lines.push('Runtime: '+fmtRuntime(m.runtime));
 if(m.imdb!=null) lines.push('IMDb: '+m.imdb);
 if(m.tomato!=null) lines.push('Rotten Tomatoes: '+m.tomato+'%');
@@ -1975,8 +2055,9 @@ Vudu posters are blocked outright on some networks, so they go through an
 image proxy. The chain used to be walked for EVERY poster, and each miss
 cost a full round-trip before the next was tried. Now the first proxy that
 returns an image is remembered and every later poster starts there.
-Order below is YOUR original tested order -- statically.io first. Reorder it
-if the poster test shows a different one is faster on your network.
+Every cover's FIRST request is its own sheet URL, which the poster-routing
+script sends through /img (img.js relays Vudu via Photon). This chain is only
+the error fallback, and posterError reads the original URL from data-src.
 Two things this handles that the first version got wrong:
 - the walk WRAPS AROUND, so a poster starting at proxy 2 still gets to try
 0 and 1 rather than giving up at the end of the list;
@@ -1984,26 +2065,29 @@ Two things this handles that the first version got wrong:
 remembered choice can't strand every cover for the whole session. */
 const stripScheme = u => u.replace(/^https?:\/\//,'');
 const PROXY_W = 300; // width requested from the proxy
+// Oct 2026: measured through /img, statically.io answers 403 and wsrv.nl and
+// the googleusercontent gadget proxy answer 404 for Vudu. Only Photon works
+// (img.js already relays Vudu through it), so the chain is Photon's two
+// shards: a cover that fails its first /img request gets one retry under a
+// different URL, then the title placeholder.
 const VUDU_PROXIES = [
-u => 'https://cdn.statically.io/img/' + stripScheme(u) + '?w=' + PROXY_W,
 u => 'https://i0.wp.com/' + stripScheme(u) + '?w=' + PROXY_W,
-u => 'https://wsrv.nl/?w=' + PROXY_W + '&url=' + encodeURIComponent(u),
-u => 'https://images1-focus-opensocial.googleusercontent.com/gadgets/proxy?container=focus&resize_w=' + PROXY_W + '&url=' + encodeURIComponent(u),
+u => 'https://i1.wp.com/' + stripScheme(u) + '?w=' + PROXY_W,
 ];
 const NPROXY = VUDU_PROXIES.length;
 const isVudu = u => /vudu\.com/i.test(u);
 let proxyIdx=0, proxyLocked=false;
 try{
-const saved=sessionStorage.getItem('dd_proxy');
+const saved=sessionStorage.getItem('dd_proxy2');
 if(saved!==null && +saved>=0 && +saved<NPROXY){ proxyIdx=+saved; proxyLocked=true; }
 }catch(e){}
 function lockProxy(i){
 proxyIdx=i; proxyLocked=true;
-try{ sessionStorage.setItem('dd_proxy', String(i)); }catch(e){}
+try{ sessionStorage.setItem('dd_proxy2', String(i)); }catch(e){}
 }
 function unlockProxy(){
 proxyLocked=false;
-try{ sessionStorage.removeItem('dd_proxy'); }catch(e){}
+try{ sessionStorage.removeItem('dd_proxy2'); }catch(e){}
 }
 /* Direct-route probe. Resolved by the early loader in <head>, in parallel with
 the data download, so it has almost always settled before the grid renders. It
@@ -2224,7 +2308,15 @@ let i=0;
 const end=Math.min(i+CHUNK, movies.length);
 for(;i<end;i++) enrichRow(movies[i]);
 if(i<movies.length){ setBar(0.80+0.18*(i/movies.length)); idle(step); }
-else { enriched=true; resolve(); }
+else {
+enriched=true;
+// A background swap (applyFull, the snapshot facets patch) paints BEFORE
+// enrichment. Filter again now that every row has its facet arrays and
+// search text, or an active Genre/Director/Actors/... pick keeps showing
+// whatever the half-enriched pass found.
+if(collectActive(null).length || $('#searchBox').value.trim()) applyFilters(true, true);
+resolve();
+}
 })();
 });
 }
@@ -2736,8 +2828,12 @@ if(!hay.includes(q)) return false;
 for(let i=0;i<facets.length;i++){
 const f=facets[i];
 if(f.csv){
-const a=m[f.key];
-if(!a) return false;                      // not enriched yet, or genuinely empty
+let a=m[f.key];
+// Rows swapped in by a background refresh are painted before enrich()
+// reaches them. Enrich on demand instead of failing every row, which
+// emptied the grid whenever a Genre/Director/Actors/... filter was on.
+if(a===undefined){ enrichRow(m); a=m[f.key]; }
+if(!a) return false;                      // genuinely empty
 if(f.all){
 // Collaboration mode: every picked name has to appear on this row.
 if(a.length<f.want.length) return false;
@@ -2844,7 +2940,7 @@ data-row="${m.sheetRow}" title="${esc(tooltip(m))}"
 style="background:${esc(m.color)||'var(--bg-soft)'}">
 ${m.img?`<img loading="${i<20?'eager':'lazy'}" ${i<10?'fetchpriority="high"':''} decoding="async"
 width="250" height="375" alt="${esc(m.sortTitle||m.title)}"
-src="${esc(m.img)}" data-pidx="${firstIdx(m.img)}">`
+src="${esc(m.img)}" data-src="${esc(m.img)}" data-pidx="${firstIdx(m.img)}">`
 :`<div class="ph">${esc(m.sortTitle||m.title)}</div>`}
 <span class="edit-tag" title="Edit details">&#9998;</span>
 <span class="info-tag" title="Details">&#8505;</span>
@@ -3137,6 +3233,7 @@ throw new Error(data.error||'save failed');
 }
 m.viewStatusRaw=newVal;
 m.viewStatus=splitCsv(newVal);
+cacheDirty=true;
 if(enriched) buildFacetValues();
 toast(`"${m.sortTitle||m.title}" → ${newVal}`);
 const keep=page;
@@ -3173,6 +3270,11 @@ ${f.area?`<textarea data-h="${esc(f.h)}"${attrs}>${esc(shown)}</textarea>`
 :`<input data-h="${esc(f.h)}"${attrs} value="${esc(shown)}">`}
 </div>`;
 }).join('');
+// What each field held when the editor opened, read back from the element
+// (so the browser's own value normalisation is already applied). Save sends
+// only the fields that differ, so a stale value on screen can never be
+// written over a newer edit made in the Sheet.
+body.querySelectorAll('[data-h]').forEach(el=>{ el.dataset.orig=el.value; });
 const modal=$('#modal');
 // Positioned, then made visible -- not the other way around -- so it never
 // flashes at the top-left corner before jumping to the click point.
@@ -3483,23 +3585,29 @@ img.src=url;
 }
 $('#saveBtn').addEventListener('click',async()=>{
 if(!currentEdit||!APPS_SCRIPT_URL) return;
-const token=await getToken();
-if(!token){ $('#modalMsg').textContent='A token is required to save changes.'; $('#modalMsg').className='msg err'; return; }
+// Held for the whole save: closing the editor (or opening another title)
+// while the request is in flight nulls/replaces currentEdit.
+const m=currentEdit;
 const updates={};
 document.querySelectorAll('#modalBody [data-h]').forEach(el=>{
 if(el.hasAttribute('data-pending')) return; // never save a field that hasn't loaded
+if(el.value===el.dataset.orig) return;      // unchanged: leave the Sheet's value alone
 updates[el.dataset.h]=el.value;
 });
-const msg=$('#modalMsg'); msg.textContent='Saving…'; msg.className='msg';
+const msg=$('#modalMsg');
+if(!Object.keys(updates).length){ msg.textContent='No changes to save.'; msg.className='msg'; return; }
+const token=await getToken();
+if(!token){ msg.textContent='A token is required to save changes.'; msg.className='msg err'; return; }
+msg.textContent='Saving…'; msg.className='msg';
 $('#saveBtn').disabled=true;
 try{
-const data=await saveToSheet({token,action:'update',sheetRow:currentEdit.sheetRow,
-key:{Link:currentEdit.link,Title:currentEdit.title},updates});
+const data=await saveToSheet({token,action:'update',sheetRow:m.sheetRow,
+key:{Link:m.link,Title:m.title},updates});
 if(!data.ok){
 if(/token/i.test(data.error||'')) dropToken();
 throw new Error(data.error||'Save failed');
 }
-const m=currentEdit;
+cacheDirty=true;
 for(const [h,v] of Object.entries(updates)){
 const key=COLMAP[h]; if(!key) continue;
 if(['year','tomato','imdb','runtime'].includes(key)){ const n=parseFloat(v); m[key]=isNaN(n)?null:n; }
@@ -3511,7 +3619,8 @@ enrichRow(m);
 if(enriched) buildFacetValues();
 msg.textContent='Saved ✓'; msg.className='msg ok';
 setTimeout(()=>{
-closeEditor(); applyFilters(true);
+if(currentEdit===m) closeEditor();
+applyFilters(true);
 // If the info bar happens to be showing the row that was just edited, redraw
 // it from the updated record rather than leaving the old text on screen.
 if(infoRow===m.sheetRow) openInfo(m.sheetRow);
@@ -3726,7 +3835,11 @@ if(!descriptionsLoaded) await loadDescriptions();
 // ORIGINAL timestamp (cachedT), so the 24h TTL still expires on schedule.
 // Renewing it here is what let an edit the probe cannot see sit on screen
 // forever instead of for a day.
-idle(()=>cacheSet(movies, cachedSig, descriptionsLoaded, cachedT));
+// Skipped when the record came from IndexedDB already holding descriptions
+// and nothing was edited: it would write back exactly what was just read
+// (a long main-thread task plus a ~15MB disk write after every quiet visit).
+if(!rec || (descriptionsLoaded && !rec.hasDesc) || cacheDirty)
+  idle(()=>cacheSet(movies, cachedSig, descriptionsLoaded, cachedT));
 barDone(); setStatus(null);
 console.info(`[collection] ${movies.length} titles in ${Math.round(performance.now()-t0)}ms`
   + ` (source: cache + revalidation probe, full download skipped,`
