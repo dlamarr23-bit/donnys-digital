@@ -933,8 +933,8 @@ const POOL = 16;
 // of milliseconds, so there is nothing left to get out of the way of -- the
 // refresh now starts right after the cached paint, and the only wait left is
 // one task so that paint is committed first. The slow part -- making sure the
-// edge's copy is not too old -- is the silent confirm pass, which runs once the
-// page is idle (see confirmLater()).
+// edge's copy is not too old -- is the silent confirm pass, which re-asks each
+// old tab as soon as its fast answer lands (see startConfirmer()).
 // Tab groups. Each entry carries a name, a "where" label, a type, the tag
 // shown on the card, the column letter holding its Title, and (where known)
 // the numeric #gid= from the sheet URL. Fetching by gid is unambiguous;
@@ -975,6 +975,12 @@ const FLIX_GIDS = ['1203289215','69297060','1849827414','1542252526','218590821'
 FLIX_GIDS.forEach((gid,i)=>TABS.push({name:'Flix'+(i+1), gid, where:'Fanflix', type:'Movies',
                                       tag:'Fanflix '+(i+1),
                                       bundle:'flix', headerRows:2, titleCol:'F'}));
+// REQUEST order: the tabs most likely to have changed go first -- Today and
+// Today TV, then the other daily tabs, then Mix & Match, then Fanflix -- so
+// the sales a visitor came for are the first to land. (The merge still runs
+// in TABS order; see mergedFromState().)
+const tabRank = t => t.priority ? 0 : t.where==='Daily Sales' ? 1 : t.bundle==='mm' ? 2 : 3;
+const TABS_BY_RANK = TABS.slice().sort((a,b)=>tabRank(a)-tabRank(b));
 let PER_PAGE = PAGE_SIZES.normal;
 const mobileMq = window.matchMedia('(max-width:760px)');
 function syncPerPage(){
@@ -1187,9 +1193,16 @@ async function fetchGviz(url, confirm){
   const e=await (confirm ? window.__edge.confirm(full) : window.__edge.fast(full));
   const txt=await e.res.text();
   const json=JSON.parse(txt.substring(txt.indexOf('(')+1, txt.lastIndexOf(')')));
-  if(json && json.status==='error')
-    throw new Error((json.errors&&json.errors[0]&&json.errors[0].detailed_message)||'sheet error');
+  if(json && json.status==='error') throw gvizQueryError(json, 'sheet error');
   return {json, meta:{age:e.age, how:e.how}};
+}
+// gviz REJECTED the query (status:"error"), as opposed to a 429, a timeout or
+// a dropped connection. Only this kind says anything about the query itself --
+// see the unfiltered retry in loadTabOnce().
+function gvizQueryError(json, fallback){
+  const err=new Error((json.errors&&json.errors[0]&&json.errors[0].detailed_message)||fallback);
+  err.gvizQuery=true;
+  return err;
 }
 // JSONP cannot go through /sheet (it is a <script> tag, and the edge answers
 // text/plain). It is Google directly, so its answer is as fresh as it gets.
@@ -1200,9 +1213,8 @@ function jsonpGviz(url){
     function cleanup(){ clearTimeout(timer); delete window[cb]; script.remove(); }
     window[cb]=json=>{
       cleanup();
-      if(json && json.status==='error'){
-        reject(new Error((json.errors&&json.errors[0]&&json.errors[0].detailed_message)||'sheet returned an error'));
-      } else resolve({json, meta:{age:0, how:'JSONP'}});
+      if(json && json.status==='error') reject(gvizQueryError(json, 'sheet returned an error'));
+      else resolve({json, meta:{age:0, how:'JSONP'}});
     };
     const script=document.createElement('script');
     script.src=bust(url)+'&tqx=out:json;responseHandler:'+cb;
@@ -1258,22 +1270,37 @@ function raceGviz(url, confirm){
 const TAB_RETRY_MS = [400, 1200, 3000];
 // Tabs that never answered on the MOST RECENT load pass (fast or confirm).
 let failedTabs = [];
-// Resolves to {json, meta} or null.
+// Resolves to {json, meta, rows} (rows already parsed and schema-checked, or
+// parseError set) or null.
 async function loadTabOnce(tab, confirm){
+  // The names are only for a tab whose gid changed (deleted and recreated).
+  // Three TV tabs' real names end in a space, and a name gviz cannot resolve
+  // silently answers with the FIRST tab, so the spaced form goes first.
   const attempts = tab.gid ? [tab.gid] : [];
-  attempts.push(tab.name, tab.name+' ', tab.name.replace(/\s+/g,' '));
+  attempts.push(tab.name+' ', tab.name, tab.name.replace(/\s+/g,' '));
   const tried=new Set();
   for(const v of attempts){
     if(tried.has(v)) continue; tried.add(v);
-    try{ return await raceGviz(gvizUrl(tab, v), confirm); }
+    let r=null;
+    try{ r=await raceGviz(gvizUrl(tab, v), confirm); }
     catch(e){
-      // A rejected query means this tab's Title column letter is wrong for its
-      // layout. Retry it unfiltered rather than losing the tab entirely.
-      if(!tab._noFilter && SHEET_QUERY_FILTER && tab.titleCol){
+      // Only a REJECTED QUERY means this tab's Title column letter is wrong
+      // for its layout, so only that retries unfiltered. A 429, a timeout or a
+      // dropped connection used to switch the filter off for the rest of the
+      // visit too: thousands of blank formula rows per answer, under a
+      // different edge cache key, so every later request for the tab missed.
+      if(e && e.gvizQuery && !tab._noFilter && SHEET_QUERY_FILTER && tab.titleCol){
         tab._noFilter=true;
-        try{ return await raceGviz(gvizUrl(tab, v), confirm); }catch(e2){}
+        try{ r=await raceGviz(gvizUrl(tab, v), confirm); }catch(e2){}
       }
     }
+    if(!r) continue;
+    try{ r.rows=parseTab(r.json, tab); }
+    catch(e){
+      if(e && e.wrongTab){ console.warn('[sales]', e.message, '-- trying the next route'); continue; }
+      r.parseError=e;
+    }
+    return r;
   }
   return null; // tab missing/renamed/empty -- skip it
 }
@@ -1364,8 +1391,13 @@ function parseTabRows(json, tab){
   const has=name=>cols.includes(name);
   const looksLikeMovie = has('Provider') || has('Sale Quality') || has('Image URL');
   const looksLikeTV    = has('Quality') && !has('Owned Quality') && !has('Provider');
-  if(tab.type==='TV Shows' && looksLikeMovie && !looksLikeTV) return [];
-  if(tab.type==='Movies'  && looksLikeTV    && !looksLikeMovie) return [];
+  // A wrong-tab answer is a FAILURE, not an empty tab. Returning [] used to
+  // count as a successful load: the tab's sales vanished, the log still said
+  // "46 of 46 tabs", and the hole was cached. Thrown, loadTabOnce() tries the
+  // next route, and if none works the tab keeps its last known rows.
+  const wrong=()=>Object.assign(new Error(`${tab.name}: answered with another tab's columns`),{wrongTab:true});
+  if(tab.type==='TV Shows' && looksLikeMovie && !looksLikeTV) throw wrong();
+  if(tab.type==='Movies'  && looksLikeTV    && !looksLikeMovie) throw wrong();
   const idx={}; cols.forEach((c,i)=>{ if(COLMAP[c]) idx[COLMAP[c]]=i; });
   const idColIndex = tab.type==='TV Shows' ? ID_COL_TV : ID_COL_MOVIE;
   const out=[];
@@ -1573,26 +1605,51 @@ function mergedFromState(){
   for(const tab of TABS){ const s=tabState.get(tab.name); if(s) raw.push(...s.rows); }
   return mergeItems(raw);
 }
-async function loadTabs(tabs, onProgress, confirm){
-  const got=new Map(), failed=[]; const queue=tabs.slice();
-  async function worker(){
-    while(queue.length){
-      const tab=queue.shift();
-      const r=await loadTab(tab, !!confirm, failed);
-      if(r){
-        try{
-          got.set(tab.name, {rows:parseTab(r.json, tab), t:Date.now()-(+r.meta.age||0)*1000, meta:r.meta});
-        }catch(e){
+/* Keeps up to POOL tabs in flight and takes more work while it runs, so the
+   confirm pass can be fed one tab at a time -- the moment that tab's fast
+   answer turns out to be old -- instead of waiting for all 46 fast answers.
+   onTab sees each tab as soon as it is parsed, so callers can show it right
+   away instead of waiting for the slowest of 46 (Google takes 0.3-2.7s per
+   tab, and far longer for one stuck in 429 retries). close() resolves to
+   {got, failed} once everything added has finished. */
+function tabPool(confirm, onTab, onProgress){
+  const queue=[], got=new Map(), failed=[];
+  let running=0, closed=false, finish;
+  const all=new Promise(r=>{ finish=r; });
+  function pump(){
+    while(running<POOL && queue.length){
+      const tab=queue.shift(); running++;
+      loadTab(tab, confirm, failed).then(r=>{
+        if(!r) return;
+        if(r.parseError){
           // One malformed answer must not sink the other 45.
-          console.warn(`[sales] tab ${tab.name} could not be parsed:`, e && e.message);
+          console.warn(`[sales] tab ${tab.name} could not be parsed:`, r.parseError && r.parseError.message);
           failed.push(tab.name);
+          return;
         }
-      }
-      onProgress && onProgress();
+        const v={rows:r.rows, t:Date.now()-(+r.meta.age||0)*1000, meta:r.meta};
+        got.set(tab.name, v);
+        if(onTab){ try{ onTab(tab, v); }catch(e){ console.warn('[sales] applying', tab.name, 'failed:', e && e.message); } }
+      }).catch(e=>{
+        console.warn(`[sales] tab ${tab.name} failed:`, e && e.message);
+        failed.push(tab.name);
+      }).finally(()=>{
+        running--;
+        if(onProgress) onProgress();
+        pump();
+      });
     }
+    if(closed && !running && !queue.length) finish({got, failed});
   }
-  await Promise.all(Array.from({length:Math.min(POOL,tabs.length)},worker));
-  return {got, failed};
+  return {
+    add(tabs){ queue.push(...tabs); pump(); },
+    close(){ closed=true; pump(); return all; },
+  };
+}
+function loadTabs(tabs, onProgress, confirm, onTab){
+  const p=tabPool(!!confirm, onTab, onProgress);
+  p.add(tabs);
+  return p.close();
 }
 /* ---------- SNAPSHOT SEED ----------
    This page reads 46 tabs, one request each, and each pays Google's TTFB --
@@ -2363,7 +2420,7 @@ function showData(list){
   const first=!painted;
   items=list; shownSig=sig;
   const keep=page;
-  buildFacetValues(); buildFacets(); buildSliders();
+  buildFacetValues(); rebuildSidebar();
   page=first?0:keep;
   applyFilters(true, !first);
   if(first){
@@ -2376,36 +2433,80 @@ function showData(list){
 }
 /* ---------- SILENT CONFIRM ----------
    The fast pass took whatever copy the edge had. For the tabs whose copy was
-   old (__edge.isOld), ask again once the page is idle, this time insisting on
+   old (__edge.isOld), ask again -- as soon as that tab's fast answer lands -- insisting on
    a copy no older than __edge.FRESH_S -- same pool, same retries, same
    parsers. No status chip, no progress bar, no toast: the grid only moves if
    the answer is actually different, and then softly (showData). A failure
    here leaves what is on screen alone and says so in the console only. */
-let confirming=false;
-function confirmLater(got){
-  if(confirming || !window.__edge) return;
-  const old=TABS.filter(t=>{ const g=got.get(t.name); return g && window.__edge.isOld(g.meta); });
-  if(!old.length){ window.__sales.confirm='not needed'; return; }
-  confirming=true;
-  window.__sales.confirm='pending';
-  idle(async()=>{
-    const t1=performance.now();
-    try{
-      const r=await loadTabs(old, null, true);
-      if(r.failed.length) console.warn(`[sales] confirm pass: ${r.failed.length} tab(s) did not answer, keeping what is on screen: ${r.failed.join(', ')}`);
-      const changed = offer(r.got) && showData(mergedFromState());
-      window.__sales.confirm = changed ? 'changed' : 'unchanged';
-      console.info(`[sales] confirm pass: ${old.length} old tab(s) rechecked in ${Math.round(performance.now()-t1)}ms -- `
-                   + (changed ? 'CHANGED, caught up' : 'unchanged'));
-      // Re-saved even when unchanged: the per-tab timestamps just moved
-      // forward, which is what lets the next visit's snapshot test be right.
-      if(r.got.size && cacheComplete()) writeCache();
-    }catch(e){
-      window.__sales.confirm='failed';
-      console.warn('[sales] confirm pass failed (keeping what is on screen):', e && e.message);
-    }
+/* Oct 2026: this used to wait for the WHOLE fast pass, then re-ask every old
+   tab and repaint once, when the slowest of them had answered -- so a
+   changed Today tab that Google returned in 0.3s sat unseen until ~4.3s (and
+   behind any tab stuck in 429 retries). Now each tab is queued here the
+   moment its own fast answer comes back old (see onFast in BOOT), Today's
+   tabs first, and every answer is shown as it lands (offerTab). */
+function startConfirmer(){
+  if(!window.__edge) return null;
+  const pool=tabPool(true, (tab,v)=>offerTab(tab.name, v));
+  const c={
+    n:0, t1:0,
+    add(tab){
+      if(!c.n++){ c.t1=performance.now(); window.__sales.confirm='pending'; }
+      pool.add([tab]);
+    },
+    close(){ return pool.close(); },
+  };
+  return c;
+}
+function finishConfirm(c){
+  if(!c || !c.n){ window.__sales.confirm='not needed'; if(c) c.close(); return; }
+  const sigLive=shownSig;
+  c.close().then(r=>{
+    flushNow();
+    if(r.failed.length) console.warn(`[sales] confirm pass: ${r.failed.length} tab(s) did not answer, keeping what is on screen: ${r.failed.join(', ')}`);
+    const changed = shownSig!==sigLive;
+    window.__sales.confirm = changed ? 'changed' : 'unchanged';
+    console.info(`[sales] confirm pass: ${c.n} old tab(s) rechecked in ${Math.round(performance.now()-c.t1)}ms -- `
+                 + (changed ? 'CHANGED, caught up' : 'unchanged'));
+    // Re-saved even when unchanged: the per-tab timestamps just moved
+    // forward, which is what lets the next visit's snapshot test be right.
+    if(r.got.size && cacheComplete()) writeCache();
+  }).catch(e=>{
+    window.__sales.confirm='failed';
+    console.warn('[sales] confirm pass failed (keeping what is on screen):', e && e.message);
   });
 }
+/* ---------- PROGRESSIVE REPAINT ----------
+   Every tab's answer is offered the moment it lands, and the grid is redrawn
+   at most every 250ms, softly (showData keeps the page, filters and posters).
+   Before anything is on screen the first paint still waits for a full pass,
+   so a first visit never flashes a half-built grid (see EARLY_PAINT). */
+let flushTimer=0;
+function flushNow(){
+  clearTimeout(flushTimer); flushTimer=0;
+  return showData(mergedFromState());
+}
+function offerTab(name, v){
+  if(!offer(new Map([[name, v]]))) return;
+  if(painted && !flushTimer) flushTimer=setTimeout(flushNow, 250);
+}
+/* A repaint must not pull the sidebar out from under someone typing in it.
+   Rebuilding #facets/#sliders replaced the focused facet search or slider box,
+   so focus fell to <body> and the rest of the keystrokes -- or a half-typed
+   slider value -- went nowhere. With progressive repaints this would happen
+   several times a load, so while a field in there has focus the rebuild waits
+   until focus leaves it. */
+let sidebarStale=false;
+const typingIn = el => !!(el && el.closest && el.closest('#facets,#sliders') && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
+function rebuildSidebar(){
+  if(typingIn(document.activeElement)){ sidebarStale=true; return; }
+  sidebarStale=false;
+  buildFacets(); buildSliders();
+}
+$('#sidebar').addEventListener('focusout', e=>{
+  if(!sidebarStale || typingIn(e.relatedTarget)) return;
+  // After the 'change' that this blur fires has been applied.
+  setTimeout(()=>{ if(sidebarStale && !typingIn(document.activeElement)) rebuildSidebar(); }, 0);
+});
 /* ---------- BOOT ----------
    Paint opportunities, earliest first:
      1. the IndexedDB cache from the last visit (or, once, the old
@@ -2461,8 +2562,8 @@ window.__sales={};
   //    painted, so that frame is committed before 46 requests go out; no
   //    waiting for window load or idle any more (see POOL above).
   if(painted) await new Promise(r=>setTimeout(r,0));
-  const priorityTabs = TABS.filter(t=>t.priority);
-  const restTabs     = TABS.filter(t=>!t.priority);
+  const priorityTabs = TABS_BY_RANK.filter(t=>t.priority);
+  const restTabs     = TABS_BY_RANK.filter(t=>!t.priority);
   let done=0;
   const progress=()=>{
     done++;
@@ -2478,20 +2579,26 @@ window.__sales={};
   const staged = EARLY_PAINT && !painted;
   const live={got:new Map(), failed:[]};
   const take=r=>{ r.got.forEach((v,k)=>live.got.set(k,v)); live.failed.push(...r.failed); };
+  // 4. The silent confirm runs ALONGSIDE the fast pass: each tab whose fast
+  //    answer is an old edge copy is re-asked the moment that answer lands.
+  const confirmer=startConfirmer();
+  const onFast=(tab,v)=>{
+    offerTab(tab.name, v);     // shown straight away if something is painted
+    if(confirmer && window.__edge.isOld(v.meta)) confirmer.add(tab);
+  };
   try{
     if(staged){
-      take(await loadTabs(priorityTabs, progress));
-      if(offer(live.got)){ showData(mergedFromState()); markPaint('live (Today tabs)'); }
+      take(await loadTabs(priorityTabs, progress, false, onFast));
+      if(live.got.size){ flushNow(); markPaint('live (Today tabs)'); }
     }
-    take(await loadTabs(staged ? restTabs : TABS, progress));
+    take(await loadTabs(staged ? restTabs : TABS_BY_RANK, progress, false, onFast));
     failedTabs = live.failed;
     let liveRows=0; live.got.forEach(v=>{ liveRows+=v.rows.length; });
     if(!liveRows){
       throw new Error('No rows found — is the sheet shared as "Anyone with the link"?');
     }
     setBar(0.9);
-    offer(live.got);
-    showData(mergedFromState());
+    flushNow();                // every fast answer is already offered (onFast)
     markPaint('live');
     setBar(1);
     if(cacheComplete()) writeCache();
@@ -2516,14 +2623,15 @@ window.__sales={};
         ? `Could not load: ${holes.join(', ')} — some sales are missing. Reload to try again.`
         : `Could not refresh: ${failedTabs.join(', ')} — showing their last known sales.`, true);
     }
-    // 4. Silent confirm for whatever came from an old edge copy.
-    confirmLater(live.got);
+    // 4. Wait out (in the background) the confirm requests started above.
+    finishConfirm(confirmer);
   }catch(err){
     barDone();
     if(painted){
       setStatus(null);
       console.warn('[sales] refresh failed, keeping what is on screen:', err && err.message);
       toast('Could not refresh: '+err.message, true);
+      finishConfirm(confirmer);   // any confirm answers still help
     }else{
       setStatus('Could not load the sales sheet.<br><small>'+esc(err.message)+'</small>', false, true);
     }
