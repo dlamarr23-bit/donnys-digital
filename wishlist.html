@@ -136,10 +136,17 @@
      __edge.confirm(url)  -> a copy no older than FRESH_S, waiting on Google
                              only if the edge has nothing that recent
      __edge.isOld(r)      -> true when a fast answer still needs confirming
+     __edge.check(url[,maxAge]) -> the same answer with NO body: just {age,
+                             how, hash}. `hash` is the SHA-1 of the whole
+                             sheet as the edge holds it, so comparing it with
+                             the hash saved beside a cached copy says whether
+                             ANY cell changed, for a few hundred bytes.
+                             Resolves null when the edge cannot answer (no
+                             /sheet, or it failed): use another way then.
 
-   Each resolves to {res, age, how}: `res` is the fetch Response (body unread,
-   so callers can stream it), `age` its age in seconds, `how` where it came
-   from. The pages paint the fast answer straight away and run the confirm
+   Each resolves to {res, age, how, hash}: `res` is the fetch Response (body
+   unread, so callers can stream it), `age` its age in seconds, `how` where it
+   came from, `hash` the SHA-1 of the copy ('' when unknown). The pages paint the fast answer straight away and run the confirm
    pass silently behind it, so the data is still live -- it just no longer
    holds anything up.
 
@@ -155,18 +162,21 @@
       return {res:r, age:0, how:'DIRECT'};
     });
   }
-  function viaEdge(url, fresh, signal){
-    if(off) return direct(url, signal);
-    var u='/sheet?u='+encodeURIComponent(url)+(fresh==null?'':'&fresh='+fresh);
+  function viaEdge(url, fresh, signal, check){
+    if(off) return check ? Promise.resolve(null) : direct(url, signal);
+    var u='/sheet?u='+encodeURIComponent(url)+(fresh==null?'':'&fresh='+fresh)+(check?'&check=1':'');
     return fetch(u,opts(signal)).then(function(r){
       var how=r.headers.get('X-Sheet-Cache');
       /* No header means this was not the function answering (a 404 page, a
          static server) -- stop asking it for the rest of this visit. */
-      if(!how){ off=true; return direct(url, signal); }
+      if(!how){ off=true; return check ? null : direct(url, signal); }
       if(!r.ok) throw new Error('sheet HTTP '+r.status);
-      return {res:r, age:+(r.headers.get('X-Sheet-Age')||0), how:how};
+      return {res:r, age:+(r.headers.get('X-Sheet-Age')||0), how:how,
+              hash:r.headers.get('X-Sheet-Hash')||''};
     }).catch(function(e){
-      if(off || (e && e.name==='AbortError')) throw e;
+      if(e && e.name==='AbortError') throw e;
+      if(check) return null;
+      if(off) throw e;
       try{ console.warn('[edge] /sheet unavailable, using Google directly:', (e&&e.message)||e); }catch(x){}
       return direct(url, signal);
     });
@@ -176,6 +186,7 @@
     fast:function(url,signal){ return viaEdge(url,null,signal); },
     confirm:function(url,maxAge,signal){ return viaEdge(url, maxAge==null?FRESH_S:maxAge, signal); },
     isOld:function(r){ return !!r && (r.age>FRESH_S || r.how==='ERROR-STALE'); },
+    check:function(url,maxAge){ return viaEdge(url, maxAge==null?null:maxAge, null, true); },
     text:function(p){ return p.then(function(r){ return r.res.text().then(function(t){ r.text=t; return r; }); }); }
   };
 })();
@@ -447,34 +458,6 @@ body{
 #resetAll:hover{background:#168264;border-color:#168264;color:#ffffff;
   box-shadow:0 0 0 2px rgba(255,255,255,.25)}
 /* collapse control (desktop only) */
-/* Every button that talks about filters is the Reset-all green. */
-#sbCollapse{
-  width:100%;margin-bottom:10px;padding:8px;border:1px solid #157A60;border-radius:8px;
-  background:#157A60;color:#ffffff;cursor:pointer;
-  font:700 11px 'Poppins',sans-serif;letter-spacing:1.5px;text-transform:uppercase;
-}
-#sbCollapse:hover{background:#168264;border-color:#168264;color:#fff;box-shadow:0 0 0 2px rgba(255,255,255,.25)}
-#sbExpand{
-  display:none;width:34px;min-width:34px;height:100%;
-  background:#157A60;border:none;cursor:pointer;color:#ffffff;font-size:17px;
-  align-items:center;justify-content:center;
-}
-#sbExpand:hover{background:#168264;color:#fff}
-@media(min-width:761px){
-  body.sbCollapsed #sidebar{display:none}
-  body.sbCollapsed #sbExpand{display:flex}
-  body.sbCollapsed #grid{grid-template-columns:repeat(12,1fr)}
-}
-/* 761-900px: the narrow-screen rule below makes the open grid 4 columns,
-   but the 12-column rule above outranks it (higher specificity), which
-   shrank posters to ~55px. 5 columns is always a bit wider than the
-   sidebar-open 4, and the 180-cover wide page is exactly 36 rows. */
-@media(min-width:761px) and (max-width:900px){
-  body.sbCollapsed #grid{grid-template-columns:repeat(5,1fr)}
-}
-@media(max-width:760px){
-  #sbCollapse,#sbExpand{display:none !important}
-}
 /* ---------- MAIN ---------- */
 #main{flex:1;min-width:0;height:100%;display:flex;flex-direction:column;padding:14px 10px 14px 4px}
 .pagerBar{
@@ -664,20 +647,12 @@ body.editing #editToggle{background:var(--accent);color:#fff}
 #saveBtn{background:var(--accent);color:#fff}
 #saveBtn:disabled{opacity:.5;cursor:default}
 #cancelBtn{background:#eceff1;color:#546e7a}
-#mobileFilterBtn{
-  display:none;margin:12px 12px 0;padding:12px;border:none;border-radius:8px;
-  background:#157A60;color:#ffffff;cursor:pointer;
-  font:700 13px 'Poppins',sans-serif;letter-spacing:1.2px;text-transform:uppercase;
-}
-body.filtersOpen #mobileFilterBtn{background:#157A60;color:#fff}
 @media(max-width:900px){
   #grid{grid-template-columns:repeat(4,1fr);gap:7px}
 }
 @media(max-width:760px){
   #app{flex-direction:column;align-items:stretch}
-  #mobileFilterBtn{display:block;flex:none}
   #sidebar{display:none;width:100%;min-width:0;height:auto;max-height:55%;flex:none}
-  body.filtersOpen #sidebar{display:block}
   #main{width:100%;flex:1;min-height:0;padding:12px 8px 12px}
   #grid{grid-template-columns:repeat(4,1fr);gap:7px}
 }
@@ -739,6 +714,105 @@ body:not(.multiPage) #grid > #pagerBottom{display:none}
   #pgJump,#pgJumpIn,#pgJumpOf{font:700 19px 'Poppins',sans-serif;letter-spacing:.5px}
   #pgJumpForm{gap:7px}
 }
+
+/* ---------- LAYOUT (Nov 2026): TOOLBAR + FILTERS PANEL ----------
+   Same layout as the Collection page. The filter column is gone and the
+   posters get the full width. One row sits above the wall: the Filters
+   button, a chip for every pick (lists AND sliders), the page arrows, then
+   the page's own buttons. Everything the column held -- the sort, every list
+   and every slider -- is in #sidebar, which is now the panel the Filters
+   button opens (a bottom sheet on a phone). The id is kept so every line of
+   script that talks to it still does. These rules sit last in the sheet on
+   purpose: they replace the old column's sizing rules above them. */
+#app{display:flex;flex-direction:column;height:100%}
+#toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:8px 10px;
+  padding:6px 14px 8px;position:relative;z-index:40}
+#filterWrap{position:relative;flex:none}
+#filterBtn{display:inline-flex;align-items:center;gap:8px;height:34px;padding:0 16px;
+  border:1px solid #157A60;border-radius:999px;background:#157A60;color:#fff;cursor:pointer;
+  font:700 13px 'Poppins','Segoe UI',sans-serif;letter-spacing:.6px}
+#filterBtn:hover,#filterBtn[aria-expanded="true"]{background:#168264;border-color:#168264;
+  box-shadow:0 0 0 2px rgba(255,255,255,.25)}
+#filterBtn .bars{font-size:15px;line-height:1}
+#filterCount{background:#fff;color:#0f5c48;border-radius:999px;font-size:11px;padding:1px 7px;line-height:1.45}
+#filterCount[hidden]{display:none}
+#sidebar{display:none;position:absolute;left:0;top:calc(100% + 8px);z-index:120;
+  width:min(960px,calc(100vw - 28px));min-width:0;height:auto;max-height:calc(100vh - var(--dd-nav-h) - 70px);
+  overflow-y:auto;overscroll-behavior:contain;flex:none;
+  background:#222b31;border:1px solid #3a4751;border-radius:12px;
+  box-shadow:0 18px 44px rgba(0,0,0,.6);padding:14px 18px 0;
+  scrollbar-width:thin;scrollbar-color:#4a565e transparent}
+#filterWrap.open #sidebar{display:block}
+.fp-head{display:flex;align-items:center;gap:12px;margin-bottom:12px}
+.fp-head h2{font:700 16px 'Poppins','Segoe UI',sans-serif;letter-spacing:.3px;color:#fff;margin-right:auto}
+#fpClose{width:30px;height:30px;border-radius:50%;border:none;background:#2f3a41;color:#cfd8dc;
+  font-size:14px;cursor:pointer}
+#fpClose:hover{background:#3a4751;color:#fff}
+.fp-label{font:700 11px 'Poppins','Segoe UI',sans-serif;letter-spacing:1.4px;text-transform:uppercase;
+  color:#90a4ae;margin:16px 0 8px}
+#sortWrap{max-width:340px;margin-bottom:0}
+.facet{margin-bottom:0}
+#facets{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 12px;align-items:start}
+#sliders{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:2px 28px}
+.fp-foot{position:sticky;bottom:0;display:flex;align-items:center;justify-content:flex-end;gap:10px;
+  margin:16px -18px 0;padding:12px 18px;background:#222b31;border-top:1px solid #34404a;z-index:2}
+#fpDone{height:36px;padding:0 20px;border:none;border-radius:999px;background:#157A60;color:#fff;
+  cursor:pointer;font:700 13px 'Poppins','Segoe UI',sans-serif;letter-spacing:.4px}
+#fpDone:hover{background:#168264;box-shadow:0 0 0 2px rgba(255,255,255,.25)}
+#fpBackdrop{display:none}
+/* The search box lives in the top bar, at its right-hand end. */
+.dd-search{margin-left:auto;position:relative;flex:0 1 360px;min-width:200px}
+@media(min-width:761px){ .dd-links{flex:0 0 auto} }
+#searchBox{
+width:100%;height:36px;margin:0;padding:0 14px 0 37px;border:none;border-radius:999px;
+background:var(--pill) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2378909c' stroke-width='2.6' stroke-linecap='round'%3E%3Ccircle cx='10.5' cy='10.5' r='6.5'/%3E%3Cpath d='M15.5 15.5l5 5'/%3E%3C/svg%3E") no-repeat 13px 50%/16px;color:#263238;color-scheme:light;
+font:600 13.5px 'Poppins','Segoe UI',sans-serif;letter-spacing:.2px;
+caret-color:#263238;outline:none;transition:box-shadow .15s;
+}
+#searchBox::placeholder{color:#78909c;text-transform:none;letter-spacing:.2px}
+#searchBox:hover{box-shadow:0 0 0 2px rgba(255,255,255,.25)}
+#searchBox:focus{box-shadow:0 0 0 3px rgba(58,160,227,.6)}
+/* Toolbar buttons */
+#resetAll{margin:0;width:auto;height:34px;padding:0 14px;border:1px solid #157A60;border-radius:999px;
+  background:#157A60;color:#fff;cursor:pointer;flex:none;
+  font:700 12px 'Poppins',sans-serif;letter-spacing:.6px;text-transform:none}
+#editToggle,#priceBtn{margin:0;width:auto;height:34px;padding:0 14px;border:none;border-radius:999px;flex:none;
+  font:700 12px 'Poppins',sans-serif;letter-spacing:.6px;text-transform:none}
+#main{flex:1;min-width:0;min-height:0;height:auto;display:flex;flex-direction:column;padding:2px 14px 14px;position:relative}
+#chipRow{display:flex;flex-wrap:wrap;gap:6px 8px;min-width:0;margin:0}
+/* The top pager is a slim counter with two small arrows at the right of the
+   toolbar. (#pagerBottom keeps the big bar.) */
+#pagerTop{margin:0 0 0 auto;height:34px;background:transparent;border-radius:0;gap:6px;flex:none}
+#pagerTop .pg-label{flex:none;font:700 14px 'Poppins',sans-serif;letter-spacing:.4px;color:#cfd8dc;white-space:nowrap;padding:0 4px}
+#pagerTop .pg-arrow{width:32px;height:32px;border-radius:50%;background:#262f35;font-size:14px;transition:background .12s}
+#pagerTop .pg-arrow:hover:not(:disabled){font-size:14px;background:#3a4751}
+/* Full-width wall: 12 columns on a big screen, fewer as it narrows. */
+#grid{grid-template-columns:repeat(12,1fr)}
+@media(max-width:1500px){ #grid{grid-template-columns:repeat(10,1fr)} }
+@media(max-width:1200px){ #grid{grid-template-columns:repeat(9,1fr);gap:10px} }
+@media(max-width:1000px){ #grid{grid-template-columns:repeat(6,1fr);gap:9px}
+  #facets,#sliders{grid-template-columns:repeat(2,minmax(0,1fr))} }
+@media(max-width:760px){
+  #main{width:100%;padding:2px 8px 12px}
+  #grid{grid-template-columns:repeat(4,1fr);gap:7px}
+  #toolbar{padding:6px 8px 8px;gap:6px 8px}
+  #pagerTop .pg-label{font-size:12.5px}
+  #resetAll,#editToggle,#priceBtn{height:32px;padding:0 11px;font-size:11.5px}
+  #filterWrap{order:0} #resetAll{order:1} #editToggle{order:2;padding:0 12px} #priceBtn{order:2}
+  #chipRow{order:3} #pagerTop{order:4}
+  #editToggle .tb-word,#priceBtn .tb-word{display:none}
+  /* The panel becomes a sheet that slides up over a dimmed wall. */
+  #sidebar{position:fixed;left:0;right:0;bottom:0;top:auto;width:auto;max-height:84vh;
+    border-radius:16px 16px 0 0;padding:12px 14px 0;z-index:130}
+  body.fpOpen #fpBackdrop{display:block;position:fixed;inset:0;background:rgba(8,12,14,.6);z-index:125}
+  /* Lift the toolbar's layer above the fixed top bar while the sheet is open,
+     or a tall sheet on a short phone slides under the bar. */
+  body.fpOpen #toolbar{z-index:200}
+  #facets{grid-template-columns:repeat(2,minmax(0,1fr))}
+  #sliders{grid-template-columns:minmax(0,1fr)}
+  .fp-foot{margin:14px -14px 0;padding:10px 14px calc(10px + env(safe-area-inset-bottom,0px))}
+  #fpDone{flex:1}
+}
 </style>
 <!-- Favicon: the avatar, at the sizes browsers actually ask for. Served from
      /assets/ so they are cached immutably alongside the nav mark. -->
@@ -779,16 +853,33 @@ body:not(.multiPage) #grid > #pagerBottom{display:none}
 body{padding-top:var(--dd-nav-h);box-sizing:border-box}
 /* The loading toast is fixed near the top and would sit under the bar. */
 #status{top:calc(var(--dd-nav-h) + 20px)!important}
+/* On a phone the chip would sit on top of the Filters button, so it goes to
+   the bottom of the screen instead. */
+@media(max-width:760px){ #status{top:auto!important;bottom:18px} }
 /* The full-size bar needs ~1020px; below that the last links were cut off
    inside a scroll strip with no visible scrollbar. */
+/* The search box shares this bar, so the links step down sooner than they
+   used to, and below 1040px the name gives way to the logo alone (as on a
+   phone) so all six links and the box still fit on one line. */
+@media(min-width:761px) and (max-width:1300px){
+  .dd-brand{margin-right:14px;font-size:21px}
+  .dd-links a{font-size:19px;padding:3px 9px}
+  .dd-search{flex:1 1 300px;min-width:170px}
+}
 @media(min-width:761px) and (max-width:1040px){
   .dd-nav{padding:0 12px}
-  .dd-brand{margin-right:12px;font-size:20px}
+  .dd-brand{margin-right:8px;font-size:0;gap:0}
   .dd-brand-img{width:42px;height:42px}
-  .dd-links a{font-size:17px;padding:3px 7px}
+  .dd-links a{font-size:16.5px;padding:3px 7px}
+  .dd-search{min-width:150px}
 }
 @media(max-width:760px){
-  :root{--dd-nav-h:45px}
+  /* 45px of logo and links, plus a full-width row for the search box. */
+  :root{--dd-nav-h:92px}
+  .dd-nav{flex-wrap:wrap;align-content:center;row-gap:5px}
+  .dd-search{order:3;flex:1 0 100%;min-width:0;margin:0}
+  /* The links stay beside the logo and wrap inside their own box. */
+  .dd-links{flex:1 1 0;min-width:0}
   .dd-nav{padding:0 10px}
   /* Phones: logo only, so the six links get the width. The name is still
      the link's text, so screen readers announce it. */
@@ -799,7 +890,7 @@ body{padding-top:var(--dd-nav-h);box-sizing:border-box}
 /* Six links need ~460px even with the logo alone, so on narrow phones they
    wrap to a second row rather than hide off-screen. */
 @media(max-width:560px){
-  :root{--dd-nav-h:64px}
+  :root{--dd-nav-h:112px}
   .dd-links{flex-wrap:wrap;row-gap:2px;overflow:visible}
 }
 </style><nav class="dd-nav">
@@ -817,15 +908,19 @@ body{padding-top:var(--dd-nav-h);box-sizing:border-box}
     <a href="/ma-compare">MA Compare</a>
     <a href="/d2d">D2D</a>
   </div>
+  <div class="dd-search" id="searchWrap">
+    <input id="searchBox" type="search" placeholder="Text search" autocomplete="off" spellcheck="false" aria-label="Search">
+  </div>
 </nav>
 <!-- Paints in the first frame, before any data exists. -->
 <div id="topbar" class="indet"><div id="topfill"></div></div>
 <div id="app">
-  <button id="mobileFilterBtn">&#9776; Filters &amp; search</button>
-  <aside id="sidebar" class="pending">
-    <button id="sbCollapse">&#10094; Hide filters</button>
-    <input id="searchBox" type="search" placeholder="Text search" autocomplete="off">
-    <!-- Option labels follow the Collection page. Title A -> Z stays this page's
+  <div id="toolbar">
+  <div id="filterWrap">
+    <button id="filterBtn" type="button" aria-expanded="false" aria-controls="sidebar"><span class="bars">&#9776;</span> Filters<span id="filterCount" hidden></span></button>
+  <aside id="sidebar" class="pending" aria-label="Filters">
+    <div class="fp-head"><h2>Filters</h2><button id="fpClose" type="button" title="Close (Esc)">&#10005;</button></div>
+        <!-- Option labels follow the Collection page. Title A -> Z stays this page's
          default: a wishlist has no date-added column, so there is no
          "Recently Added" to open on. Price is the one sort the Collection page
          does not have, because only the wishlist carries Buy Price. -->
@@ -846,20 +941,25 @@ body{padding-top:var(--dd-nav-h);box-sizing:border-box}
               title="Sort wishlist"><span id="sortLabel">Sort: Title A &rarr; Z</span><span class="icon">&#9662;</span></button>
       <div id="sortPanel" role="listbox" aria-label="Sort wishlist"></div>
     </div>
+    <div class="fp-label">Lists</div>
     <div id="facets"></div>
+    <div class="fp-label">Ranges</div>
     <div id="sliders"></div>
-    <button id="resetAll">Reset all filters</button>
-    <button id="editToggle">&#9998; Unlock editing</button>
-    <button id="priceBtn">&#36; Refresh prices</button>
+    <div class="fp-foot"><button id="fpDone" type="button">Show results</button></div>
   </aside>
-  <button id="sbExpand" title="Show filters">&#9776;</button>
-  <main id="main">
-    <div class="pagerBar" id="pagerTop">
+  </div>
+  <div id="fpBackdrop"></div>
+  <div id="chipRow"></div>
+  <div class="pagerBar" id="pagerTop">
       <button class="pg-arrow" id="prevPg" title="Previous page">&#10094;</button>
       <div class="pg-label" id="pgLabel">–</div>
       <button class="pg-arrow" id="nextPg" title="Next page">&#10095;</button>
     </div>
-    <div id="chipRow"></div>
+  <button id="resetAll" type="button">Reset all</button>
+  <button id="editToggle" type="button" title="Unlock editing">&#9998;<span class="tb-word"> Unlock editing</span></button>
+  <button id="priceBtn" type="button" title="Refresh prices">&#36;<span class="tb-word"> Refresh prices</span></button>
+</div>
+<main id="main">
     <div id="grid"></div>
 <script>
 /* Placeholder tiles, written during HTML parse so the grid never looks like a
@@ -918,9 +1018,9 @@ let PER_PAGE = 150;
 const mobileMq = window.matchMedia('(max-width:760px)');
 function syncPerPage(){
   const firstShown = page * PER_PAGE;          // keep roughly the same spot
-  PER_PAGE = mobileMq.matches ? 148
-           : document.body.classList.contains('sbCollapsed') ? 180
-           : 150;
+  /* The wall is always full width now (no filter column), so desktop always
+     takes the wide page. */
+  PER_PAGE = mobileMq.matches ? 148 : 180;
   page = Math.floor(firstShown / PER_PAGE);
 }
 (mobileMq.addEventListener ? mobileMq.addEventListener('change', ()=>{ syncPerPage(); if(typeof renderPage==='function' && movies.length) renderPage(); })
@@ -1489,6 +1589,30 @@ function renderChips(){
     const sel=selected[f.key];
     if(sel) sel.forEach(v=>add(f,v));
   }
+
+  /* Sliders get chips too, now that the panel holding them is usually shut:
+     the wall should never be narrowed by something you cannot see. The text
+     is read off the slider's own two value boxes, so it is formatted exactly
+     as the panel shows it. */
+  const groups=document.querySelectorAll('#sliders .slider-group');
+  SLIDERS.forEach((s,i)=>{
+    if(!s._active) return;
+    const g=groups[i];
+    const txt=g ? [...g.querySelectorAll('.sl-vals input')].map(x=>x.value).join(' to ') : '';
+    const chip=document.createElement('div');
+    chip.className='chip';
+    chip.innerHTML=`<span class="k">${esc(s.label)}</span><span class="v">${esc(txt)}</span>`;
+    const x=document.createElement('button');
+    x.type='button'; x.title=`Clear ${s.label}`; x.textContent='✕';
+    x.addEventListener('click',e=>{ e.stopPropagation(); if(s._reset) s._reset(); applyFilters(); });
+    chip.appendChild(x);
+    row.appendChild(chip);
+  });
+  const n=row.children.length, fc=$('#filterCount');
+  if(fc){ fc.hidden=!n; fc.textContent=n; }
+  const done=$('#fpDone');
+  if(done && typeof filtered!=='undefined' && filtered)
+    done.textContent='Show '+filtered.length.toLocaleString()+(filtered.length===1?' title':' titles');
 }
 /* ---------- SLIDERS ----------
    Ported from the Collection page's buildSliders(). Three things changed here:
@@ -1644,6 +1768,7 @@ function applyFilters(keepPage, soft){
   sortNow();
   if(!keepPage) page=0;
   renderPage(soft?{ifChanged:true}:null);
+  renderChips();   // slider chips, the count on the Filters button, "Show N titles"
 }
 /* Same semantics as the Collection page's sortNow(): blanks always last
    whichever way the sort runs, and ties broken A -> Z by title with the
@@ -1864,19 +1989,32 @@ $('#sortSel').addEventListener('change',()=>{sortNow();page=0;renderPage();});
   document.addEventListener('click',e=>{ if(!e.target.closest('#sortWrap')) close(); });
   sel.addEventListener('change',sync);
 })();
-function setSbCollapsed(v){
-  document.body.classList.toggle('sbCollapsed',v);
-  try{ localStorage.setItem('wl_sb', v?'1':'0'); }catch(e){}
-  syncPerPage();
-  if(movies.length) renderPage();   // filter selections live in memory — untouched
-}
-$('#sbCollapse').addEventListener('click',()=>setSbCollapsed(true));
-$('#sbExpand').addEventListener('click',()=>setSbCollapsed(false));
-try{ if(localStorage.getItem('wl_sb')==='1') document.body.classList.add('sbCollapsed'); }catch(e){}
-$('#mobileFilterBtn').addEventListener('click',()=>{
-  const open=document.body.classList.toggle('filtersOpen');
-  $('#mobileFilterBtn').innerHTML = open ? '&#10005; Hide filters' : '&#9776; Filters &amp; search';
-});
+/* ---------- FILTERS PANEL ----------
+   Same as the Collection page. The Filters button opens #sidebar as a panel
+   (a bottom sheet on a phone). It closes on Show results, the ✕, Escape, or a
+   click anywhere outside it. "Outside" is read from the event's composed
+   path, captured when the click began: ticking a box rebuilds the list under
+   the cursor, so by the time the click reaches document its target can be
+   detached, and closest() would wrongly say it came from outside. */
+(function(){
+  const wrap=$('#filterWrap'), btn=$('#filterBtn');
+  const isOpen=()=>wrap.classList.contains('open');
+  const set=open=>{
+    wrap.classList.toggle('open',open);
+    document.body.classList.toggle('fpOpen',open);
+    btn.setAttribute('aria-expanded',String(open));
+  };
+  btn.addEventListener('click',()=>set(!isOpen()));
+  $('#fpDone').addEventListener('click',()=>set(false));
+  $('#fpClose').addEventListener('click',()=>set(false));
+  $('#fpBackdrop').addEventListener('click',()=>set(false));
+  /* A drag that starts inside (a slider handle) and is let go outside fires
+     its click on a shared parent, outside the panel. That must not close it. */
+  let downIn=false;
+  document.addEventListener('pointerdown',e=>{ downIn=e.composedPath().includes(wrap); },true);
+  document.addEventListener('click',e=>{ if(isOpen() && !downIn && !e.composedPath().includes(wrap)) set(false); });
+  document.addEventListener('keydown',e=>{ if(e.key==='Escape' && isOpen()){ set(false); btn.focus(); } });
+})();
 $('#resetAll').addEventListener('click',()=>{
   $('#searchBox').value='';
   FACETS.forEach(f=>selected[f.key].clear());
@@ -1961,7 +2099,7 @@ async function handleEditToggle(){
     if(!t){ toast('Edit mode needs a token',true); return; }
   }
   editMode=!editMode; document.body.classList.toggle('editing',editMode);
-  $('#editToggle').innerHTML = editMode ? '&#128274; Lock editing' : '&#9998; Unlock editing';
+  $('#editToggle').innerHTML = editMode ? '&#128274;<span class="tb-word"> Lock editing</span>' : '&#9998;<span class="tb-word"> Unlock editing</span>';
   toast(editMode?'Edit mode on — \u270E edits an entry':'Edit mode off');
 }
 /* ---------- price refresh (runs server-side via Apps Script) ---------- */
@@ -2004,7 +2142,7 @@ $('#priceBtn').addEventListener('click',async()=>{
       : err.message;
     toast('Price refresh failed: '+hint,true);
   }
-  btn.disabled=false; btn.innerHTML='&#36; Refresh prices';
+  btn.disabled=false; btn.innerHTML='&#36;<span class="tb-word"> Refresh prices</span>';
 });
 $('#grid').addEventListener('click',e=>{
   if(!editMode) return;

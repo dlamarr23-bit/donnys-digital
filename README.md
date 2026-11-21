@@ -55,6 +55,7 @@ piece:
 
 | Tier | Gzipped | When |
 |---|---|---|
+| `head`: the newest 200 rows, core format | ~15 KB | painted first, so page 1's posters start loading before the core lands |
 | `core` — grid + the cheap facets | **589 KB** | first paint |
 | `facets` — Director, Actors | ~630 KB | before the sidebar builds |
 | `desc` — Descriptions | ~1.33 MB | only when search or a detail view asks |
@@ -87,6 +88,35 @@ wrong data.
 
 If the snapshot is missing or broken, every page falls back to the live sheet
 and behaves exactly as it did before this existed.
+
+### The whole-sheet check (Nov 2026): the probe is now the fallback
+
+Collection and Data no longer start with the column probe below. They ask the
+edge for the **SHA-1 of the entire published CSV** (`/sheet?u=…&check=1`, a
+few hundred bytes, see the edge section) and compare it with the hash saved
+beside whatever is on screen:
+
+- an IndexedDB record stores `h`, taken from the `X-Sheet-Hash` header of the
+  download it came from;
+- the snapshot and the mirrors carry the hash of the CSV they were built from,
+  in `data-manifest.json` (`csvHash`, `mirrorHashes`).
+
+Equal hashes mean not one cell in any column changed, so nothing is
+downloaded. Different hashes mean the full CSV is pulled and swapped in. This
+sees EVERY column, so the blind spots described below (same-length edits, the
+probe's column list) no longer apply on this path. It works because Google's
+CSV export is byte-for-byte stable while the sheet is unchanged (checked
+2026-11-20: two Google downloads, the edge copy and the mirror all had the
+same SHA-1).
+
+Edits still show up within Google's own publish delay (a few minutes for the
+published CSV) plus the 60s confirm pass, exactly as before. The column probe
+and column Y are kept as the fallback for when the edge cannot answer, and
+for a browser whose cached record predates hashes (its first visit after this
+change uses the probe once, then adopts the hash).
+
+Measured on the local preview: a repeat Collection visit went from ~0.7 MB to
+~1 KB of sheet traffic, and a repeat Data visit from ~3.5 MB to ~1 KB.
 
 ### The probe only sees the columns it asks for
 
@@ -183,6 +213,13 @@ cache in front of the sheets:
 |---|---|
 | `/sheet?u=…` (fast) | whatever copy the edge has, in ~50ms, however old; refreshes it from Google in the background if it is over 15s old |
 | `/sheet?u=…&fresh=60` (confirm) | a copy at most 60s old, waiting for Google only if the edge has nothing that recent |
+| `…&check=1` (with either of the above) | the same headers and **no body**: just the age and the hash, for the whole-sheet check |
+
+Every answer carries `X-Sheet-Hash`, the SHA-1 of the exact bytes. It is worked
+out once when a copy is stored and kept on the cached entry, so a check never
+reads the body (a copy stored before hashes existed gets its hash filled in on
+first use). The function reads Google's answer as bytes rather than text, so
+the ~13 MB Movies export is no longer decoded and re-encoded on every refresh.
 
 Each page asks the fast way, paints, and -- only if that copy was more than
 60s old -- runs a **silent confirm pass** once everything is on screen: no
@@ -340,3 +377,31 @@ The nav bar at the top of each page used to come from Google Sites and is now
 part of the pages themselves — inlined rather than pulled from a stylesheet so
 it paints in the first frame. The brand mark to its left and the
 favicons are the avatar, in `assets/`.
+
+## Page layout (Nov 2026)
+
+The five poster pages (Collection, Wishlist, Sales, MA Compare, D2D) share one
+layout. There is no filter column any more; the wall is full width (12 columns
+on a big screen, stepping down to 10, 9, 6 and 4 on a phone).
+
+- **Top bar**: logo, the six links, and the page's search box at the right.
+  On a phone the search box takes its own row under the links.
+- **Toolbar** above the wall: the green **Filters** button, then a chip for
+  every active pick (lists *and* sliders, each with a ✕), the slim page
+  counter with its arrows, then the page's own buttons (Reset all; Unlock
+  editing on Collection and Wishlist; Refresh prices on Wishlist; the Today's
+  movies / Today's television pills on Sales).
+- **Filters panel**: the Filters button opens `#sidebar` as a dropdown panel
+  (a bottom sheet on a phone) holding the sort, every list and every slider.
+  The element keeps its old id so the existing facet, slider and sort code
+  works unchanged, lists still narrow as you pick, and nothing was removed.
+  It closes on Show results, ✕, Escape or a click outside (decided from the
+  click's composed path, because ticking a box rebuilds the list under it).
+- **Search suggestions** (Collection only): typing two or more letters offers
+  matching directors and actors, counted off the films the other filters
+  leave showing. Picking a name adds it as a Director or Actors pick and
+  clears the box, so two actors, or a director and an actor, show only the
+  films they made together (those two facets intersect). The plain text
+  search still works as before.
+- The old Hide filters / show-filters strip and the phone "Filters & search"
+  button are gone; desktop always uses the wide page size.

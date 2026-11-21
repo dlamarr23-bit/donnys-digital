@@ -1,6 +1,6 @@
 // Cloudflare Pages Function — edge cache in front of the Google Sheets.
 //
-// Route: GET /sheet?u=<encoded Google Sheets URL>[&fresh=<seconds>]
+// Route: GET /sheet?u=<encoded Google Sheets URL>[&fresh=<seconds>][&check=1]
 //
 // WHY THIS EXISTS
 // Every page paints from a local cache first and then asks the live sheet
@@ -23,7 +23,23 @@
 //                  means nothing has to wait for it.
 //
 // Every response says how old it is in `X-Sheet-Age` (seconds) and where it
-// came from in `X-Sheet-Cache` (HIT / STALE / MISS / ERROR-STALE).
+// came from in `X-Sheet-Cache` (HIT / STALE / MISS / ERROR-STALE), and what
+// it holds in `X-Sheet-Hash` (SHA-1 of the exact bytes, hex).
+//
+//   check=1        FINGERPRINT ONLY. Same fast/confirm rules as above, but the
+//                  body is empty: the answer is just the headers. A page that
+//                  already holds a copy compares X-Sheet-Hash with the hash it
+//                  saved and skips the download when they match. The hash is
+//                  of the WHOLE sheet, so an edit to any cell in any column
+//                  changes it -- unlike the old column probes, nothing can
+//                  slip past it. It costs a few hundred bytes, not megabytes.
+//
+// The hash is worked out once, when a copy is stored, and kept on the cached
+// entry, so a check never reads the cached body. Google's CSV export is
+// byte-for-byte stable while the sheet is unchanged (checked 2026-11-20: two
+// Google downloads, the edge copy and the deploy-time mirror all had the same
+// SHA-1), which is what lets scripts/build-data.mjs publish the matching hash
+// for the snapshot it built.
 //
 // The edge cache is per Cloudflare data centre, which in practice means per
 // region: the first visitor through a given colo pays Google's latency, and
@@ -80,6 +96,13 @@ function looksBad(text, type) {
 // (or a page's fast + confirm pair) cannot stampede Google.
 const inflight = new Map();
 
+async function sha1(buf) {
+  const d = new Uint8Array(await crypto.subtle.digest("SHA-1", buf));
+  let h = "";
+  for (let i = 0; i < d.length; i++) h += d[i].toString(16).padStart(2, "0");
+  return h;
+}
+
 function fetchUpstream(target) {
   let p = inflight.get(target);
   if (p) return p;
@@ -89,8 +112,13 @@ function fetchUpstream(target) {
     try {
       const res = await fetch(target, { redirect: "follow", signal: ctl.signal });
       const type = res.headers.get("Content-Type") || "";
-      const text = await res.text();
-      return { ok: res.ok && !looksBad(text, type), status: res.status, text, type };
+      // Bytes, not text: the body is stored and sent on as-is, so decoding
+      // ~13MB into a string and encoding it again was pure CPU. Only a short
+      // answer can be an error, so only a short answer is decoded to check.
+      const buf = await res.arrayBuffer();
+      const head = buf.byteLength < 2000 ? new TextDecoder().decode(buf) : "";
+      const ok = res.ok && !looksBad(head, type);
+      return { ok, status: res.status, buf, type, hash: ok ? await sha1(buf) : "" };
     } finally {
       clearTimeout(t);
     }
@@ -100,19 +128,20 @@ function fetchUpstream(target) {
   return p;
 }
 
-function store(cache, key, text, type) {
+function store(cache, key, buf, type, hash, fetchedAt) {
   const h = new Headers();
   // text/plain on purpose: Cloudflare only compresses Content-Types on its
   // list and text/csv is not on it (see the note in _headers). Every page
   // reads these with fetch().text(), so nothing depends on the type.
   h.set("Content-Type", "text/plain; charset=utf-8");
   h.set("X-Upstream-Type", type || "");
-  h.set("X-Fetched-At", String(Date.now()));
+  h.set("X-Fetched-At", String(fetchedAt || Date.now()));
+  if (hash) h.set("X-Sheet-Hash", hash);
   h.set("Cache-Control", `public, max-age=${MAX_KEEP}`);
-  return cache.put(key, new Response(text, { headers: h }));
+  return cache.put(key, new Response(buf, { headers: h }));
 }
 
-function reply(body, ageSec, how, status = 200) {
+function reply(body, ageSec, how, status = 200, hash = "") {
   const h = new Headers();
   h.set("Content-Type", "text/plain; charset=utf-8");
   // The browser must not keep its own copy: the page decides freshness from
@@ -120,7 +149,8 @@ function reply(body, ageSec, how, status = 200) {
   h.set("Cache-Control", "no-store");
   h.set("X-Sheet-Age", String(Math.max(0, Math.round(ageSec))));
   h.set("X-Sheet-Cache", how);
-  h.set("Access-Control-Expose-Headers", "X-Sheet-Age, X-Sheet-Cache");
+  if (hash) h.set("X-Sheet-Hash", hash);
+  h.set("Access-Control-Expose-Headers", "X-Sheet-Age, X-Sheet-Cache, X-Sheet-Hash");
   return new Response(body, { status, headers: h });
 }
 
@@ -136,6 +166,7 @@ export async function onRequestGet(context) {
 
   const freshParam = reqUrl.searchParams.get("fresh");
   const fresh = freshParam === null ? null : Math.max(0, Number(freshParam) || 0);
+  const checkOnly = reqUrl.searchParams.get("check") === "1";
 
   const cache = caches.default;
   const key = new Request(`${reqUrl.origin}/__sheet-cache/${encodeURIComponent(target.toString())}`);
@@ -148,28 +179,61 @@ export async function onRequestGet(context) {
 
   const refresh = async () => {
     const up = await fetchUpstream(target.toString());
-    if (up.ok) await store(cache, key, up.text, up.type);
+    if (up.ok) await store(cache, key, up.buf, up.type, up.hash);
     return up;
   };
 
+  // The hash of the cached copy. A copy stored before hashes existed has
+  // none: work it out once from its body and, when asked to, store it back
+  // with its original fetch time so it does not suddenly look fresh.
+  //
+  // Two traps, both real:
+  //  * Callers must await this BEFORE touching cached.body. clone() tees the
+  //    body stream, so a cached.body taken earlier is locked by the time the
+  //    Response is built, and the function throws (a bare 500).
+  //  * Do not store back when a refresh is running beside it: if the refresh
+  //    lands first, this would write the OLD copy on top of the new one.
+  const cachedHash = async (storeBack) => {
+    const have = cached.headers.get("X-Sheet-Hash");
+    if (have) return have;
+    const buf = await cached.clone().arrayBuffer();
+    const hash = await sha1(buf);
+    if (storeBack) {
+      waitUntil(store(cache, key, buf, cached.headers.get("X-Upstream-Type"), hash,
+        Number(cached.headers.get("X-Fetched-At") || 0)).catch(() => {}));
+    }
+    return hash;
+  };
+  // check=1 sends the same headers with no body.
+  const body = (b) => (checkOnly ? null : b);
+
   // FAST: anything we have, now. Refresh behind it if it is getting old.
   if (cached && (fresh === null || age <= fresh)) {
-    if (age > REFRESH_AFTER) waitUntil(refresh().catch(() => {}));
-    return reply(cached.body, age, fresh === null && age > REFRESH_AFTER ? "STALE" : "HIT");
+    const refreshing = age > REFRESH_AFTER;
+    if (refreshing) waitUntil(refresh().catch(() => {}));
+    const how = fresh === null && refreshing ? "STALE" : "HIT";
+    const hash = await cachedHash(!refreshing);
+    return reply(body(cached.body), age, how, 200, hash);
   }
 
   // MISS, or CONFIRM with a copy that is too old: wait for Google.
   try {
     const up = await fetchUpstream(target.toString());
     if (up.ok) {
-      waitUntil(store(cache, key, up.text, up.type).catch(() => {}));
-      return reply(up.text, 0, "MISS");
+      waitUntil(store(cache, key, up.buf, up.type, up.hash).catch(() => {}));
+      return reply(body(up.buf), 0, "MISS", 200, up.hash);
     }
     // Google answered, but with something unusable. Prefer an old good copy.
-    if (cached) return reply(cached.body, age, "ERROR-STALE");
-    return reply(up.text, 0, "ERROR", up.status >= 400 ? up.status : 502);
+    if (cached) {
+      const hash = await cachedHash(true);
+      return reply(body(cached.body), age, "ERROR-STALE", 200, hash);
+    }
+    return reply(up.buf, 0, "ERROR", up.status >= 400 ? up.status : 502);
   } catch (e) {
-    if (cached) return reply(cached.body, age, "ERROR-STALE");
+    if (cached) {
+      const hash = await cachedHash(true);
+      return reply(body(cached.body), age, "ERROR-STALE", 200, hash);
+    }
     return reply(`Upstream fetch failed: ${(e && e.message) || e}`, 0, "ERROR", 502);
   }
 }

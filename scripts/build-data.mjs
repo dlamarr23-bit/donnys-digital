@@ -202,6 +202,18 @@ function hash(str) {
   return createHash('sha256').update(str).digest('hex').slice(0, 10);
 }
 
+/* The SAME fingerprint functions/sheet.js puts on its copies (X-Sheet-Hash):
+   SHA-1 of the exact bytes, hex. Google's export is byte-stable while the
+   sheet is unchanged, so a page that painted from a snapshot or mirror built
+   here can ask the edge "is it still this?" and skip the download on a yes. */
+function sheetHash(text) {
+  return createHash('sha1').update(Buffer.from(text, 'utf8')).digest('hex');
+}
+
+/* How many rows the head tier carries: more than the largest page (180), so a
+   first visit can paint page 1 from it before the full core has arrived. */
+const HEAD_ROWS = 200;
+
 
 /* ---------- sales bundle -------------------------------------------------- */
 /* The Sales page reads 46 separate tabs, one gviz request each. The tabs are
@@ -323,6 +335,7 @@ const MIRRORS = [
 async function buildMirrors(moviesCsv) {
   await mkdir(MIRROR, { recursive: true });
   const done = [];
+  const hashes = {};
   for (const m of MIRRORS) {
     try {
       /* The Movies export is already in memory; do not pull 11.7MB twice. */
@@ -339,6 +352,7 @@ async function buildMirrors(moviesCsv) {
       }
       await writeFile(join(MIRROR, m.name), text);
       done.push(m.name);
+      hashes[m.name] = sheetHash(text);
       console.log(`[build] mirror ${m.name.padEnd(16)} ${(text.length / 1048576).toFixed(2)}MB`);
     } catch (e) {
       /* A mirror that cannot be built is not a failed deploy: every page keeps
@@ -346,7 +360,7 @@ async function buildMirrors(moviesCsv) {
       console.warn(`[build] mirror ${m.name} SKIPPED: ${e.message}`);
     }
   }
-  return done;
+  return { done, hashes };
 }
 
 async function main() {
@@ -452,11 +466,16 @@ async function main() {
   /* Clear out snapshots from previous builds so the deploy folder does not
      accumulate every hash we have ever published. */
   for (const f of await readdir(DATA).catch(() => [])) {
-    if (/^(core|facets|desc|sales)\.[0-9a-f]{10}\.json$/.test(f)) await unlink(join(DATA, f));
+    if (/^(head|core|facets|desc|sales)\.[0-9a-f]{10}\.json$/.test(f)) await unlink(join(DATA, f));
   }
 
   const out = {};
-  for (const [name, payload] of [['core', corePayload], ['facets', facetPayload], ['desc', descPayload]]) {
+  /* The head tier: the core format cut to the first HEAD_ROWS rows. The sheet
+     is kept newest-first, which is the default sort, so these are page 1. A
+     first visit paints from this small file while the ~600KB core is still on
+     the way, instead of showing an empty grid until the core is unpacked. */
+  const headPayload = { ...corePayload, n: Math.min(HEAD_ROWS, core.length), rows: core.slice(0, HEAD_ROWS) };
+  for (const [name, payload] of [['head', headPayload], ['core', corePayload], ['facets', facetPayload], ['desc', descPayload]]) {
     const json = JSON.stringify(payload);
     const h = hash(json);
     const file = `${name}.${h}.json`;
@@ -477,7 +496,7 @@ async function main() {
     console.log(`[build] ${sfile.padEnd(26)} ${(sj.length / 1048576).toFixed(2)}MB raw`);
   }
 
-  const mirrors = await buildMirrors(csvText);
+  const { done: mirrors, hashes: mirrorHashes } = await buildMirrors(csvText);
 
   /* The manifest is what index.html reads to find the current snapshots. It is
      tiny and served must-revalidate, so a rebuild is picked up immediately
@@ -486,7 +505,8 @@ async function main() {
      single header rule with no exception carved out of it. */
   await writeFile(
     join(ROOT, 'data-manifest.json'),
-    JSON.stringify({ built: new Date().toISOString(), rows: core.length, files: out, mirrors })
+    JSON.stringify({ built: new Date().toISOString(), rows: core.length, files: out, mirrors,
+      csvHash: sheetHash(csvText), mirrorHashes })
   );
 
   console.log(`[build] ${core.length} rows (${blankRows} blank, kept for position)`);

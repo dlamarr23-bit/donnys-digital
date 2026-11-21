@@ -136,10 +136,17 @@
      __edge.confirm(url)  -> a copy no older than FRESH_S, waiting on Google
                              only if the edge has nothing that recent
      __edge.isOld(r)      -> true when a fast answer still needs confirming
+     __edge.check(url[,maxAge]) -> the same answer with NO body: just {age,
+                             how, hash}. `hash` is the SHA-1 of the whole
+                             sheet as the edge holds it, so comparing it with
+                             the hash saved beside a cached copy says whether
+                             ANY cell changed, for a few hundred bytes.
+                             Resolves null when the edge cannot answer (no
+                             /sheet, or it failed): use another way then.
 
-   Each resolves to {res, age, how}: `res` is the fetch Response (body unread,
-   so callers can stream it), `age` its age in seconds, `how` where it came
-   from. The pages paint the fast answer straight away and run the confirm
+   Each resolves to {res, age, how, hash}: `res` is the fetch Response (body
+   unread, so callers can stream it), `age` its age in seconds, `how` where it
+   came from, `hash` the SHA-1 of the copy ('' when unknown). The pages paint the fast answer straight away and run the confirm
    pass silently behind it, so the data is still live -- it just no longer
    holds anything up.
 
@@ -155,18 +162,21 @@
       return {res:r, age:0, how:'DIRECT'};
     });
   }
-  function viaEdge(url, fresh, signal){
-    if(off) return direct(url, signal);
-    var u='/sheet?u='+encodeURIComponent(url)+(fresh==null?'':'&fresh='+fresh);
+  function viaEdge(url, fresh, signal, check){
+    if(off) return check ? Promise.resolve(null) : direct(url, signal);
+    var u='/sheet?u='+encodeURIComponent(url)+(fresh==null?'':'&fresh='+fresh)+(check?'&check=1':'');
     return fetch(u,opts(signal)).then(function(r){
       var how=r.headers.get('X-Sheet-Cache');
       /* No header means this was not the function answering (a 404 page, a
          static server) -- stop asking it for the rest of this visit. */
-      if(!how){ off=true; return direct(url, signal); }
+      if(!how){ off=true; return check ? null : direct(url, signal); }
       if(!r.ok) throw new Error('sheet HTTP '+r.status);
-      return {res:r, age:+(r.headers.get('X-Sheet-Age')||0), how:how};
+      return {res:r, age:+(r.headers.get('X-Sheet-Age')||0), how:how,
+              hash:r.headers.get('X-Sheet-Hash')||''};
     }).catch(function(e){
-      if(off || (e && e.name==='AbortError')) throw e;
+      if(e && e.name==='AbortError') throw e;
+      if(check) return null;
+      if(off) throw e;
       try{ console.warn('[edge] /sheet unavailable, using Google directly:', (e&&e.message)||e); }catch(x){}
       return direct(url, signal);
     });
@@ -176,6 +186,7 @@
     fast:function(url,signal){ return viaEdge(url,null,signal); },
     confirm:function(url,maxAge,signal){ return viaEdge(url, maxAge==null?FRESH_S:maxAge, signal); },
     isOld:function(r){ return !!r && (r.age>FRESH_S || r.how==='ERROR-STALE'); },
+    check:function(url,maxAge){ return viaEdge(url, maxAge==null?null:maxAge, null, true); },
     text:function(p){ return p.then(function(r){ return r.res.text().then(function(t){ r.text=t; return r; }); }); }
   };
 })();
@@ -360,13 +371,13 @@ html,body{margin:0;padding:0;background:#171C20}
       }).catch(function(){ return null; });
     }catch(e){ return Promise.resolve(null); }
   }
-  function cacheSet(rows, sig, asOf){
+  function cacheSet(rows, sig, asOf, h){
     try{
       var t=Date.now();
       return openIdb().then(function(db){
         return new Promise(function(res,rej){
           var tx=db.transaction(IDB_STORE,'readwrite');
-          tx.objectStore(IDB_STORE).put({t:t, sig:sig, asOf:asOf||0, d:rows}, IDB_KEY);
+          tx.objectStore(IDB_STORE).put({t:t, sig:sig, asOf:asOf||0, h:h||null, d:rows}, IDB_KEY);
           tx.objectStore(IDB_STORE).delete('stats:v1');
           tx.oncomplete=res; tx.onerror=function(){ rej(tx.error); };
         });
@@ -456,7 +467,7 @@ html,body{margin:0;padding:0;background:#171C20}
   function streamCsv(req, src, quiet){
     function tick(o){ if(!quiet && leader===src) emit(o); }
     return req.then(function(e){
-      var r=e.res, meta={age:e.age, how:e.how};
+      var r=e.res, meta={age:e.age, how:e.how, hash:e.hash||''};
       if(!r.ok) throw new Error('CSV HTTP '+r.status);
       var cs=new CsvStream(), cols=null, bytes=0;
       function header(){
@@ -568,17 +579,39 @@ html,body{margin:0;padding:0;background:#171C20}
   /* ---- the live sheet, through the edge ---------------------------------
      Goes out now, before the stylesheet or the main script have been parsed,
      whatever else happens -- it is the authoritative answer in every path. */
-  var live = streamCsv(window.__edge.fast(CSV_URL), 'csv');
-  window.__DD_LIVE = live;
-  live.then(function(d){
-    if(!settled) out.res(d);
-  }, function(e){
-    errs.push('live: '+((e&&e.message)||String(e)));
-    /* Live failed. If the mirror already painted, the page stands as-is on
-       deploy-time data rather than going blank. If nothing has painted, walk
-       down to gviz exactly as before. */
-    if(!settled && mirrorState!=='running') startGviz();
-  });
+  /* ---- the whole-sheet check (functions/sheet.js, check=1) --------------
+     The edge's SHA-1 of the entire published CSV, for a few hundred bytes.
+     A cached copy (or the mirror) whose saved hash matches it IS the sheet as
+     it is right now, so the full download is skipped. Any edit to any cell in
+     any column changes the hash, so this can never hide an edit; it only
+     stops the page re-downloading 3.5MB that it already has. Resolves null
+     when the edge cannot answer, and then the page downloads as before. */
+  window.__DD_CHECK = window.__edge.check(CSV_URL);
+  /* The mirror's hash, from the manifest build-data.mjs writes. */
+  window.__DD_MIRROR_HASH = fetch('/data-manifest.json',{credentials:'omit'})
+    .then(function(r){ return r.ok ? r.json() : null; })
+    .then(function(m){ return (m && m.mirrorHashes && m.mirrorHashes['movies.csv']) || null; })
+    .catch(function(){ return null; });
+
+  /* The live sheet, through the edge. No longer started unconditionally:
+     reading window.__DD_LIVE starts it, so the page only pays for it when the
+     check says the copy on screen is not the current sheet. */
+  var live=null;
+  function startLive(){
+    if(live) return live;
+    live = streamCsv(window.__edge.fast(CSV_URL), 'csv');
+    live.then(function(d){
+      if(!settled) out.res(d);
+    }, function(e){
+      errs.push('live: '+((e&&e.message)||String(e)));
+      /* Live failed. If the mirror already painted, the page stands as-is on
+         deploy-time data rather than going blank. If nothing has painted, walk
+         down to gviz exactly as before. */
+      if(!settled && mirrorState!=='running') startGviz();
+    });
+    return live;
+  }
+  Object.defineProperty(window, '__DD_LIVE', {configurable:true, get:startLive});
 
   /* The silent confirm pass: same URL, but a copy no older than
      __edge.FRESH_S. Quiet -- it never touches the progress bar. */
@@ -597,6 +630,12 @@ html,body{margin:0;padding:0;background:#171C20}
     if(mirrorState!=='idle' || settled) return;
     mirrorState='running';
     leader='mirror';
+    /* The mirror is the sheet as of the last deploy. If its hash still
+       matches the edge's, it is current and the live download is not needed
+       at all; otherwise start it now, so the page can catch up. */
+    Promise.all([window.__DD_CHECK, window.__DD_MIRROR_HASH]).then(function(a){
+      if(!(a[0] && a[0].hash && a[1] && a[0].hash===a[1])) startLive();
+    });
     streamCsv(plain(CSV_MIRROR), 'mirror').then(function(d){
       mirrorState='done';
       if(settled) return;                  // live beat us; its data is already in
@@ -609,7 +648,7 @@ html,body{margin:0;padding:0;background:#171C20}
       mirrorState='failed';
       errs.push('mirror: '+((e&&e.message)||String(e)));
       if(!settled) leader='csv';
-      live.catch(function(){ startGviz(); });
+      startLive().catch(function(){ startGviz(); });
     });
   }
   window.__DD_MIRROR = startMirror;
@@ -1886,15 +1925,18 @@ const currentSig=()=> shownSig ?? (shownSig=signature(rows));
 // What the IndexedDB record holds right now, so an unchanged revisit does not
 // rewrite ~5MB just to say "still the same".
 let cachedSig=null, cachedT=0;
+/* SHA-1 of the published CSV the stats on screen came from, and of the one in
+   the IndexedDB record. Compared with the edge's whole-sheet check. */
+let shownHash=null, cachedHash=null;
 /* When Google produced the copy on screen (ms epoch), worked out from the
    edge's X-Sheet-Age. 0 = unknown (the deploy-time mirror). */
 let shownAsOf=0;
 const asOfOf = d => Date.now() - ((d && d.meta && d.meta.age) || 0)*1000;
 function saveCache(){
   const sig=currentSig();
-  if(sig===cachedSig && Date.now()-cachedT < 24*60*60*1000) return;
-  cachedSig=sig; cachedT=Date.now();
-  window.__DD_CACHE_SET(rows, sig, shownAsOf);
+  if(sig===cachedSig && shownHash===cachedHash && Date.now()-cachedT < 24*60*60*1000) return;
+  cachedSig=sig; cachedHash=shownHash; cachedT=Date.now();
+  window.__DD_CACHE_SET(rows, sig, shownAsOf, shownHash);
 }
 
 /* First paint, from whichever source got here first. */
@@ -1937,6 +1979,7 @@ function catchUp(d, label){
       const sig=signature(next);
       const changed = sig!==currentSig();
       shownAsOf=Math.max(shownAsOf, asOf);
+      if(d.meta && d.meta.hash) shownHash=d.meta.hash;
       if(changed){
         rows=next; shownSig=sig;
         overallDir=overallAct=null;                      // leaderboard totals are per-collection
@@ -1966,6 +2009,13 @@ function confirmLater(meta){
   confirming=true;
   idle(async()=>{
     try{
+      /* Whole-sheet check first, insisting on a copy no older than FRESH_S:
+         when it matches what is on screen there is nothing to download. */
+      const c=await window.__edge.check(window.__CSV_URL, window.__edge.FRESH_S);
+      if(c && c.hash && shownHash && c.hash===shownHash){
+        console.info('[stats] confirm pass: unchanged (whole-sheet check)');
+        return;
+      }
       const d=await window.__DD_CONFIRM();
       await catchUp(d, 'confirm pass');
     }catch(e){
@@ -1982,6 +2032,7 @@ function confirmLater(meta){
     if(rec){
       window.__DD_CACHE_PAINTED();
       shownSig=rec.sig||null; cachedSig=rec.sig||null; cachedT=rec.t; shownAsOf=rec.asOf||0;
+      shownHash=rec.h||null; cachedHash=rec.h||null;
       await firstPaint(rec.d);
       window.__DD_T={paint:performance.now()-t0, src:'cache'};
       console.info(`[stats] ${rows.length} titles painted from cache in ${Math.round(performance.now()-t0)}ms`
@@ -1990,6 +2041,22 @@ function confirmLater(meta){
          If the edge AND Google's CSV are both out, the slow gviz route is
          still a way to current data -- but the cached stats stay up either
          way, with nothing louder than a console line. */
+      /* 2a. The whole-sheet check. Matching hash: the cached stats ARE the
+         current sheet, so nothing is downloaded. An edge copy older than what
+         is on screen decides nothing either; the confirm pass settles it. */
+      const c=await window.__DD_CHECK;
+      if(c && c.hash && shownHash){
+        if(c.hash===shownHash){
+          console.info('[stats] whole-sheet check: unchanged -- nothing downloaded');
+          confirmLater(c);
+          return;
+        }
+        if(c.how!=='DIRECT' && shownAsOf && Date.now()-c.age*1000 < shownAsOf){
+          console.info('[stats] edge copy is older than the cache; leaving it to the confirm pass');
+          confirmLater(c);
+          return;
+        }
+      }
       let d;
       try{ d=await window.__DD_LIVE; }
       catch(e){
@@ -2012,11 +2079,20 @@ function confirmLater(meta){
     const list=parse(data.cols, data.rows);
     if(!list.length) throw new Error('no rows returned');
     await firstPaint(list);
-    if(data.src!=='mirror') shownAsOf=asOfOf(data);
+    if(data.src!=='mirror'){ shownAsOf=asOfOf(data); shownHash=(data.meta&&data.meta.hash)||null; }
+    else shownHash=await window.__DD_MIRROR_HASH;
     window.__DD_T={paint:performance.now()-t0, src:data.src};
     console.info(`[stats] ${rows.length} titles (source: ${data.src}) in ${Math.round(performance.now()-t0)}ms`);
     /* Not awaited: the page is finished and interactive at this point. */
-    if(data.src==='mirror'){
+    const chk=await window.__DD_CHECK;
+    if(data.src==='mirror' && chk && chk.hash && shownHash && chk.hash===shownHash){
+      /* The deploy-time copy is still the current sheet (same hash as the
+         edge's): nothing to download. Save it so the next visit paints from
+         the cache, and let the confirm pass check a fresher copy if needed. */
+      console.info('[stats] mirror is the current sheet (whole-sheet check) -- no live download');
+      idle(saveCache);
+      confirmLater(chk);
+    }else if(data.src==='mirror'){
       /* Painted from the deploy-time copy. The edge's answer is still in
          flight; when it lands, swap it in only if it differs. */
       window.__DD_LIVE.then(
