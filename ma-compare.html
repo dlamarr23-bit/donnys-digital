@@ -829,6 +829,65 @@ caret-color:#263238;outline:none;transition:box-shadow .15s;
   .fp-foot{margin:14px -14px 0;padding:10px 14px calc(10px + env(safe-area-inset-bottom,0px))}
   #fpDone{flex:1}
 }
+
+/* ---------- LAYOUT TWEAKS (Nov 21) ----------
+   Requested after the first week on the new layout:
+   - the search box sits right after the page links, and the owner's buttons
+     (Unlock editing, and Refresh prices on the Wishlist) sit at the top right;
+   - Reset all sits right beside Filters, the page counter at the far right;
+   - a list opened in the Filters panel floats over the lists below it instead
+     of pushing them down and leaving a tall empty gap in the other columns;
+   - the bottom page bar is the same slim counter as the top one;
+   - the panel's close button is a labelled pill, not a faint corner X. */
+.dd-search{margin-left:22px}
+.dd-tools{margin-left:auto;display:flex;align-items:center;gap:8px;flex:none}
+.dd-tools #editToggle,.dd-tools #priceBtn{height:36px}
+@media(min-width:761px) and (max-width:1300px){
+  .dd-tools .tb-word{display:none}
+  .dd-tools #editToggle,.dd-tools #priceBtn{padding:0 13px}
+}
+#fpClose{width:auto;height:34px;padding:0 15px;border-radius:999px;border:none;cursor:pointer;
+  background:#fff;color:#1d262c;font:700 13px 'Poppins','Segoe UI',sans-serif;letter-spacing:.3px;
+  box-shadow:0 2px 8px rgba(0,0,0,.35)}
+#fpClose:hover{background:#ffd54f;color:#1d262c}
+#sidebar .facet-panel{position:absolute;left:0;right:0;top:calc(100% + 5px);margin-top:0;z-index:40}
+@media(max-width:1000px){
+  #sidebar .facet-panel{min-width:240px}
+  #facets .facet:nth-child(2n) .facet-panel{left:auto;right:0}
+}
+#grid > #pagerBottom{justify-content:flex-end;height:44px;background:transparent;border-radius:0;
+  gap:6px;margin-top:10px}
+#pagerBottom .pg-arrow{width:32px;height:32px;border-radius:50%;background:#262f35;font-size:14px;
+  transition:background .12s}
+#pagerBottom .pg-arrow:hover:not(:disabled){font-size:14px;background:#3a4751}
+#pagerBottom #pgJumpWrap{flex:none}
+#pagerBottom #pgJump,#pagerBottom #pgJumpIn,#pagerBottom #pgJumpOf{font:700 14px 'Poppins',sans-serif;
+  letter-spacing:.4px;color:#cfd8dc}
+#pagerBottom #pgJump{padding:5px 10px;border-radius:8px}
+#pagerBottom #pgJump:hover,#pagerBottom #pgJump:focus-visible{background:#262f35;color:#fff}
+#pagerBottom #pgJumpIn{width:3.4em;padding:3px 6px;background:#262f35}
+@media(max-width:760px){
+  .dd-search{margin-left:0}
+  .dd-tools{order:2;margin-left:6px}
+  .dd-tools .tb-word{display:none}
+  .dd-tools #editToggle,.dd-tools #priceBtn{height:32px;padding:0 12px}
+  #pagerBottom #pgJump,#pagerBottom #pgJumpIn,#pagerBottom #pgJumpOf{font-size:12.5px}
+}
+
+/* ---------- FILTERS PANEL, TIGHTER (Nov 21) ----------
+   No "Filters" heading and no Lists / Ranges labels: the sort is the first
+   row, with the Close pill at the top right beside it, and the sliders follow
+   straight on from the lists. Any spare room is left at the bottom. */
+.fp-head{position:absolute;top:14px;right:18px;margin:0;z-index:5}
+#sortWrap{max-width:340px}
+#facets{margin-top:12px}
+#sliders{margin-top:4px}
+#sliders .slider-group{margin:8px 2px 0}
+.fp-foot{margin-top:12px}
+@media(max-width:760px){
+  .fp-head{top:12px;right:14px}
+  #sortWrap{max-width:calc(100% - 108px)}
+}
 </style>
 <!-- Favicon: the avatar, at the sizes browsers actually ask for. Served from
      /assets/ so they are cached immutably alongside the nav mark. -->
@@ -935,7 +994,7 @@ body{padding-top:var(--dd-nav-h);box-sizing:border-box}
   <div id="filterWrap">
     <button id="filterBtn" type="button" aria-expanded="false" aria-controls="sidebar"><span class="bars">&#9776;</span> Filters<span id="filterCount" hidden></span></button>
   <aside id="sidebar" class="pending" aria-label="Filters">
-    <div class="fp-head"><h2>Filters</h2><button id="fpClose" type="button" title="Close (Esc)">&#10005;</button></div>
+    <div class="fp-head"><button id="fpClose" type="button" title="Close (Esc)">&#10005; Close</button></div>
         <div id="sortWrap">
       <!-- No date-added column on this tab, so no Recently/First Added. Every
            graded sort comes as a high/low pair; data-short is the arrow form the
@@ -956,13 +1015,12 @@ body{padding-top:var(--dd-nav-h);box-sizing:border-box}
               title="Sort titles"><span id="sortLabel">Sort: Title A &rarr; Z</span><span class="icon">&#9662;</span></button>
       <div id="sortPanel" role="listbox" aria-label="Sort titles"></div>
     </div>
-    <div class="fp-label">Lists</div>
     <div id="facets"></div>
-    <div class="fp-label">Ranges</div>
     <div id="sliders"></div>
     <div class="fp-foot"><button id="fpDone" type="button">Show results</button></div>
   </aside>
   </div>
+  <button id="resetAll" type="button">Reset all</button>
   <div id="fpBackdrop"></div>
   <div id="chipRow"></div>
   <div class="pagerBar" id="pagerTop">
@@ -970,7 +1028,6 @@ body{padding-top:var(--dd-nav-h);box-sizing:border-box}
       <div class="pg-label" id="pgLabel">–</div>
       <button class="pg-arrow" id="nextPg" title="Next page">&#10095;</button>
     </div>
-  <button id="resetAll" type="button">Reset all</button>
 </div>
 <main id="main">
     <div id="grid"></div>

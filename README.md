@@ -384,18 +384,25 @@ The five poster pages (Collection, Wishlist, Sales, MA Compare, D2D) share one
 layout. There is no filter column any more; the wall is full width (12 columns
 on a big screen, stepping down to 10, 9, 6 and 4 on a phone).
 
-- **Top bar**: logo, the six links, and the page's search box at the right.
-  On a phone the search box takes its own row under the links.
-- **Toolbar** above the wall: the green **Filters** button, then a chip for
-  every active pick (lists *and* sliders, each with a ✕), the slim page
-  counter with its arrows, then the page's own buttons (Reset all; Unlock
-  editing on Collection and Wishlist; Refresh prices on Wishlist; the Today's
-  movies / Today's television pills on Sales).
+- **Top bar**: logo, the six links, the page's search box right after them,
+  and the owner's buttons (`.dd-tools`: Unlock editing on Collection and
+  Wishlist, Refresh prices on Wishlist) at the top right. On a phone the
+  search box takes its own row and those buttons shrink to their icons.
+- **Toolbar** above the wall: the green **Filters** button, **Reset all**
+  beside it, the Today's movies / Today's television pills on Sales, a chip
+  for every active pick (lists *and* sliders, each with a ✕), and the slim
+  page counter with its arrows at the far right. The bottom page bar is the
+  same slim counter (click "Page 1 of 108" to type a page number).
+- **Faces** (Collection's info bar, the Data page's leaderboards): asked from
+  Wikipedia at 500px and loaded through `/img` at `w=400`, which has Photon
+  shrink them, so they stay sharp when cropped to the head. Their addresses
+  are kept in localStorage `dd_heads5`, shared by both pages. On the Data
+  page the photo fills its tile and the title count sits beside the name.
 - **Filters panel**: the Filters button opens `#sidebar` as a dropdown panel
   (a bottom sheet on a phone) holding the sort, every list and every slider.
   The element keeps its old id so the existing facet, slider and sort code
   works unchanged, lists still narrow as you pick, and nothing was removed.
-  It closes on Show results, ✕, Escape or a click outside (decided from the
+  It closes on Show results, the Close pill, Escape or a click outside (decided from the
   click's composed path, because ticking a box rebuilds the list under it).
 - **Search suggestions** (Collection only): typing two or more letters offers
   matching directors and actors, counted off the films the other filters

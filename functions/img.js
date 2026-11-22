@@ -91,8 +91,16 @@ export async function onRequestGet(context) {
   // BUCKETS in each page's poster-routing script). Only these exact values
   // are honoured, so each poster has at most five cached copies and nobody
   // can make the edge store arbitrary sizes; anything else gets 300.
+  //
+  // Wikimedia faces (Collection's info bar, the Data page's leaderboards) go
+  // through Photon too, for its resizing: the pages ask Wikipedia for a 500px
+  // photo and request it here at w=400, so a face is sharp on any screen and
+  // a fraction of the bytes. Wikimedia only serves a short list of widths, so
+  // asking IT for 400px directly would be a 400 error. If Photon fails, the
+  // original is fetched as before. 400 is used only by the faces.
   const isVudu = /(^|\.)vudu\.com$/i.test(parsed.hostname);
-  const W_OK = [100, 150, 200, 250, 300];
+  const isWiki = /(^|\.)wikimedia\.org$/i.test(parsed.hostname);
+  const W_OK = [100, 150, 200, 250, 300, 400];
   const wq = parseInt(reqUrl.searchParams.get("w"), 10);
   const w = W_OK.includes(wq) ? wq : 300;
   const fetchTarget = isVudu
@@ -100,11 +108,12 @@ export async function onRequestGet(context) {
       parsed.host +
       parsed.pathname +
       (parsed.search ? parsed.search + "&w=" + w : "?w=" + w)
-    : parsed.toString();
+    : isWiki
+      // Wikimedia's own query (utm tags) would be read as Photon options.
+      ? "https://i0.wp.com/" + parsed.host + parsed.pathname + "?w=" + w
+      : parsed.toString();
 
-  let upstream;
-  try {
-    upstream = await fetch(fetchTarget, {
+  const get = (target) => fetch(target, {
       cf: { cacheEverything: true, cacheTtl: 604800 }, // 7 days at Cloudflare's edge
       headers: {
         // Some source CDNs (Akamai-fronted ones especially -- Vudu is one)
@@ -121,7 +130,18 @@ export async function onRequestGet(context) {
         Referer: parsed.origin + "/",
       },
     });
+
+  let upstream;
+  try {
+    upstream = await get(fetchTarget);
   } catch {
+    upstream = null;
+  }
+  // Photon could not get a Wikimedia face: fetch the original, full size.
+  if (isWiki && (!upstream || !upstream.ok)) {
+    try { upstream = await get(parsed.toString()); } catch { upstream = null; }
+  }
+  if (!upstream) {
     return new Response("Upstream fetch failed", { status: 502 });
   }
 

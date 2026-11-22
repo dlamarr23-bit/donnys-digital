@@ -730,33 +730,47 @@ h1{font:700 26px 'Poppins',sans-serif;letter-spacing:2.5px;text-transform:upperc
   gap:10px;padding:4px 0 10px;
 }
 @media(max-width:1100px){ .board{grid-template-columns:repeat(8,1fr)} }
-@media(max-width:760px){ .board{grid-template-columns:repeat(4,1fr)} }
+/* Three across on a phone: with the count beside the name, four tiles left
+   too little room for a first name. 48 and 96 both fill whole rows of 3. */
+@media(max-width:760px){ .board{grid-template-columns:repeat(3,minmax(0,1fr))} }
 /* On a phone the four 76px faces plus their padding and gaps came to 412px in
    a 390px viewport, so the whole page scrolled sideways. A smaller face (and
    tracks allowed to shrink below their content) keeps four across. */
 @media(max-width:440px){
-  .board{grid-template-columns:repeat(4,minmax(0,1fr))}
-  .brow .face{width:62px;height:62px;min-width:62px;font-size:17px}
+  .board{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
 }
+/* Nov 2026: the face fills the tile edge to edge, with only a few pixels of
+   padding, and the name and title count sit centred underneath it. */
 .brow{
-  display:flex;flex-direction:column;align-items:center;gap:6px;
-  background:var(--panel2);border-radius:10px;padding:12px 6px 10px;
-  cursor:pointer;transition:background .15s,transform .12s;text-align:center;
+  display:flex;flex-direction:column;align-items:stretch;gap:5px;
+  background:var(--panel2);border-radius:10px;padding:4px 4px 8px;
+  cursor:pointer;transition:background .15s,transform .12s;text-align:center;min-width:0;
 }
 .brow:hover{background:#2a333a;transform:translateY(-2px)}
 .brow.active{outline:2px solid var(--accent)}
 .brow.dim{opacity:.4}
 .brow .face{
-  width:76px;height:76px;min-width:76px;border-radius:50%;overflow:hidden;
+  width:100%;height:auto;aspect-ratio:1;min-width:0;border-radius:50%;overflow:hidden;
   background:#37474f;display:flex;align-items:center;justify-content:center;
-  color:#eceff1;font:700 20px 'Poppins',sans-serif;letter-spacing:1px;
+  color:#eceff1;font:700 28px 'Poppins',sans-serif;letter-spacing:1px;
 }
-.brow .face img{width:100%;height:100%;object-fit:cover}
+/* Portraits put the head near the top, so the crop favours the top. */
+.brow .face img{width:100%;height:100%;object-fit:cover;object-position:50% 20%}
 .brow .who{
-  width:100%;font:700 12px 'Poppins',sans-serif;line-height:1.2;
+  min-width:0;padding:0 3px;font:700 12.5px 'Poppins',sans-serif;line-height:1.25;
   overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
 }
-.brow .n{font:700 15px 'Poppins',sans-serif;letter-spacing:.5px;color:var(--muted)}
+/* margin-top:auto pins the count to the bottom of the tile, so the counts in
+   a row line up even when one name runs to two lines. */
+.brow .n{margin-top:auto;font:700 14px 'Poppins',sans-serif;line-height:1.2;letter-spacing:.3px;color:var(--muted)}
+/* Small phones. After the tile rules above so these win: a long surname is
+   hyphenated rather than clipped in a 3-across tile. */
+@media(max-width:440px){
+  .brow{padding:3px 3px 6px;gap:4px}
+  .brow .face{font-size:20px}
+  .brow .who{font-size:11px;hyphens:auto;-webkit-hyphens:auto;overflow-wrap:anywhere}
+  .brow .n{font-size:12px}
+}
 .search-row{margin-bottom:10px}
 .board-search{
   width:100%;max-width:340px;background:var(--panel2);color:var(--ink);
@@ -1270,22 +1284,30 @@ const HEAD_OVERRIDES={
    the recent performance work: the store below is permanent, it was full of
    320px URLs written when that width was still served, and once Wikimedia
    narrowed the list every one of them became a 400 with nothing to refresh
-   them. Hence dd_heads3 -- a new key, so the dead URLs are dropped once. */
-const HEAD_PX=160;
+   them. Hence a new key whenever the size changes, so dead URLs are dropped.
+
+   Nov 2026: the faces now fill their tiles (about 130px, and more on a
+   high-density screen), and a 250px photo cropped to a face went soft. So
+   ask for 500 (served as 500, or the original if that is smaller) and load
+   it through this site's /img helper at w=400, which has Photon shrink it:
+   sharp on any screen and lighter than the old 250px file. The key is
+   dd_heads5, shared with the Collection page's info bar. */
+const HEAD_PX=500;
+const faceSrc=u=>'/img?url='+encodeURIComponent(String(u).split('?')[0])+'&w=400&fm=webp';
 
 let headStore={};
 try{
-  const raw=JSON.parse(localStorage.getItem('dd_heads3')||'{}');
+  const raw=JSON.parse(localStorage.getItem('dd_heads5')||'{}');
   for(const k in raw){ if(raw[k]) headStore[k]=raw[k]; }
 }catch(e){}
 /* One-time tidy-up of the abandoned keys, so a browser that visited the old
    version is not left carrying a dead megabyte of 320px URLs forever. */
-try{ localStorage.removeItem('dd_heads2'); localStorage.removeItem('dd_head_ovfix'); }catch(e){}
+try{ ['dd_heads2','dd_heads3','dd_head_ovfix'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
 let headSaveTimer=null;
 function saveHeadStore(){
   clearTimeout(headSaveTimer);
   headSaveTimer=setTimeout(()=>{
-    try{ localStorage.setItem('dd_heads3',JSON.stringify(headStore)); }catch(e){}
+    try{ localStorage.setItem('dd_heads5',JSON.stringify(headStore)); }catch(e){}
   },800);
 }
 function initials(name){
@@ -1316,7 +1338,7 @@ function renderBoard(id, sortedAll, n, key){
     const dim=anyOn && !active;
     const url=knownHead(name);
     const face=url
-      ? `<img src="${escH(url)}" decoding="async" loading="lazy">`
+      ? `<img src="${escH(faceSrc(url))}" decoding="async" loading="lazy">`
       : escH(initials(name));
     return `<div class="brow${dim?' dim':''}${active?' active':''}" data-name="${escH(name)}">
       <div class="face" data-face="${escH(name)}">${face}</div>
@@ -1620,7 +1642,8 @@ function loadFace(f,url,attempt){
       if(attempt<2){ setTimeout(()=>setFace(f,url,attempt+1), 2000*(attempt+1)); }
       else { delete f.dataset.loading; }
     };
-    img.src=url;
+    // Through the /img helper (sharp, small); the last retry goes direct.
+    img.src = attempt<2 ? faceSrc(url) : url;
   });
   pumpImgs();
 }

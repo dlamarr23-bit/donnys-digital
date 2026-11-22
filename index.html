@@ -1340,10 +1340,14 @@ flex:0 0 auto;max-height:calc(1.6em * 3 + 6px);min-height:0;overflow-y:auto;
 scrollbar-width:thin;scrollbar-color:#4a565e transparent}
 #infoDesc::-webkit-scrollbar{width:6px}
 #infoDesc::-webkit-scrollbar-thumb{background:#4a565e;border-radius:3px}
-#closeInfo{margin-left:auto}
-#closeInfo{background:none;border:none;color:#90a4ae;font-size:22px;line-height:1;cursor:pointer;
-padding:2px 7px;border-radius:6px;flex:0 0 auto}
-#closeInfo:hover{color:#fff;background:#2b343b}
+/* The close button is a labelled white pill right after the title's details,
+   where the eye already is, rather than a faint X at the far edge of a bar
+   that can be 1900px wide. */
+#infoMeta{flex:0 1 auto}
+#closeInfo{margin-left:4px;display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 15px;
+border:none;border-radius:999px;background:#fff;color:#1d262c;cursor:pointer;flex:0 0 auto;
+font:700 12.5px 'Poppins',sans-serif;letter-spacing:.3px;box-shadow:0 2px 8px rgba(0,0,0,.35)}
+#closeInfo:hover{background:#ffd54f;color:#1d262c}
 /* People tiles, deliberately the same object as the Data page's leaderboard
    tiles: circular headshot, name, title count, click to focus.
 
@@ -1638,6 +1642,65 @@ body:not(.multiPage) #grid > #pagerBottom{display:none}
   #pgJump,#pgJumpIn,#pgJumpOf{font:700 19px 'Poppins',sans-serif;letter-spacing:.5px}
   #pgJumpForm{gap:7px}
 }
+
+/* ---------- LAYOUT TWEAKS (Nov 21) ----------
+   Requested after the first week on the new layout:
+   - the search box sits right after the page links, and the owner's buttons
+     (Unlock editing, and Refresh prices on the Wishlist) sit at the top right;
+   - Reset all sits right beside Filters, the page counter at the far right;
+   - a list opened in the Filters panel floats over the lists below it instead
+     of pushing them down and leaving a tall empty gap in the other columns;
+   - the bottom page bar is the same slim counter as the top one;
+   - the panel's close button is a labelled pill, not a faint corner X. */
+.dd-search{margin-left:22px}
+.dd-tools{margin-left:auto;display:flex;align-items:center;gap:8px;flex:none}
+.dd-tools #editToggle,.dd-tools #priceBtn{height:36px}
+@media(min-width:761px) and (max-width:1300px){
+  .dd-tools .tb-word{display:none}
+  .dd-tools #editToggle,.dd-tools #priceBtn{padding:0 13px}
+}
+#fpClose{width:auto;height:34px;padding:0 15px;border-radius:999px;border:none;cursor:pointer;
+  background:#fff;color:#1d262c;font:700 13px 'Poppins','Segoe UI',sans-serif;letter-spacing:.3px;
+  box-shadow:0 2px 8px rgba(0,0,0,.35)}
+#fpClose:hover{background:#ffd54f;color:#1d262c}
+#sidebar .facet-panel{position:absolute;left:0;right:0;top:calc(100% + 5px);margin-top:0;z-index:40}
+@media(max-width:1000px){
+  #sidebar .facet-panel{min-width:240px}
+  #facets .facet:nth-child(2n) .facet-panel{left:auto;right:0}
+}
+#grid > #pagerBottom{justify-content:flex-end;height:44px;background:transparent;border-radius:0;
+  gap:6px;margin-top:10px}
+#pagerBottom .pg-arrow{width:32px;height:32px;border-radius:50%;background:#262f35;font-size:14px;
+  transition:background .12s}
+#pagerBottom .pg-arrow:hover:not(:disabled){font-size:14px;background:#3a4751}
+#pagerBottom #pgJumpWrap{flex:none}
+#pagerBottom #pgJump,#pagerBottom #pgJumpIn,#pagerBottom #pgJumpOf{font:700 14px 'Poppins',sans-serif;
+  letter-spacing:.4px;color:#cfd8dc}
+#pagerBottom #pgJump{padding:5px 10px;border-radius:8px}
+#pagerBottom #pgJump:hover,#pagerBottom #pgJump:focus-visible{background:#262f35;color:#fff}
+#pagerBottom #pgJumpIn{width:3.4em;padding:3px 6px;background:#262f35}
+@media(max-width:760px){
+  .dd-search{margin-left:0}
+  .dd-tools{order:2;margin-left:6px}
+  .dd-tools .tb-word{display:none}
+  .dd-tools #editToggle,.dd-tools #priceBtn{height:32px;padding:0 12px}
+  #pagerBottom #pgJump,#pagerBottom #pgJumpIn,#pagerBottom #pgJumpOf{font-size:12.5px}
+}
+
+/* ---------- FILTERS PANEL, TIGHTER (Nov 21) ----------
+   No "Filters" heading and no Lists / Ranges labels: the sort is the first
+   row, with the Close pill at the top right beside it, and the sliders follow
+   straight on from the lists. Any spare room is left at the bottom. */
+.fp-head{position:absolute;top:14px;right:18px;margin:0;z-index:5}
+#sortWrap{max-width:340px}
+#facets{margin-top:12px}
+#sliders{margin-top:4px}
+#sliders .slider-group{margin:8px 2px 0}
+.fp-foot{margin-top:12px}
+@media(max-width:760px){
+  .fp-head{top:12px;right:14px}
+  #sortWrap{max-width:calc(100% - 108px)}
+}
 </style>
 <!-- Favicon: the avatar, at the sizes browsers actually ask for. Served from
      /assets/ so they are cached immutably alongside the nav mark. -->
@@ -1741,6 +1804,9 @@ body{padding-top:var(--dd-nav-h);box-sizing:border-box}
            aria-controls="searchSug" aria-expanded="false">
     <div id="searchSug" role="listbox" aria-label="Matching people" hidden></div>
   </div>
+  <div class="dd-tools">
+    <button id="editToggle" type="button" title="Unlock editing">&#9998;<span class="tb-word"> Unlock editing</span></button>
+  </div>
 </nav>
 <!-- Paints in the first frame, before any data exists. -->
 <div id="topbar" class="indet"><div id="topfill"></div></div>
@@ -1749,7 +1815,7 @@ body{padding-top:var(--dd-nav-h);box-sizing:border-box}
 <div id="filterWrap">
 <button id="filterBtn" type="button" aria-expanded="false" aria-controls="sidebar"><span class="bars">&#9776;</span> Filters<span id="filterCount" hidden></span></button>
 <aside id="sidebar" class="pending" aria-label="Filters">
-<div class="fp-head"><h2>Filters</h2><button id="fpClose" type="button" title="Close (Esc)">&#10005;</button></div>
+<div class="fp-head"><button id="fpClose" type="button" title="Close (Esc)">&#10005; Close</button></div>
 <div id="sortWrap">
 <select id="sortSel" title="Sort collection">
 <option value="dateAdded|desc" selected>Sort: Recently Added</option>
@@ -1769,13 +1835,12 @@ body{padding-top:var(--dd-nav-h);box-sizing:border-box}
 title="Sort collection"><span id="sortLabel">Sort: Recently Added</span><span class="icon">&#9662;</span></button>
 <div id="sortPanel" role="listbox" aria-label="Sort collection"></div>
 </div>
-<div class="fp-label">Lists</div>
 <div id="facets"></div>
-<div class="fp-label">Ranges</div>
 <div id="sliders"></div>
 <div class="fp-foot"><button id="fpDone" type="button">Show results</button></div>
 </aside>
 </div>
+<button id="resetAll" type="button">Reset all</button>
 <div id="fpBackdrop"></div>
 <div id="chipRow"></div>
 <div class="pagerBar" id="pagerTop">
@@ -1783,8 +1848,6 @@ title="Sort collection"><span id="sortLabel">Sort: Recently Added</span><span cl
 <div class="pg-label" id="pgLabel">&ndash;</div>
 <button class="pg-arrow" id="nextPg" title="Next page">&#10095;</button>
 </div>
-<button id="resetAll" type="button">Reset all</button>
-<button id="editToggle" type="button" title="Unlock editing">&#9998;<span class="tb-word"> Unlock editing</span></button>
 </div>
 <main id="main">
 <!-- Opened by the ⓘ on any poster; see openInfo() below. Empty and display:none
@@ -1796,7 +1859,7 @@ title="Sort collection"><span id="sortLabel">Sort: Recently Added</span><span cl
 <div id="infoHead">
 <h2 id="infoTitle"></h2>
 <div id="infoMeta"></div>
-<button id="closeInfo" title="Close (Esc)">&#10005;</button>
+<button id="closeInfo" type="button" title="Close (Esc)">&#10005; Close</button>
 </div>
 <p id="infoDesc"></p>
 <div id="infoPeople">
@@ -3814,11 +3877,20 @@ const WIKI_API='https://en.wikipedia.org/w/api.php';
 const HEAD_BATCH=50;
 const headCache=new Map();
 let headStore={};
-try{ headStore=JSON.parse(localStorage.getItem('dd_heads2')||'{}'); }catch(e){}
+/* dd_heads5, shared with the Data page: addresses of 500px photos (see
+   wikiBatch). The older keys held 120-330px addresses, which went soft once
+   the faces grew and were cropped to the head; they are dropped once. */
+try{ headStore=JSON.parse(localStorage.getItem('dd_heads5')||'{}'); }catch(e){}
+try{ ['dd_heads2','dd_heads3'].forEach(k=>localStorage.removeItem(k)); }catch(e){}
+/* Faces load through this site's /img helper, which has Photon shrink the
+   500px Wikipedia photo to 400px: sharp on any screen, a fraction of the
+   bytes, and it works on networks that block Wikimedia. The plain address is
+   the fallback if the helper fails. */
+const faceSrc=u=>'/img?url='+encodeURIComponent(String(u).split('?')[0])+'&w=400&fm=webp';
 let headSaveTimer=null;
 function saveHeadStore(){
 clearTimeout(headSaveTimer);
-headSaveTimer=setTimeout(()=>{ try{ localStorage.setItem('dd_heads2',JSON.stringify(headStore)); }catch(e){} },800);
+headSaveTimer=setTimeout(()=>{ try{ localStorage.setItem('dd_heads5',JSON.stringify(headStore)); }catch(e){} },800);
 }
 function initials(name){ return name.split(/\s+/).slice(0,2).map(w=>w[0]||'').join('').toUpperCase(); }
 function knownHead(name){
@@ -3828,7 +3900,7 @@ return null;
 }
 function wikiBatch(titles){
 const url=WIKI_API+'?action=query&format=json&origin=*&redirects=1'
-+'&prop=pageimages&piprop=thumbnail&pithumbsize=320&pilimit='+HEAD_BATCH
++'&prop=pageimages&piprop=thumbnail&pithumbsize=500&pilimit='+HEAD_BATCH
 +'&titles='+encodeURIComponent(titles.join('|'));
 return fetch(url).then(r=>{ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); }).then(j=>{
 const q=j.query||{}, alias=new Map(), out=new Map();
@@ -3866,8 +3938,9 @@ if(f.dataset.face===name && !f.querySelector('img')){
 // instead of leaving a broken-image box in the bar.
 const img=new Image();
 img.decoding='async'; img.alt='';
-img.onload=()=>{ if(f.isConnected && !f.querySelector('img')){ f.textContent=''; f.appendChild(img); } };
-img.src=url;
+img.onload=()=>{ img.onerror=null; if(f.isConnected && !f.querySelector('img')){ f.textContent=''; f.appendChild(img); } };
+img.onerror=()=>{ img.onerror=null; img.src=url; };   // helper failed: try Wikimedia directly
+img.src=faceSrc(url);
 }
 });
 }
