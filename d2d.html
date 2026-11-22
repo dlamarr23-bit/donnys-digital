@@ -886,6 +886,37 @@ caret-color:#263238;outline:none;transition:box-shadow .15s;
   .fp-head{top:12px;right:14px}
   #sortWrap{max-width:calc(100% - 108px)}
 }
+
+/* ---------- FILTERS PANEL AS ONE GRID (Nov 21, later) ----------
+   On a computer the panel is a single 3-column grid: the sort is one cell
+   (green, the Filters colour), the LAST list moves up beside it, and Close
+   takes the third cell, so no list is left on a row of its own. The sliders
+   follow straight on. The panel never scrolls: it does not clip (an open list
+   may hang past it), and it is tall enough that even the bottom row's list
+   fits inside, with the spare room at the bottom above Show titles. */
+#sortBtn{background:#157A60;color:#fff}
+#sortBtn:hover{background:#168264;box-shadow:0 0 0 2px rgba(255,255,255,.25)}
+#sortBtn .icon{color:#fff}
+@media(min-width:761px){
+  #filterWrap.open #sidebar{display:grid}
+  #sidebar{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 12px;align-content:start;
+    overflow:visible;max-height:none;min-height:var(--fp-min,560px);padding-bottom:74px}
+  #facets{display:contents}
+  #sortWrap{order:1;max-width:none;margin:0}
+  #facets .facet{order:4}
+  #facets .facet:last-child{order:2}
+  .fp-head{order:3;position:static;justify-self:end;align-self:start;margin:0}
+  #sliders{order:5;grid-column:1 / -1;margin-top:4px}
+  .fp-foot{position:absolute;left:0;right:0;bottom:0;margin:0;border-radius:0 0 12px 12px}
+}
+
+/* Panel height for this page: tall enough that the list box of its bottom row
+   ends above Show titles (measured with every list opened in turn). */
+@media(min-width:761px){ #sidebar{--fp-min:505px} }
+
+/* Phone sheet (two columns): a list left on its own in the last row spans
+   the full width, so there is no half-empty row. */
+@media(max-width:760px){ #facets .facet:last-child:nth-child(odd){grid-column:1 / -1} }
 </style>
 <!-- Favicon: the avatar, at the sizes browsers actually ask for. Served from
      /assets/ so they are cached immutably alongside the nav mark. -->
