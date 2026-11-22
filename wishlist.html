@@ -903,13 +903,21 @@ caret-color:#263238;outline:none;transition:box-shadow .15s;
   .fp-head{position:absolute;left:18px;right:auto;top:auto;bottom:13px;z-index:3}
 }
 
-/* Panel height for this page: tall enough that the list box of its bottom row
-   ends above Show titles (measured with every list opened in turn). */
-@media(min-width:761px){ #sidebar{--fp-min:500px} }
+/* Panel height for this page: just tall enough for the list box of its bottom
+   row (measured with every list opened in turn); none reaches Show titles. */
+@media(min-width:761px){ #sidebar{--fp-min:476px} }
 
 /* Phone sheet (two columns): a list left on its own in the last row spans
    the full width, so there is no half-empty row. */
 @media(max-width:760px){ #facets .facet:last-child:nth-child(odd){grid-column:1 / -1} }
+
+/* Show titles sits in the panel's bottom-right corner (Nov 21): the separate
+   footer strip and its dividing line are gone, so the panel is shorter. The
+   lists that open lowest never reach that corner (checked per page). */
+@media(min-width:761px){
+  .fp-foot{left:auto;right:18px;bottom:14px;padding:0;margin:0;background:none;border-top:none;border-radius:0}
+  #sidebar{padding-bottom:58px}
+}
 </style>
 <!-- Favicon: the avatar, at the sizes browsers actually ask for. Served from
      /assets/ so they are cached immutably alongside the nav mark. -->
