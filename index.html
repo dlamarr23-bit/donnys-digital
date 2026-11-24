@@ -1340,11 +1340,7 @@ background:#263238;display:block}
 #infoMeta span,#infoMeta a{background:#2b343b;color:#b0bec5;border-radius:11px;padding:3px 10px;
 font:700 11px 'Poppins',sans-serif;letter-spacing:.6px}
 #infoMeta a{text-decoration:none;cursor:pointer}
-#infoMeta a:hover,#infoMeta a:focus-visible{background:#40525e;color:#fff;outline:2px solid #90a4ae;outline-offset:1px}
-#infoEdit,#infoSheet{display:inline-flex;align-items:center;gap:5px;height:30px;padding:0 12px;
-border:1px solid #536874;border-radius:999px;background:#2b343b;color:#eceff1;
-font:700 12.5px 'Poppins',sans-serif;text-decoration:none;cursor:pointer;flex:0 0 auto}
-#infoEdit:hover,#infoSheet:hover{background:#40525e}
+#infoMeta a:hover,#infoMeta a:focus-visible{background:#157A60;color:#fff;outline:2px solid #168264;outline-offset:1px}
 /* flex-shrink 0: with a big cast the people row (flex:1 0 auto) took all of
    the fixed-height bar and squeezed the summary to a ~7px sliver. Now the
    summary keeps its own height, up to three lines (longer ones scroll here),
@@ -1903,8 +1899,6 @@ title="Sort collection"><span id="sortLabel">Sort: Recently Added</span><span cl
 <div id="infoHead">
 <h2 id="infoTitle"></h2>
 <div id="infoMeta"></div>
-<button id="infoEdit" type="button">&#9998; Edit details</button>
-<a id="infoSheet" href="#" target="_blank" rel="noopener noreferrer">Open in Sheet &#8599;</a>
 <button id="closeInfo" type="button" title="Close (Esc)">&#10005; Close</button>
 </div>
 <p id="infoDesc"></p>
@@ -3699,12 +3693,39 @@ url.protocol='https:'; return url.href;
 function ratingBadge(m,service){
 const imdb=service==='imdb', name=imdb?'IMDb':'Rotten Tomatoes';
 const score=imdb?m.imdb:m.tomato;
-const saved=ratingUrl(imdb?m.imdbUrl:m.rtUrl,service);
-const query=[m.sortTitle||m.title,m.year].filter(Boolean).join(' ');
-const href=saved || (imdb?'https://www.imdb.com/find/?s=tt&q=':'https://www.rottentomatoes.com/search?search=')+encodeURIComponent(query);
-const label=imdb?(score==null?'IMDb ↗':'IMDb '+Number(score).toFixed(1)+' ↗'):(score==null?'🍅 Rotten Tomatoes ↗':'🍅 '+score+'% ↗');
-const title=saved?'Open '+name+' page':'Search '+name+' for '+query+' — add a direct link in Edit details';
-return `<a class="rating-link" data-service="${service}" href="${esc(href)}" target="_blank" rel="noopener noreferrer" title="${esc(title)}" aria-label="${esc(title)}">${esc(label)}</a>`;
+const entry=resolvedRatings.get(ratingLookupKey(m));
+const href=ratingUrl(imdb?m.imdbUrl:m.rtUrl,service) || ratingUrl(entry?.links[imdb?'imdbUrl':'rtUrl'],service);
+const label=imdb?(score==null?'IMDb':'IMDb '+Number(score).toFixed(1)):(score==null?'🍅 Rotten Tomatoes':'🍅 '+score+'%');
+const title=href?'Open '+name+' page':(!entry || entry.pending?'Finding '+name+' page…':name+' direct link unavailable');
+const attrs=`data-service="${service}" title="${esc(title)}" aria-label="${esc(title)}"`;
+return href?`<a class="rating-link" ${attrs} href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(label)}</a>`
+  :`<span class="rating-unavailable" ${attrs}>${esc(label)}</span>`;
+}
+// Sheet URLs take priority. Empty cells are resolved on demand and cached at
+// the edge; a missing/ambiguous match stays a rating, never a search link.
+const resolvedRatings=new Map();
+function ratingLookupKey(m){
+return JSON.stringify([m.sortTitle||m.title,m.title,m.year,m.mediaType,m.actorsRaw]);
+}
+function loadRatingLinks(m){
+if(ratingUrl(m.imdbUrl,'imdb') && ratingUrl(m.rtUrl,'rt')) return;
+const key=ratingLookupKey(m), previous=resolvedRatings.get(key);
+if(previous && (previous.pending || Date.now()-previous.at<60000)) return;
+const entry={pending:true,links:{},at:Date.now()};
+resolvedRatings.set(key,entry);
+const query=new URLSearchParams({title:m.sortTitle||m.title,alt:m.title,year:String(m.year||''),media:m.mediaType||'',cast:(m.actorsRaw||'').split(',').slice(0,8).join(',')});
+const ctl=new AbortController(), timer=setTimeout(()=>ctl.abort(),15000);
+fetch('/ratings?'+query,{signal:ctl.signal}).then(r=>{
+  if(!r.ok) throw new Error('Rating lookup unavailable');
+  return r.json();
+}).then(links=>{entry.links=links;}).catch(()=>{}).finally(()=>{
+  clearTimeout(timer); entry.pending=false; entry.at=Date.now();
+  if(infoRow!==m.sheetRow || ratingLookupKey(rowIndex.get(infoRow)||{})!==key) return;
+  for(const service of ['imdb','rt']){
+    const badge=$('#infoMeta').querySelector(`[data-service="${service}"]`);
+    if(badge) badge.outerHTML=ratingBadge(m,service);
+  }
+});
 }
 
 function closeInfo(){
@@ -3827,7 +3848,7 @@ if(m.runtime!=null) bits.push(fmtRuntime(m.runtime));
 if(m.quality) bits.push(m.quality);
 if(m.viewStatusRaw) bits.push(m.viewStatusRaw);
 $('#infoMeta').innerHTML=bits.map(b=>`<span>${esc(b)}</span>`).join('')+ratingBadge(m,'imdb')+ratingBadge(m,'rt');
-$('#infoSheet').href=movieSheetUrl(sheetRow);
+loadRatingLinks(m);
 $('#infoDesc').textContent = descriptionsLoaded ? (m.desc||'No description available.') : 'Loading description…';
 const dirs=peopleOf(m,'director'), cast=peopleOf(m,'actors');
 $('#dirBlock').style.display=dirs.length?'':'none';
@@ -3852,9 +3873,6 @@ layoutPeople();   // a longer summary leaves the tiles less height
 }
 }
 $('#closeInfo').addEventListener('click',closeInfo);
-$('#infoEdit').addEventListener('click',e=>{
-if(infoRow!==null) openEditor(infoRow,e.clientX,e.clientY);
-});
 
 /* The bar sits directly over the wall and is a big target, so most wheel
    gestures aimed at the posters land on it instead. #main can't scroll and
