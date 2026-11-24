@@ -1081,6 +1081,11 @@ border:1px solid #cfd8dc;border-radius:5px;font:700 12.5px 'Poppins',sans-serif;
 color-scheme:light;background:#ffffff;color:var(--pill-text);
 }
 .facet-panel input.opt-search::placeholder{color:#90a4ae}
+.facet-sort{display:flex;align-items:center;gap:8px;margin-bottom:6px;
+font:700 11px 'Poppins',sans-serif;color:#546e7a}
+.facet-sort select{flex:1;min-width:0;width:100%;padding:6px;
+border:1px solid #cfd8dc;border-radius:5px;font:700 11px 'Poppins',sans-serif;
+color-scheme:light;background:#fff;color:var(--pill-text);cursor:pointer}
 .opt-list{max-height:240px;overflow-y:auto;scrollbar-width:thin}
 .opt-list label{
 display:flex;align-items:center;gap:8px;
@@ -2719,11 +2724,9 @@ return (h>>>0).toString(36)+':'+list.length;
    sidebar collaborative -- pick a director and the Actors list becomes his
    cast; pick an actor and the Actors list becomes that actor's co-stars. */
 const AND_KEYS=new Set(FACETS.filter(f=>f.and).map(f=>f.key));
-// Most-credited first rather than A-Z. On a people list the alphabet is noise:
-// it opens on whoever happens to be called Aaron. It also decides which 250
-// survive the cap in render(), so the names that do show are the ones with the
-// most titles behind them instead of the ones earliest in the alphabet.
-const BYCOUNT_KEYS=new Set(FACETS.filter(f=>f.byCount).map(f=>f.key));
+// Keep the existing defaults, with an independent sort choice for each list.
+// Choices survive closing/rebuilding panels and live count refreshes.
+const facetSort=Object.fromEntries(FACETS.map(f=>[f.key,f.byCount?'count-desc':'name-asc']));
 const facetSorted={};  // facetKey -> true once its list is in display order
 function countFacets(rows,list){
 const counts=[];
@@ -2759,11 +2762,12 @@ FACETS.forEach(f=>{ facetTotals[f.key]=facetValues[f.key]; });
 }
 function sortedFacetValues(key){
 if(!facetSorted[key]){
-// Count descending, then A-Z among names that tie -- which, once a pick has
-// narrowed the list, is most of them.
-facetValues[key].sort(BYCOUNT_KEYS.has(key)
-? (a,b)=> b[1]-a[1] || collator.compare(a[0],b[0])
-: (a,b)=> collator.compare(a[0],b[0]));
+const mode=facetSort[key];
+facetValues[key].sort((a,b)=>{
+if(mode==='count-desc') return b[1]-a[1] || collator.compare(a[0],b[0]);
+if(mode==='count-asc') return a[1]-b[1] || collator.compare(a[0],b[0]);
+return mode==='name-desc' ? collator.compare(b[0],a[0]) : collator.compare(a[0],b[0]);
+});
 facetSorted[key]=true;
 }
 return facetValues[key];
@@ -2811,12 +2815,21 @@ el.innerHTML=`
 <div class="facet-panel">
 ${f.and?`<div class="facet-hint">${esc(f.hint||'')}</div>`:''}
 ${f.and || facetValues[f.key].length>10?'<input class="opt-search" placeholder="Search…">':''}
+<label class="facet-sort">Sort
+<select class="opt-sort" aria-label="Sort ${esc(f.label)} options">
+<option value="name-asc">A–Z</option>
+<option value="name-desc">Z–A</option>
+<option value="count-desc">Count: high to low</option>
+<option value="count-asc">Count: low to high</option>
+</select></label>
 <div class="opt-list"></div>
 <button class="facet-clear">Clear</button>
 </div>`;
 host.appendChild(el);
 const list=el.querySelector('.opt-list');
 const search=el.querySelector('.opt-search');
+const sort=el.querySelector('.opt-sort');
+sort.value=facetSort[f.key];
 /* A re-render starts at the top. The panel has either just been opened or had
    its list rebuilt underneath it, and an offset measured against the old list
    means nothing in the new one -- past the end of it, often, which is how you
@@ -2847,6 +2860,11 @@ document.querySelectorAll('.facet.open').forEach(x=>x.classList.remove('open'));
 if(!was){ el.classList.add('open'); render(); if(search) search.focus(); }
 });
 if(search) search.addEventListener('input',render);
+sort.addEventListener('change',()=>{
+facetSort[f.key]=sort.value;
+facetSorted[f.key]=false;
+render();
+});
 list.addEventListener('change',e=>{
 if(e.target.type!=='checkbox') return;
 const v=e.target.value;
