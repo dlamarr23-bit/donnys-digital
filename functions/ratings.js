@@ -94,7 +94,11 @@ export async function resolveRatings(params){
   for(const [i,result]of results.entries())if(result.status==='rejected'){
     console.warn('[rating-links]',i===0?'IMDb':'Rotten Tomatoes',result.reason?.message||'Lookup failed');
   }
-  return {imdbUrl:results[0].status==='fulfilled'?results[0].value:'',rtUrl:results[1].status==='fulfilled'?results[1].value:''};
+  return {
+    imdbUrl:results[0].status==='fulfilled'?results[0].value:'',
+    rtUrl:results[1].status==='fulfilled'?results[1].value:'',
+    imdbErr:results[0].status==='rejected'?String(results[0].reason):(results[0].value?'ok':'fulfilled-empty')
+  };
 }
 export async function onRequestGet({request,waitUntil}){
   const url=new URL(request.url),params=url.searchParams;
@@ -104,7 +108,7 @@ export async function onRequestGet({request,waitUntil}){
   }
   const ordered=new URLSearchParams();
   for(const key of ['title','alt','year','media','cast']) ordered.set(key,params.get(key)||'');
-  const key=new Request(url.origin+'/__rating-links/v2?'+ordered);
+  const key=new Request(url.origin+'/__rating-links/v3?'+ordered);
   const cache=globalThis.caches?.default;
   const hit=cache && await cache.match(key);
   if(hit) return hit;
