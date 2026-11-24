@@ -1081,10 +1081,10 @@ border:1px solid #cfd8dc;border-radius:5px;font:700 12.5px 'Poppins',sans-serif;
 color-scheme:light;background:#ffffff;color:var(--pill-text);
 }
 .facet-panel input.opt-search::placeholder{color:#90a4ae}
-.facet-sort{display:flex;align-items:center;gap:8px;margin-bottom:6px;
-font:700 11px 'Poppins',sans-serif;color:#546e7a}
-.facet-sort select{flex:1;min-width:0;width:100%;padding:6px;
-border:1px solid #cfd8dc;border-radius:5px;font:700 11px 'Poppins',sans-serif;
+.facet-sort{display:flex;align-items:center;gap:6px;margin-bottom:6px;
+font:700 13px 'Poppins',sans-serif;color:#546e7a}
+.facet-sort select{flex:1;min-width:0;width:100%;padding:4px 6px;
+border:1px solid #cfd8dc;border-radius:5px;font:700 13px 'Poppins',sans-serif;
 color-scheme:light;background:#fff;color:var(--pill-text);cursor:pointer}
 .opt-list{max-height:240px;overflow-y:auto;scrollbar-width:thin}
 .opt-list label{
@@ -1711,40 +1711,30 @@ body:not(.multiPage) #grid > #pagerBottom{display:none}
    On a computer the panel is a single 3-column grid: the sort is one cell
    (green, the Filters colour), the LAST list moves up beside it, and Close
    takes the third cell, so no list is left on a row of its own. The sliders
-   follow straight on. The panel never scrolls: it does not clip (an open list
-   may hang past it), and it is tall enough that even the bottom row's list
-   fits inside, with the spare room at the bottom above Show titles. */
+   follow straight on. Open lists may hang past the panel's compact bottom;
+   Show titles fills the last cell beside the sliders. */
 #sortBtn{background:#157A60;color:#fff}
 #sortBtn:hover{background:#168264;box-shadow:0 0 0 2px rgba(255,255,255,.25)}
 #sortBtn .icon{color:#fff}
 @media(min-width:761px){
   #filterWrap.open #sidebar{display:grid}
   #sidebar{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 12px;align-content:start;
-    overflow:visible;max-height:none;min-height:var(--fp-min,560px);padding-bottom:74px}
+    overflow:visible;max-height:none;min-height:0;padding-bottom:14px}
   #facets{display:contents}
   #sortWrap{order:1;max-width:none;margin:0}
   #facets .facet{order:4}
   #facets .facet:last-child{order:2}
   .fp-head{order:3;position:static;justify-self:end;align-self:start;margin:0}
-  #sliders{order:5;grid-column:1 / -1;margin-top:4px}
-  .fp-foot{position:absolute;left:0;right:0;bottom:0;margin:0;border-radius:0 0 12px 12px}
+  #sliders{display:contents}
+  #sliders .slider-group{order:5}
+  .fp-foot{order:6;position:static;justify-self:end;align-self:center;
+    padding:0;margin:0;background:none;border-top:none;border-radius:0}
 }
-
-/* Panel height for this page: just tall enough for the list box of its bottom
-   row (measured with every list opened in turn); none reaches Show titles. */
-@media(min-width:761px){ #sidebar{--fp-min:550px} }
 
 /* Phone sheet (two columns): a list left on its own in the last row spans
    the full width, so there is no half-empty row. */
 @media(max-width:760px){ #facets .facet:last-child:nth-child(odd){grid-column:1 / -1} }
 
-/* Show titles sits in the panel's bottom-right corner (Nov 21): the separate
-   footer strip and its dividing line are gone, so the panel is shorter. The
-   lists that open lowest never reach that corner (checked per page). */
-@media(min-width:761px){
-  .fp-foot{left:auto;right:18px;bottom:14px;padding:0;margin:0;background:none;border-top:none;border-radius:0}
-  #sidebar{padding-bottom:58px}
-}
 </style>
 <!-- Favicon: the avatar, at the sizes browsers actually ask for. Served from
      /assets/ so they are cached immutably alongside the nav mark. -->
