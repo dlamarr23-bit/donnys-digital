@@ -44,7 +44,8 @@ function choose(candidates,movie){
 async function get(url){
   const ctl=new AbortController(),timer=setTimeout(()=>ctl.abort(),9000);
   try{
-    const response=await fetch(url,{signal:ctl.signal,redirect:'error'});
+    // Workers supports manual/follow, but not the standard "error" mode.
+    const response=await fetch(url,{signal:ctl.signal,redirect:'manual'});
     if(!response.ok) throw new Error('Rating service unavailable');
     return await response.text();
   }finally{clearTimeout(timer);}
@@ -78,6 +79,9 @@ export async function resolveRatings(params){
     get('https://v3.sg.media-imdb.com/suggestion/x/'+query+'.json').then(s=>choose(imdbCandidates(JSON.parse(s)),movie)),
     get('https://www.rottentomatoes.com/search?search='+query).then(s=>choose(rtCandidates(s),movie))
   ]);
+  for(const [i,result]of results.entries())if(result.status==='rejected'){
+    console.warn('[rating-links]',i===0?'IMDb':'Rotten Tomatoes',result.reason?.message||'Lookup failed');
+  }
   return {imdbUrl:results[0].status==='fulfilled'?results[0].value:'',rtUrl:results[1].status==='fulfilled'?results[1].value:''};
 }
 export async function onRequestGet({request,waitUntil}){
@@ -88,7 +92,7 @@ export async function onRequestGet({request,waitUntil}){
   }
   const ordered=new URLSearchParams();
   for(const key of ['title','alt','year','media','cast']) ordered.set(key,params.get(key)||'');
-  const key=new Request(url.origin+'/__rating-links/v1?'+ordered);
+  const key=new Request(url.origin+'/__rating-links/v2?'+ordered);
   const cache=globalThis.caches?.default;
   const hit=cache && await cache.match(key);
   if(hit) return hit;
