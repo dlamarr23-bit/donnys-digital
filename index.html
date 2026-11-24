@@ -524,7 +524,7 @@ var BASE='https://docs.google.com/spreadsheets/d/'+SHEET_ID
    Every failure mode here costs a download; none of them can serve stale data.
    Set REVALIDATE=false to switch this off and always pull the whole sheet. */
 var REVALIDATE=true;
-var PROBE_COLS='select B,G,K,M,N,X,Y';
+var PROBE_COLS='select B,G,K,M,N,X,Y,Z,AA';
 var PROBE_HEAD=['Title','Genre','Quality','Viewing Status','Studio','Date Added'];
 /* The seventh column is OPTIONAL. A sheet that has not had the formula added
    yet answers `select ...,Y` with an unnamed empty column rather than an error
@@ -812,6 +812,10 @@ function parseProbe(txt){
   if(fpHead && fpHead!==PROBE_FP_HEAD){
     throw new Error('probe column Y is "'+fpHead+'", expected "'+PROBE_FP_HEAD+'" or empty');
   }
+  ['IMDb URL','Rotten Tomatoes URL'].forEach(function(label,j){
+    var got=String(head[7+j]||'').trim();
+    if(got && got!==label) throw new Error('rating link columns moved');
+  });
   return rows;
 }
 /* The confirm pass. Runs after the page is finished and on screen, only when
@@ -1333,8 +1337,14 @@ background:#263238;display:block}
 #infoHead{display:flex;align-items:center;flex-wrap:wrap;gap:6px 14px;flex:0 0 auto}
 #infoTitle{font:700 22px 'Poppins',sans-serif;letter-spacing:.6px;line-height:1.15;flex:0 1 auto;min-width:0}
 #infoMeta{display:flex;flex-wrap:wrap;gap:6px;margin:0;flex:1 1 auto}
-#infoMeta span{background:#2b343b;color:#b0bec5;border-radius:11px;padding:3px 10px;
+#infoMeta span,#infoMeta a{background:#2b343b;color:#b0bec5;border-radius:11px;padding:3px 10px;
 font:700 11px 'Poppins',sans-serif;letter-spacing:.6px}
+#infoMeta a{text-decoration:none;cursor:pointer}
+#infoMeta a:hover,#infoMeta a:focus-visible{background:#40525e;color:#fff;outline:2px solid #90a4ae;outline-offset:1px}
+#infoEdit,#infoSheet{display:inline-flex;align-items:center;gap:5px;height:30px;padding:0 12px;
+border:1px solid #536874;border-radius:999px;background:#2b343b;color:#eceff1;
+font:700 12.5px 'Poppins',sans-serif;text-decoration:none;cursor:pointer;flex:0 0 auto}
+#infoEdit:hover,#infoSheet:hover{background:#40525e}
 /* flex-shrink 0: with a big cast the people row (flex:1 0 auto) took all of
    the fixed-height bar and squeezed the summary to a ~7px sliver. Now the
    summary keeps its own height, up to three lines (longer ones scroll here),
@@ -1893,6 +1903,8 @@ title="Sort collection"><span id="sortLabel">Sort: Recently Added</span><span cl
 <div id="infoHead">
 <h2 id="infoTitle"></h2>
 <div id="infoMeta"></div>
+<button id="infoEdit" type="button">&#9998; Edit details</button>
+<a id="infoSheet" href="#" target="_blank" rel="noopener noreferrer">Open in Sheet &#8599;</a>
 <button id="closeInfo" type="button" title="Close (Esc)">&#10005; Close</button>
 </div>
 <p id="infoDesc"></p>
@@ -2000,7 +2012,7 @@ const DESCRIPTIONS = 'eager'; // 'lazy' | 'eager' | 'never'
 // The parsed collection is kept in IndexedDB (localStorage caps out around 5MB;
 // this collection is bigger than that). A revisit paints from the cache
 // immediately and only repaints if the sheet actually changed.
-const CACHE_VER = 'v1';
+const CACHE_VER = 'v2';
 const CACHE_TTL = 24 * 60 * 60 * 1000;
 // To enable saving edits from the site, deploy the companion Apps Script
 // (apps-script-editor.gs) as a Web App and paste its /exec URL + token here:
@@ -2059,6 +2071,7 @@ const COLMAP = {
 'Where to Watch':'whereWatchRaw','Highest Quality':'highQRaw','Awards':'awardsRaw',
 'Acquired by':'acqBy','Language':'lang','Year':'year','Tomato Meter':'tomato',
 'IMDB Rating':'imdb','Runtime':'runtime','Date Added':'dateAdded','Color':'color',
+'IMDb URL':'imdbUrl','Rotten Tomatoes URL':'rtUrl',
 /* Column Y: a formula holding the LENGTH of every field the revalidation
    probe does not fetch, so an edit to Actors or Description moves something
    the probe CAN see cheaply. See PROBE_COLS at the top of the file. */
@@ -2070,6 +2083,8 @@ const EDIT_FIELDS = [
 {h:'MPAA Rating'},{h:'Quality'},{h:'Media Type'},{h:'Viewing Status'},{h:'Studio'},
 {h:'Where to Watch'},{h:'Highest Quality'},{h:'Awards',full:true},{h:'Acquired by'},
 {h:'Language'},{h:'Year'},{h:'Tomato Meter'},{h:'IMDB Rating'},{h:'Runtime'},
+{h:'IMDb URL',full:true,type:'url',placeholder:'https://www.imdb.com/title/tt…/'},
+{h:'Rotten Tomatoes URL',full:true,type:'url',placeholder:'https://www.rottentomatoes.com/m/…'},
 ];
 let movies=[], filtered=[], page=0, editMode=false, currentEdit=null;
 let enriched=false, descriptionsLoaded=(DESCRIPTIONS==='never');
@@ -2483,6 +2498,7 @@ awardsRaw:S(r,'awardsRaw'),
 // only ever holds two values, so it is the one split done up front.
 viewStatus:splitCsv(vsRaw),
 year:N(r,'year'), tomato:N(r,'tomato'), imdb:N(r,'imdb'), runtime:N(r,'runtime'),
+imdbUrl:S(r,'imdbUrl').trim(), rtUrl:S(r,'rtUrl').trim(),
 dateAdded: iDate==null ? null : toTime(r[iDate]),
 color:S(r,'color').trim(),
 fp:S(r,'fp').trim(),
@@ -2642,7 +2658,8 @@ let h=0x811c9dc5;
 for(const m of list){
 const s=m.title+'|'+m.dateAdded+'|'+m.viewStatusRaw+'|'+m.quality
   +'|'+normList(m.genreRaw)+'|'+String(m.studio==null?'':m.studio).trim()
-  +'|'+String(m.fp==null?'':m.fp).trim();   // column Y — stands in for the wide columns
+  +'|'+String(m.fp==null?'':m.fp).trim()
+  +'|'+String(m.imdbUrl||'').trim()+'|'+String(m.rtUrl||'').trim();
 for(let i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,0x01000193); }
 }
 return (h>>>0).toString(36)+':'+list.length;
@@ -2693,7 +2710,8 @@ h=fnvStep(h, title+'|'+ymdFromProbe(row[5])+'|'
   +String(row[2]==null?'':row[2]).trim()+'|'      // parseRows trims Quality
   +normList(row[1])+'|'                           // Genre
   +String(row[4]==null?'':row[4]).trim()+'|'     // Studio, trimmed both sides
-  +String(row[6]==null?'':row[6]).trim());        // Fingerprint (column Y)
+  +String(row[6]==null?'':row[6]).trim()+'|'
+  +String(row[7]||'').trim()+'|'+String(row[8]||'').trim());
 }
 return (h>>>0).toString(36)+':'+n;
 }
@@ -2703,7 +2721,8 @@ for(let r=0;r<list.length;r++){
 const m=list[r];
 h=fnvStep(h, m.title+'|'+ymdFromEpoch(m.dateAdded)+'|'+m.viewStatusRaw+'|'+m.quality
   +'|'+normList(m.genreRaw)+'|'+String(m.studio==null?'':m.studio).trim()
-  +'|'+String(m.fp==null?'':m.fp).trim());
+  +'|'+String(m.fp==null?'':m.fp).trim()
+  +'|'+String(m.imdbUrl||'').trim()+'|'+String(m.rtUrl||'').trim());
 }
 return (h>>>0).toString(36)+':'+list.length;
 }
@@ -3601,11 +3620,11 @@ function openEditor(sheetRow, x, y){
 const m=rowIndex.get(sheetRow); if(!m) return;
 currentEdit=m;
 $('#modalTitle').textContent='Edit: '+(m.sortTitle||m.title);
-$('#modalMsg').textContent= APPS_SCRIPT_URL ? '' :
+$('#modalMsg').textContent= APPS_SCRIPT_URL ? 'Changes save to your Google Sheet. Your edit token is required to save.' :
 'Saving is not set up yet — deploy the Apps Script and add its URL to the embed, or edit directly in the Sheet.';
 $('#modalMsg').className='msg';
 $('#saveBtn').disabled=!APPS_SCRIPT_URL;
-$('#sheetRowLink').href=`https://docs.google.com/spreadsheets/d/${SHEET_ID}/edit#gid=${sheetRow}`;
+$('#sheetRowLink').href=movieSheetUrl(sheetRow);
 const body=$('#modalBody');
 body.innerHTML=EDIT_FIELDS.map(f=>{
 const key=COLMAP[f.h];
@@ -3619,7 +3638,7 @@ const shown = pending ? 'Loading description…' : v;
 return `<div class="field${f.full?' full':''}">
 <label>${esc(f.h)}</label>
 ${f.area?`<textarea data-h="${esc(f.h)}"${attrs}>${esc(shown)}</textarea>`
-:`<input data-h="${esc(f.h)}"${attrs} value="${esc(shown)}">`}
+:`<input type="${f.type||'text'}" data-h="${esc(f.h)}"${f.placeholder?` placeholder="${esc(f.placeholder)}"`:''}${attrs} value="${esc(shown)}">`}
 </div>`;
 }).join('');
 // What each field held when the editor opened, read back from the element
@@ -3634,6 +3653,14 @@ modal.style.visibility='hidden';
 $('#modalWrap').classList.add('open');
 positionFloating(modal, x!=null?x:window.innerWidth/2, y!=null?y:window.innerHeight/3);
 modal.style.visibility='';
+if(!descriptionsLoaded) loadDescriptions().then(()=>{
+  if(currentEdit!==m) return;
+  const field=body.querySelector('[data-h="Description"][data-pending]');
+  if(!field) return;
+  if(!descriptionsLoaded){ field.value='Description could not load. Reopen the editor to retry.'; return; }
+  field.value=m.desc||''; field.dataset.orig=field.value;
+  field.readOnly=false; field.removeAttribute('data-pending');
+});
 }
 function closeEditor(){ $('#modalWrap').classList.remove('open'); currentEdit=null; }
 $('#closeModal').addEventListener('click',closeEditor);
@@ -3652,6 +3679,33 @@ $('#modalWrap').addEventListener('click',e=>{ if(e.target.id==='modalWrap') clos
    Descriptions load lazily (see loadDescriptions), so a click that lands
    before they arrive shows a loading line and is filled in below. */
 let infoRow=null;
+function movieSheetUrl(row){
+return `https://docs.google.com/spreadsheets/d/${SHEET_ID}/edit#gid=${SHEET_GID}&range=A${row}:AA${row}`;
+}
+// Only accept actual title pages on the two rating services.
+function ratingUrl(value,service){
+if(!String(value||'').trim()) return '';
+try{
+const url=new URL(String(value).trim());
+if(!['https:','http:'].includes(url.protocol) || url.username || url.password || url.port) return '';
+const host=url.hostname.toLowerCase();
+const valid=service==='imdb'
+  ? /^(www\.|m\.)?imdb\.com$/.test(host) && /^\/title\/tt\d+(?:\/|$)/.test(url.pathname)
+  : /^(www\.)?rottentomatoes\.com$/.test(host) && /^\/(m|tv)\/[^/]+/.test(url.pathname);
+if(!valid) return '';
+url.protocol='https:'; return url.href;
+}catch(e){ return ''; }
+}
+function ratingBadge(m,service){
+const imdb=service==='imdb', name=imdb?'IMDb':'Rotten Tomatoes';
+const score=imdb?m.imdb:m.tomato;
+const saved=ratingUrl(imdb?m.imdbUrl:m.rtUrl,service);
+const query=[m.sortTitle||m.title,m.year].filter(Boolean).join(' ');
+const href=saved || (imdb?'https://www.imdb.com/find/?s=tt&q=':'https://www.rottentomatoes.com/search?search=')+encodeURIComponent(query);
+const label=imdb?(score==null?'IMDb ↗':'IMDb '+Number(score).toFixed(1)+' ↗'):(score==null?'🍅 Rotten Tomatoes ↗':'🍅 '+score+'% ↗');
+const title=saved?'Open '+name+' page':'Search '+name+' for '+query+' — add a direct link in Edit details';
+return `<a class="rating-link" data-service="${service}" href="${esc(href)}" target="_blank" rel="noopener noreferrer" title="${esc(title)}" aria-label="${esc(title)}">${esc(label)}</a>`;
+}
 
 function closeInfo(){
 if(infoRow===null) return;
@@ -3771,10 +3825,9 @@ if(m.year) bits.push(m.year);
 if(m.mpaa) bits.push(m.mpaa);
 if(m.runtime!=null) bits.push(fmtRuntime(m.runtime));
 if(m.quality) bits.push(m.quality);
-if(m.imdb!=null) bits.push('IMDb '+Number(m.imdb).toFixed(1));
-if(m.tomato!=null) bits.push('🍅 '+m.tomato+'%');
 if(m.viewStatusRaw) bits.push(m.viewStatusRaw);
-$('#infoMeta').innerHTML=bits.map(b=>`<span>${esc(b)}</span>`).join('');
+$('#infoMeta').innerHTML=bits.map(b=>`<span>${esc(b)}</span>`).join('')+ratingBadge(m,'imdb')+ratingBadge(m,'rt');
+$('#infoSheet').href=movieSheetUrl(sheetRow);
 $('#infoDesc').textContent = descriptionsLoaded ? (m.desc||'No description available.') : 'Loading description…';
 const dirs=peopleOf(m,'director'), cast=peopleOf(m,'actors');
 $('#dirBlock').style.display=dirs.length?'':'none';
@@ -3799,6 +3852,9 @@ layoutPeople();   // a longer summary leaves the tiles less height
 }
 }
 $('#closeInfo').addEventListener('click',closeInfo);
+$('#infoEdit').addEventListener('click',e=>{
+if(infoRow!==null) openEditor(infoRow,e.clientX,e.clientY);
+});
 
 /* The bar sits directly over the wall and is a big target, so most wheel
    gestures aimed at the posters land on it instead. #main can't scroll and
@@ -4004,6 +4060,14 @@ updates[el.dataset.h]=el.value;
 });
 const msg=$('#modalMsg');
 if(!Object.keys(updates).length){ msg.textContent='No changes to save.'; msg.className='msg'; return; }
+for(const [header,service] of [['IMDb URL','imdb'],['Rotten Tomatoes URL','rt']]){
+if(!(header in updates)) continue;
+const value=updates[header].trim();
+if(value && !ratingUrl(value,service)){
+msg.textContent='Enter a valid '+header+' title-page link, or leave it blank.'; msg.className='msg err'; return;
+}
+updates[header]=value?ratingUrl(value,service):'';
+}
 const token=await getToken();
 if(!token){ msg.textContent='A token is required to save changes.'; msg.className='msg err'; return; }
 msg.textContent='Saving…'; msg.className='msg';
@@ -4014,6 +4078,9 @@ key:{Link:m.link,Title:m.title},updates});
 if(!data.ok){
 if(/token/i.test(data.error||'')) dropToken();
 throw new Error(data.error||'Save failed');
+}
+if(Number.isFinite(data.fieldsWritten) && data.fieldsWritten!==Object.keys(updates).length){
+throw new Error('Some fields were not saved. Check the column headers in the Sheet, then reload and try again.');
 }
 cacheDirty=true;
 for(const [h,v] of Object.entries(updates)){
