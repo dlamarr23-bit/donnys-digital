@@ -69,6 +69,7 @@ const COLS = [
      OPTIONAL (see OPTIONAL below): a sheet without it still builds, and simply
      leaves the probe as blind to those columns as it was before. */
   'Fingerprint',
+  'IMDb URL', 'Rotten Tomatoes URL',
 ];
 
 /* Columns that may be absent without failing the build. Fingerprint is a pure
@@ -76,7 +77,7 @@ const COLS = [
    string for it on BOTH sides of a comparison, which is self-consistent and
    simply leaves the revalidation probe as cheap -- and as blind -- as it was
    before the column existed. */
-const OPTIONAL = new Set(['Fingerprint']);
+const OPTIONAL = new Set(['Fingerprint','IMDb URL','Rotten Tomatoes URL']);
 
 /* Which tier each column rides in.
      core   -> needed to paint the grid and drive the cheap facets
