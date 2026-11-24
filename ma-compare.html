@@ -447,6 +447,11 @@ body{
   color-scheme:light;background:#ffffff;color:var(--pill-text);
 }
 .facet-panel input.opt-search::placeholder{color:#90a4ae}
+.facet-sort{display:flex;align-items:center;gap:6px;margin-bottom:6px;
+font:700 13px 'Poppins',sans-serif;color:#546e7a}
+.facet-sort select{flex:1;min-width:0;width:100%;padding:4px 6px;
+border:1px solid #cfd8dc;border-radius:5px;font:700 13px 'Poppins',sans-serif;
+color-scheme:light;background:#fff;color:var(--pill-text);cursor:pointer}
 .opt-list{max-height:240px;overflow-y:auto;scrollbar-width:thin}
 .opt-list label{
   display:flex;align-items:center;gap:8px;
@@ -826,7 +831,7 @@ caret-color:#263238;outline:none;transition:box-shadow .15s;
   body.fpOpen #toolbar{z-index:200}
   #facets{grid-template-columns:repeat(2,minmax(0,1fr))}
   #sliders{grid-template-columns:minmax(0,1fr)}
-  .fp-foot{margin:14px -14px 0;padding:10px 14px calc(10px + env(safe-area-inset-bottom,0px))}
+  .fp-foot{margin:14px -14px 0;padding:10px 14px calc(10px + env(safe-area-inset-bottom,0px));z-index:45}
   #fpDone{flex:1}
 }
 
@@ -893,40 +898,33 @@ caret-color:#263238;outline:none;transition:box-shadow .15s;
    On a computer the panel is a single 3-column grid: the sort is one cell
    (green, the Filters colour), the LAST list moves up beside it, and Close
    takes the third cell, so no list is left on a row of its own. The sliders
-   follow straight on. The panel never scrolls: it does not clip (an open list
-   may hang past it), and it is tall enough that even the bottom row's list
-   fits inside, with the spare room at the bottom above Show titles. */
+   follow straight on. Open lists may hang past the compact panel's bottom;
+   Show titles follows the sliders in the right-hand column. */
 #sortBtn{background:#157A60;color:#fff}
 #sortBtn:hover{background:#168264;box-shadow:0 0 0 2px rgba(255,255,255,.25)}
 #sortBtn .icon{color:#fff}
 @media(min-width:761px){
   #filterWrap.open #sidebar{display:grid}
   #sidebar{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 12px;align-content:start;
-    overflow:visible;max-height:none;min-height:var(--fp-min,560px);padding-bottom:74px}
+    overflow:visible;max-height:none;min-height:0;padding-bottom:14px}
   #facets{display:contents}
   #sortWrap{order:1;max-width:none;margin:0}
   #facets .facet{order:4}
   #facets .facet:last-child{order:2}
   .fp-head{order:3;position:static;justify-self:end;align-self:start;margin:0}
-  #sliders{order:5;grid-column:1 / -1;margin-top:4px}
-  .fp-foot{position:absolute;left:0;right:0;bottom:0;margin:0;border-radius:0 0 12px 12px}
+  #sliders{display:contents}
+  #sliders .slider-group{order:5}
+  #sliders .slider-group:first-child{grid-column:1}
+  .fp-foot{order:6;grid-column:3;position:static;justify-self:end;align-self:center;
+    padding:0;margin:0;background:none;border-top:none;border-radius:0}
 }
 
-/* Panel height for this page: just tall enough for the list box of its bottom
-   row (measured with every list opened in turn); none reaches Show titles. */
-@media(min-width:761px){ #sidebar{--fp-min:556px} }
 
 /* Phone sheet (two columns): a list left on its own in the last row spans
    the full width, so there is no half-empty row. */
 @media(max-width:760px){ #facets .facet:last-child:nth-child(odd){grid-column:1 / -1} }
 
-/* Show titles sits in the panel's bottom-right corner (Nov 21): the separate
-   footer strip and its dividing line are gone, so the panel is shorter. The
-   lists that open lowest never reach that corner (checked per page). */
-@media(min-width:761px){
-  .fp-foot{left:auto;right:18px;bottom:14px;padding:0;margin:0;background:none;border-top:none;border-radius:0}
-  #sidebar{padding-bottom:58px}
-}
+
 </style>
 <!-- Favicon: the avatar, at the sizes browsers actually ask for. Served from
      /assets/ so they are cached immutably alongside the nav mark. -->
@@ -1481,6 +1479,23 @@ async function loadAll(){
    A facet with picks of its own is the exception. Counting Studio off a list
    already narrowed to one studio would leave it as the only choice and no way
    to tick a second one, so it counts off everything-but-itself instead. */
+// Each list keeps its choice through count refreshes and sidebar rebuilds.
+const facetSort=Object.fromEntries(FACETS.map(f=>[f.key,f.order||f.numeric?'default':'name-asc']));
+const facetSorted={};
+function sortedFacetValues(f){
+  if(!facetSorted[f.key]){
+    const mode=facetSort[f.key];
+    facetValues[f.key].sort((a,b)=>{
+      if(mode==='count-desc') return b[1]-a[1] || collator.compare(a[0],b[0]);
+      if(mode==='count-asc') return a[1]-b[1] || collator.compare(a[0],b[0]);
+      if(mode==='default' && f.order) return f.order.indexOf(a[0])-f.order.indexOf(b[0]);
+      if(mode==='default' && f.numeric) return (parseFloat(a[0].replace(/[^0-9.]/g,''))||0)-(parseFloat(b[0].replace(/[^0-9.]/g,''))||0);
+      return mode==='name-desc'?collator.compare(b[0],a[0]):collator.compare(a[0],b[0]);
+    });
+    facetSorted[f.key]=true;
+  }
+  return facetValues[f.key];
+}
 function countFacets(rows,list){
   list.forEach(f=>{
     const counts=new Map();
@@ -1493,12 +1508,9 @@ function countFacets(rows,list){
         counts.set(v,(counts.get(v)||0)+1);
       });
     });
-    // Price bands keep their natural $ low -> high order; everything else is
-    // A -> Z through the one shared collator (numeric, case/accent-blind), the
-    // same ordering the Collection page uses.
-    facetValues[f.key]=[...counts.entries()].sort(f.numeric
-      ? (a,b)=>(parseFloat(a[0].replace(/[^0-9.]/g,''))||0)-(parseFloat(b[0].replace(/[^0-9.]/g,''))||0)
-      : (a,b)=>collator.compare(a[0],b[0]));
+    // Sort only when a panel renders, using its current choice.
+    facetValues[f.key]=[...counts.entries()];
+    facetSorted[f.key]=false;
   });
 }
 // The whole-catalog pass, run before every build: buildFacets() sizes its
@@ -1547,12 +1559,21 @@ function buildFacets(){
       </button>
       <div class="facet-panel">
         ${facetValues[f.key].length>10?'<input class="opt-search" placeholder="Search…">':''}
+        <label class="facet-sort">Sort
+          <select class="opt-sort" aria-label="Sort ${esc(f.label)} options">
+            ${f.order||f.numeric?'<option value="default">Price: low to high</option>':''}
+            <option value="name-asc">A–Z</option>
+            <option value="name-desc">Z–A</option>
+            <option value="count-desc">Count: high to low</option>
+            <option value="count-asc">Count: low to high</option>
+          </select></label>
         <div class="opt-list"></div>
         <button class="facet-clear">Clear</button>
       </div>`;
     host.appendChild(el);
     const list=el.querySelector('.opt-list');
     const search=el.querySelector('.opt-search');
+    const sort=el.querySelector('.opt-sort'); sort.value=facetSort[f.key];
     // A re-render starts at the top -- the panel has just been opened, or had
     // its list recounted underneath it -- except straight after a tick, when
     // the list barely moves and the next box you want is still under the cursor.
@@ -1560,7 +1581,7 @@ function buildFacets(){
     const render=()=>{
       const ql=search?search.value.trim().toLowerCase():'';
       const prev=list.scrollTop;
-      const itemsF=facetValues[f.key].filter(([v])=>!ql||v.toLowerCase().includes(ql));
+      const itemsF=sortedFacetValues(f).filter(([v])=>!ql||v.toLowerCase().includes(ql));
       const shown=itemsF.slice(0,250);
       list.innerHTML=(shown.length?shown.map(([v,n])=>`
         <label><input type="checkbox" value="${esc(v)}" ${selected[f.key].has(v)?'checked':''}>
@@ -1577,6 +1598,12 @@ function buildFacets(){
       if(!was){ el.classList.add('open'); render(); if(search) search.focus(); }
     });
     if(search) search.addEventListener('input',render);
+    sort.addEventListener('change',()=>{
+      facetSort[f.key]=sort.value;
+      facetSorted[f.key]=false;
+      keepScroll=false;
+      render();
+    });
     list.addEventListener('change',e=>{
       if(e.target.type!=='checkbox') return;
       const v=e.target.value;
