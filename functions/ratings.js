@@ -45,10 +45,22 @@ async function get(url){
   const ctl=new AbortController(),timer=setTimeout(()=>ctl.abort(),9000);
   try{
     // Workers supports manual/follow, but not the standard "error" mode.
-    const response=await fetch(url,{signal:ctl.signal,redirect:'manual'});
-    if(!response.ok) throw new Error('Rating service unavailable');
+    const response=await fetch(url,{
+      signal:ctl.signal,
+      redirect:'manual',
+      headers:{
+        'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        'Accept':'application/json,text/html,*/*'
+      }
+    });
+    if(!response.ok) throw new Error('Rating service unavailable ('+response.status+')');
     return await response.text();
   }finally{clearTimeout(timer);}
+}
+function imdbSuggestionUrl(rawTitle){
+  const slug=rawTitle.toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'');
+  const first=/^[a-z0-9]/.test(slug)?slug[0]:'x';
+  return 'https://v3.sg.media-imdb.com/suggestion/'+first+'/'+encodeURIComponent(slug||rawTitle.toLowerCase())+'.json';
 }
 export function imdbCandidates(json){
   return (json.d||[]).filter(c=>/^tt\d+$/.test(c.id)).map(c=>({
@@ -76,7 +88,7 @@ export async function resolveRatings(params){
   const movie=details(params);
   const query=encodeURIComponent(movie.titles[0]);
   const results=await Promise.allSettled([
-    get('https://v3.sg.media-imdb.com/suggestion/x/'+query+'.json').then(s=>choose(imdbCandidates(JSON.parse(s)),movie)),
+    get(imdbSuggestionUrl(movie.titles[0])).then(s=>choose(imdbCandidates(JSON.parse(s)),movie)),
     get('https://www.rottentomatoes.com/search?search='+query).then(s=>choose(rtCandidates(s),movie))
   ]);
   for(const [i,result]of results.entries())if(result.status==='rejected'){
