@@ -4014,9 +4014,27 @@ clearTimeout(headSaveTimer);
 headSaveTimer=setTimeout(()=>{ try{ localStorage.setItem('dd_heads5',JSON.stringify(headStore)); }catch(e){} },800);
 }
 function initials(name){ return name.split(/\s+/).slice(0,2).map(w=>w[0]||'').join('').toUpperCase(); }
+/* Names whose face comes from a set Wikipedia article instead of the page at
+   their exact name: the Sheet tags them the IMDb way, "(III)", so they are not
+   mixed up with someone of the same name. Keep this in step with
+   HEAD_OVERRIDES in data.html. "Steve McQueen(III)" and "Steve McQueen (III)"
+   are the same pin. */
+const HEAD_OVERRIDES={
+'Steve McQueen (III)':'Steve McQueen (director)'
+};
+function headPin(name){
+return HEAD_OVERRIDES[name] || HEAD_OVERRIDES[String(name).replace(/\s*\(([IVXLCDM]+)\)\s*$/i,' ($1)')] || '';
+}
+/* A pinned face is saved under "name => article" (same key as data.html), so
+   a new pin never reuses a photo saved before it existed. */
+function headKey(name){
+const pin=headPin(name);
+return pin && pin!==name ? name+' => '+pin : name;
+}
 function knownHead(name){
 const c=headCache.get(name); if(c) return c;
-if(headStore[name]){ headCache.set(name,headStore[name]); return headStore[name]; }
+const saved=headStore[headKey(name)];
+if(saved){ headCache.set(name,saved); return saved; }
 return null;
 }
 function wikiBatch(titles){
@@ -4044,15 +4062,20 @@ async function resolveHeads(names){
 const want=[...new Set(names)].filter(n=>n && !knownHead(n) && !headCache.has(n));
 if(!want.length) return;
 want.forEach(n=>headCache.set(n,null));
-for(let i=0;i<want.length;i+=HEAD_BATCH){
-const chunk=want.slice(i,i+HEAD_BATCH);
+// Pinned names are asked for under their article title; one title can stand
+// for more than one spelling of a name.
+const lookup=new Map();
+want.forEach(n=>{ const t=headPin(n)||n; if(!lookup.has(t)) lookup.set(t,[]); lookup.get(t).push(n); });
+const titles=[...lookup.keys()];
+for(let i=0;i<titles.length;i+=HEAD_BATCH){
+const chunk=titles.slice(i,i+HEAD_BATCH);
 let got=new Map();
 try{ got=await wikiBatch(chunk); }catch(e){ /* those names keep their initials */ }
-chunk.forEach(n=>{ const u=got.get(n); if(u) applyHead(n,u); });
+chunk.forEach(t=>{ const u=got.get(t); if(u) lookup.get(t).forEach(n=>applyHead(n,u)); });
 }
 }
 function applyHead(name,url){
-headCache.set(name,url); headStore[name]=url; saveHeadStore();
+headCache.set(name,url); headStore[headKey(name)]=url; saveHeadStore();
 document.querySelectorAll('.face').forEach(f=>{
 if(f.dataset.face===name && !f.querySelector('img')){
 // Decoded off-document first, so a face that 404s just keeps its initials

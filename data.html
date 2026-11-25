@@ -1266,8 +1266,23 @@ const HEAD_OVERRIDES={
   'Hamilton Luske':'Hamilton Luske',
   'John Cazale':'John Cazale',
   'Jodie Foster':'Jodie Foster',
-  'Barbara Stanwyck':'Barbara Stanwyck'
+  'Barbara Stanwyck':'Barbara Stanwyck',
+  /* Names the Sheet tags the IMDb way, "(III)", so they are not mixed up with
+     someone of the same name. Keep this list in step with HEAD_OVERRIDES in
+     index.html (the Collection info bar). */
+  'Steve McQueen (III)':'Steve McQueen (director)'
 };
+/* "Steve McQueen(III)" and "Steve McQueen (III)" are the same pin. */
+function headPin(name){
+  return HEAD_OVERRIDES[name] || HEAD_OVERRIDES[String(name).replace(/\s*\(([IVXLCDM]+)\)\s*$/i,' ($1)')] || '';
+}
+/* A pinned face is saved under "name => article", so changing a pin (or
+   adding one for a name that already had the wrong face saved) starts fresh
+   instead of reusing the old photo. index.html uses the same key. */
+function headKey(name){
+  const pin=headPin(name);
+  return pin && pin!==name ? name+' => '+pin : name;
+}
 /* NEVER REWRITE A WIKIMEDIA THUMBNAIL URL BY HAND.
    These URLs carry their width in the filename
    (.../thumb/8/89/Name.jpg/250px-Name.jpg) and it is tempting to edit that
@@ -1317,7 +1332,8 @@ function escH(x){return String(x).replace(/&/g,'&amp;').replace(/</g,'&lt;').rep
 function knownHead(name){
   const c=headCache.get(name);
   if(c) return c;
-  if(headStore[name]){ headCache.set(name,headStore[name]); return headStore[name]; }
+  const saved=headStore[headKey(name)];
+  if(saved){ headCache.set(name,saved); return saved; }
   return null;
 }
 function renderBoard(id, sortedAll, n, key){
@@ -1469,12 +1485,14 @@ function wikiBatch(titles){
 async function resolveHeads(names, hint, host){
   names.forEach(n=>headCache.set(n, null));   // claim them so we don't double-request
 
-  const pinned=names.filter(n=>HEAD_OVERRIDES[n]);
-  const plain =names.filter(n=>!HEAD_OVERRIDES[n]);
-  // Pinned names are looked up under their pinned article title.
+  // Pinned names are looked up under their pinned article title. A title can
+  // stand for more than one spelling of a name, so each holds a list.
   const lookup=new Map();
-  pinned.forEach(n=>lookup.set(HEAD_OVERRIDES[n], n));
-  plain.forEach(n=>lookup.set(n, n));
+  names.forEach(n=>{
+    const t=headPin(n)||n;
+    if(!lookup.has(t)) lookup.set(t,[]);
+    lookup.get(t).push(n);
+  });
 
   const titles=[...lookup.keys()];
   const misses=[];
@@ -1483,22 +1501,24 @@ async function resolveHeads(names, hint, host){
     let got=new Map();
     try{ got=await wikiBatch(chunk); }catch(e){ /* whole chunk falls to search */ }
     chunk.forEach(t=>{
-      const name=lookup.get(t);
       const url=got.get(t);
-      if(url) applyHead(name,url,host);
-      else misses.push(name);
+      lookup.get(t).forEach(name=>{
+        if(url) applyHead(name,url,host);
+        else misses.push(name);
+      });
     });
   }
   // Anything the exact-title pass could not answer: the old search path, but
-  // now for a handful of names rather than all 144.
+  // now for a handful of names rather than all 144. A pinned name searches
+  // for its article title, never the bare name.
   for(const name of misses){
-    const url=await queuedHeadshot(name,hint);
+    const url=await queuedHeadshot(headPin(name)||name,hint);
     if(url) applyHead(name,url,host);
   }
 }
 function applyHead(name,url,host){
   headCache.set(name,url);
-  headStore[name]=url;
+  headStore[headKey(name)]=url;
   saveHeadStore();
   document.querySelectorAll('.face').forEach(f=>{
     if(f.dataset.face===name && !f.querySelector('img') && !f.dataset.loading){
