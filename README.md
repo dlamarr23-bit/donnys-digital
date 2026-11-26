@@ -338,12 +338,14 @@ zone). The `&fm=webp` on every proxied URL is currently ignored.
 
 **Vudu covers and `&w=`.** Vudu refuses Cloudflare's network, so `img.js`
 relays Vudu through Photon (`i0.wp.com`), which honours `&w=` (100-300, plus
-400 for faces). Since Nov 2026 the **Collection page asks for `&w=full`**:
+400 for faces). Since Nov 2026 **every page asks for posters at `&w=full`**:
 Photon's shrink visibly smeared faces and lettering (a 150px cover measured
 ~26dB PSNR against the browser's own shrink), while with no width Photon
-returns the original's exact pixels. So the grid gets the same 338x480 picture
+returns the original's exact pixels. So the grids get the same 338x480 picture
 the sheet links to (`poster2/<id>-l` is the largest size Vudu serves) and the
-browser does the shrink. The other pages still ask for a width.
+browser does the shrink. The Photon fallbacks in each page's chain carry no
+`?w=` for the same reason, and Sales rewrites its sheet's `-168` links to `-l`.
+Faces (`&w=400`, built by `faceSrc`) are unchanged.
 
 Note that the proxied URL still carries the original address in its query
 string, so this defeats a filter matching on *hostname*, not one matching the

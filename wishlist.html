@@ -37,12 +37,15 @@
         for a host-based filter to match. (Confirmed working on a network
         that was blocking Vudu.)
 
-     2. Resizing: this USED to also re-encode, when the proxy was Netlify's
-        Image CDN -- a poster arrived as ~10KB of webp instead of ~40KB of
-        source jpeg. On Cloudflare Pages there is no image-processing step,
-        so &fm= is ignored. For Vudu covers img.js relays through Photon,
-        which does resize: &w= (one of BUCKETS below) is passed through.
-        Other hosts arrive at their original size. See README.md "Posters".
+     2. Size: this page asks for every cover at FULL size (&w=full), the
+        same 338x480 picture the sheet's link opens. It used to ask for the
+        width a card is drawn (100-300px), which img.js got from Photon --
+        and Photon's shrink smeared faces and lettering (Nov 2026: measured
+        ~26dB against the browser's own shrink, clearly visible). Full size
+        is ~2-3x the bytes per cover, but lazy loading means only the covers
+        on screen are fetched, and img.js caches them at the edge for a week.
+        &fm= is ignored (no re-encoding on Cloudflare Pages). Other hosts
+        always arrived at their original size. See README.md "Posters".
 
      The host allowlist lives in functions/img.js -- a URL whose host is not
      on that list is refused, so add the host there before pointing anything
@@ -52,32 +55,10 @@
 <script>
 (function () {
   var PROXY  = "/img";
-  var WIDTH  = 300;      // poster cards render ~150px wide; 300 covers retina
-  var FORMAT = "webp";   // smaller than the source jpg
-  // Covers in the #grid wall are asked for at the size they are drawn:
-  // column width x screen pixel ratio, rounded UP to one of these. A 300px
-  // poster in a 65px card was ~27KB where ~5KB looks the same. img.js only
-  // honours these exact values (anything else gets 300), which keeps the
-  // number of cached copies per poster small. Everything else stays 300.
-  var BUCKETS = [100, 150, 200, 250, 300];
-  var gridW = null;      // one measurement per batch of mutations
-  function coverWidth(el) {
-    var g = el && el.closest ? el.closest("#grid") : null;
-    if (!g) return WIDTH;
-    if (gridW === null) {
-      gridW = WIDTH;
-      var col = parseFloat(getComputedStyle(g).gridTemplateColumns);
-      if (col > 0) {
-        var need = col * (window.devicePixelRatio || 1);
-        for (var i = 0; i < BUCKETS.length; i++) {
-          if (BUCKETS[i] >= need) { gridW = BUCKETS[i]; break; }
-        }
-      }
-    }
-    return gridW;
-  }
+  var WIDTH  = "full";   // no resizing: the sheet's own picture, pixel for pixel
+  var FORMAT = "webp";   // ignored by img.js; kept so old cache keys line up
 
-  function proxied(u, el) {
+  function proxied(u) {
     if (!u) return u;
     u = String(u).trim();
     if (!/^(https?:)?\/\//i.test(u)) return u;              // relative -> leave alone
@@ -85,18 +66,17 @@
     if (u.indexOf("//" + location.host) !== -1) return u;   // same-site -> leave alone
     if (u.slice(0, 2) === "//") u = "https:" + u;
     else if (u.slice(0, 5).toLowerCase() === "http:") u = "https:" + u.slice(5);
-    return PROXY + "?url=" + encodeURIComponent(u) + "&w=" + coverWidth(el) + "&fm=" + FORMAT;
+    return PROXY + "?url=" + encodeURIComponent(u) + "&w=" + WIDTH + "&fm=" + FORMAT;
   }
 
   function fix(el) {
     if (!el || el.tagName !== "IMG") return;
     var src = el.getAttribute("src");
-    var next = proxied(src, el);
+    var next = proxied(src);
     if (next && next !== src) el.setAttribute("src", next);
   }
 
   function scan(root) {
-    gridW = null;
     if (!root || root.nodeType !== 1) return;
     fix(root);
     if (root.querySelectorAll) {
@@ -106,7 +86,6 @@
   }
 
   new MutationObserver(function (mutations) {
-    gridW = null;
     for (var i = 0; i < mutations.length; i++) {
       var m = mutations[i];
       if (m.type === "attributes") fix(m.target);
@@ -1258,8 +1237,8 @@ const stripScheme = u => u.replace(/^https?:\/\//,'');
 // a real fallback (wp.com added to remote_images alongside this change).
 const VUDU_PROXIES = [
   u => u,                                                        // direct: the allowlisted route
-  u => 'https://i0.wp.com/' + stripScheme(u) + '?w=400',         // Photon
-  u => 'https://i1.wp.com/' + stripScheme(u) + '?w=400',         // Photon, 2nd shard
+  u => 'https://i0.wp.com/' + stripScheme(u),                   // Photon, full size
+  u => 'https://i1.wp.com/' + stripScheme(u),                   // Photon, 2nd shard, full size
 ];
 const isVudu = u => /vudu\.com/i.test(u);
 // The URL to try first for a given poster.
@@ -1270,7 +1249,7 @@ function posterError(img){
   const step = (+(img.getAttribute('data-try') || '0')) + 1;
   const chain = isVudu(orig)
     ? VUDU_PROXIES.map(fn=>fn(orig))
-    : [orig, 'https://i0.wp.com/' + stripScheme(orig) + '?w=400'];
+    : [orig, 'https://i0.wp.com/' + stripScheme(orig)];
   if(step < chain.length){ img.setAttribute('data-try', step); img.src = chain[step]; return; }
   const p = img.parentNode, t = (img.alt || '').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
   img.remove();
