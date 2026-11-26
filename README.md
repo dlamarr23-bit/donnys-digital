@@ -334,7 +334,16 @@ that was blocking Vudu.
 has no image-processing step, so posters now arrive at original size and format.
 Getting it back means either Cloudflare Images (a separate paid product) or
 Image Resizing via `/cdn-cgi/image/...` URLs (needs the domain on a Pro-plan
-zone). The `&w=300&fm=webp` on every proxied URL is currently ignored.
+zone). The `&fm=webp` on every proxied URL is currently ignored.
+
+**Vudu covers and `&w=`.** Vudu refuses Cloudflare's network, so `img.js`
+relays Vudu through Photon (`i0.wp.com`), which honours `&w=` (100-300, plus
+400 for faces). Since Nov 2026 the **Collection page asks for `&w=full`**:
+Photon's shrink visibly smeared faces and lettering (a 150px cover measured
+~26dB PSNR against the browser's own shrink), while with no width Photon
+returns the original's exact pixels. So the grid gets the same 338x480 picture
+the sheet links to (`poster2/<id>-l` is the largest size Vudu serves) and the
+browser does the shrink. The other pages still ask for a width.
 
 Note that the proxied URL still carries the original address in its query
 string, so this defeats a filter matching on *hostname*, not one matching the

@@ -98,19 +98,32 @@ export async function onRequestGet(context) {
   // a fraction of the bytes. Wikimedia only serves a short list of widths, so
   // asking IT for 400px directly would be a 400 error. If Photon fails, the
   // original is fetched as before. 400 is used only by the faces.
+  //
+  // w=full (Nov 2026, the Collection page's covers): NO resizing at all.
+  // Photon's shrink is poor -- a 150px cover measured ~26dB PSNR against the
+  // same poster shrunk by the browser, visibly smeared faces and lettering,
+  // even at quality=100. Asked for no width, Photon hands back the original's
+  // exact pixels (only metadata stripped; measured identical), so the page
+  // gets the same 338x480 picture as the sheet's link and the browser does
+  // the one, good-quality shrink itself.
   const isVudu = /(^|\.)vudu\.com$/i.test(parsed.hostname);
   const isWiki = /(^|\.)wikimedia\.org$/i.test(parsed.hostname);
   const W_OK = [100, 150, 200, 250, 300, 400];
-  const wq = parseInt(reqUrl.searchParams.get("w"), 10);
+  const wRaw = reqUrl.searchParams.get("w");
+  const full = wRaw === "full";
+  const wq = parseInt(wRaw, 10);
   const w = W_OK.includes(wq) ? wq : 300;
+  const wOpt = full ? "" : "w=" + w;
   const fetchTarget = isVudu
     ? "https://i0.wp.com/" +
       parsed.host +
       parsed.pathname +
-      (parsed.search ? parsed.search + "&w=" + w : "?w=" + w)
+      (parsed.search
+        ? parsed.search + (wOpt ? "&" + wOpt : "")
+        : wOpt ? "?" + wOpt : "")
     : isWiki
       // Wikimedia's own query (utm tags) would be read as Photon options.
-      ? "https://i0.wp.com/" + parsed.host + parsed.pathname + "?w=" + w
+      ? "https://i0.wp.com/" + parsed.host + parsed.pathname + (wOpt ? "?" + wOpt : "")
       : parsed.toString();
 
   const get = (target) => fetch(target, {
